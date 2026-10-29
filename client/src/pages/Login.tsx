@@ -6,6 +6,10 @@ import { passwordChangeWait, saveCompanySignup } from '../services/accountSecuri
 import { useNavigate } from 'react-router-dom';
 import { CheckCircle2, Loader2, LogIn, UserPlus, AlertCircle, Mail, Lock, User, Building2, Globe, ArrowRight } from 'lucide-react';
 
+import { Button, Input, Panel, PageTitle } from '../components/ui';
+import '../styles/WorkflowTheme.css';
+import './Login.css';
+
 type TabMode = 'login' | 'register';
 
 export const Login: React.FC = () => {
@@ -99,259 +103,89 @@ export const Login: React.FC = () => {
 
   if (registerSuccess) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-white to-indigo-50 dark:from-slate-900 dark:via-indigo-950 dark:to-slate-900">
-        <div className="text-center animate-in zoom-in duration-500">
-          <div className="w-24 h-24 bg-emerald-100 dark:bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-8 border-2 border-emerald-200 dark:border-emerald-500/30">
-            <CheckCircle2 className="w-12 h-12 text-emerald-500 dark:text-emerald-400" />
-          </div>
-          <h2 className="text-3xl font-black text-slate-900 dark:text-white mb-3">이메일을 확인해 주세요</h2>
-          <p className="text-slate-500 dark:text-slate-400 font-medium">인증 메일을 확인한 뒤 조직 등록을 완료할 수 있습니다.</p>
-          <Loader2 className="w-6 h-6 text-indigo-500 dark:text-indigo-400 animate-spin mx-auto mt-6" />
-        </div>
-      </div>
+      <main className="workflow-theme auth-entry auth-entry-success">
+        <Panel as="section" className="auth-entry-success-card" role="status" aria-live="polite">
+          <span className="auth-entry-success-icon"><CheckCircle2 aria-hidden="true" /></span>
+          <PageTitle>이메일을 확인해 주세요</PageTitle>
+          <p>인증 메일을 확인한 뒤 조직 등록을 완료할 수 있습니다.</p>
+          <Loader2 className="auth-entry-spinner" aria-hidden="true" />
+        </Panel>
+      </main>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-white to-indigo-50 dark:from-slate-900 dark:via-indigo-950 dark:to-slate-900 relative overflow-hidden">
-      {/* 백그라운드 장식 */}
-      <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
-        <div className="absolute top-1/4 -left-32 w-96 h-96 bg-indigo-200/50 dark:bg-indigo-600/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-violet-200/50 dark:bg-violet-600/10 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-indigo-100/50 dark:bg-indigo-500/5 rounded-full blur-3xl" />
-      </div>
-
-      <div className="w-full max-w-md mx-4 relative z-10">
-        <div className="text-center mb-10">
-          <div 
-            onClick={() => navigate('/')}
-            className="inline-flex items-center gap-3 mb-4 cursor-pointer group"
-          >
-            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center font-black text-white text-xl italic shadow-xl shadow-indigo-200 dark:shadow-indigo-900/50 group-hover:scale-110 transition-transform">HF</div>
-            <div className="text-3xl font-black text-slate-900 dark:text-white tracking-tighter group-hover:text-indigo-600 transition-colors">HR <span className="text-indigo-600 dark:text-indigo-400">FLOW</span></div>
-          </div>
-          <p className="text-slate-500 dark:text-slate-400 font-medium text-sm">조직의 성장을 가속화하는 지능형 HR 솔루션</p>
-        </div>
-
-        {/* 탭 전환 */}
-        <div className="flex bg-white/60 dark:bg-slate-800/50 backdrop-blur-sm rounded-2xl p-1.5 mb-6 border border-slate-200/60 dark:border-slate-700/50 shadow-sm">
-          <button
-            onClick={() => { setMode('login'); setError(''); }}
-            className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-sm transition-all duration-300 ${
-              mode === 'login' 
-                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30' 
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-            }`}
-          >
-            <LogIn className="w-4 h-4" />
-            로그인
+    <div className="workflow-theme auth-entry">
+      <header className="auth-entry-header">
+        <div className="auth-entry-header-inner">
+          <button type="button" onClick={() => navigate('/')} className="auth-entry-brand" aria-label="HR FLOW 홈">
+            <span className="auth-entry-brand-mark" aria-hidden="true">HF</span><span>HR FLOW</span>
           </button>
-          <button
-            onClick={() => { setMode('register'); setError(''); }}
-            className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-sm transition-all duration-300 ${
-              mode === 'register' 
-                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30' 
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-            }`}
-          >
-            <UserPlus className="w-4 h-4" />
-            회원가입
-          </button>
+          <span className="auth-entry-header-note">회사 업무를 한곳에서</span>
         </div>
-
-        {/* 에러 메시지 */}
-        {(error || authError) && (
-          <div className="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 text-rose-600 dark:text-rose-300 p-4 rounded-2xl flex items-center gap-3 text-sm font-medium mb-6 backdrop-blur-sm">
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            {error || authError}
-          </div>
-        )}
-
-        {/* 카드 */}
-        <div className="bg-white/80 dark:bg-slate-800/40 backdrop-blur-xl rounded-3xl border border-white/50 dark:border-slate-700/50 overflow-hidden shadow-2xl">
+      </header>
+      <main className="auth-entry-main">
+        <div className="auth-entry-heading">
+          <p className="auth-entry-eyebrow">HR FLOW ACCOUNT</p>
+          <PageTitle>{mode === 'login' ? '로그인' : '회원가입'}</PageTitle>
+          <p>{mode === 'login' ? '조직의 성장을 가속화하는 지능형 HR 솔루션' : '회사를 등록하고 조직에 맞는 업무 환경을 시작하세요.'}</p>
+        </div>
+        <Panel className="auth-entry-card">
+          <nav className="auth-entry-switch" aria-label="계정 이용 방식">
+            <Button type="button" aria-pressed={mode === 'login'} onClick={() => { setMode('login'); setError(''); }}><LogIn aria-hidden="true" />로그인</Button>
+            <Button type="button" aria-pressed={mode === 'register'} onClick={() => { setMode('register'); setError(''); }}><UserPlus aria-hidden="true" />회원가입</Button>
+          </nav>
+          {(error || authError) && <div className="auth-entry-alert" role="alert"><AlertCircle aria-hidden="true" /><span>{error || authError}</span></div>}
           {mode === 'login' ? (
-            /* 로그인 폼 */
-            <form onSubmit={handleLogin} className="p-8 space-y-6">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">이메일</label>
-                  <div className="relative">
-                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 dark:text-slate-500" />
-                    <input
-                      type="email"
-                      required
-                      maxLength={254}
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      placeholder="admin@yourcompany.com"
-                      className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-600/50 rounded-2xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all font-medium"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">비밀번호</label>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 dark:text-slate-500" />
-                    <input
-                      type="password"
-                      required
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="비밀번호 입력"
-                      className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-600/50 rounded-2xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all font-medium"
-                    />
-                  </div>
-                </div>
+            <form onSubmit={handleLogin} className="auth-entry-form" aria-busy={loading}>
+              <div className="auth-entry-field">
+                <label htmlFor="login-email">이메일</label>
+                <div className="auth-entry-control"><Mail aria-hidden="true" /><Input id="login-email" type="email" required maxLength={254} value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="admin@yourcompany.com" autoComplete="username" inputMode="email" /></div>
               </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full flex items-center justify-center gap-3 py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-200 dark:shadow-indigo-900/30 active:scale-[0.98] disabled:opacity-50"
-              >
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowRight className="w-5 h-5" />}
-                {loading ? '로그인 중...' : '로그인'}
-              </button>
+              <div className="auth-entry-field">
+                <label htmlFor="login-password">비밀번호</label>
+                <div className="auth-entry-control"><Lock aria-hidden="true" /><Input id="login-password" type="password" required value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="비밀번호 입력" autoComplete="current-password" /></div>
+              </div>
+              <Button type="submit" disabled={loading} className="wf-btn-primary auth-entry-submit">{loading ? <Loader2 className="auth-entry-spinner" aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}{loading ? '로그인 중...' : '로그인'}</Button>
             </form>
           ) : (
-            /* 회원가입 폼 */
-            <form onSubmit={handleRegister} className="p-8 space-y-5">
-              <div className="text-center mb-2">
-                <p className="text-slate-500 dark:text-slate-400 text-xs font-medium">이메일 인증 후 조직 등록을 완료하면 회사 관리자 계정이 생성됩니다.</p>
+            <form onSubmit={handleRegister} className="auth-entry-form" aria-busy={loading}>
+              <p className="auth-entry-form-intro">이메일 인증 후 조직 등록을 완료하면 회사 관리자 계정이 생성됩니다.</p>
+              <div className="auth-entry-field">
+                <label htmlFor="register-name">관리자 이름</label>
+                <div className="auth-entry-control"><User aria-hidden="true" /><Input id="register-name" type="text" required maxLength={100} value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="홍길동" autoComplete="name" /></div>
               </div>
-
-              <div className="space-y-4">
-                {/* 관리자 정보 */}
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">관리자 이름</label>
-                  <div className="relative">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 dark:text-slate-500" />
-                    <input
-                      type="text"
-                      required
-                      maxLength={100}
-                      value={regName}
-                      onChange={(e) => setRegName(e.target.value)}
-                      placeholder="홍길동"
-                      className="w-full pl-12 pr-4 py-3.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-600/50 rounded-2xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all font-medium"
-                    />
-                  </div>
+              <div className="auth-entry-field">
+                <label htmlFor="register-email">이메일 (로그인 ID)</label>
+                <div className="auth-entry-control"><Mail aria-hidden="true" /><Input id="register-email" type="email" required maxLength={254} value={regEmail} onChange={(e) => setRegEmail(e.target.value)} placeholder="admin@yourcompany.com" autoComplete="email" inputMode="email" aria-describedby="register-email-note" /></div>
+                <p id="register-email-note" className="auth-entry-field-note">본인이 확인할 수 있는 이메일을 입력해 주세요.</p>
+              </div>
+              <div className="auth-entry-password-grid">
+                <div className="auth-entry-field">
+                  <label htmlFor="register-password">비밀번호</label>
+                  <div className="auth-entry-control"><Lock aria-hidden="true" /><Input id="register-password" type="password" required minLength={12} maxLength={128} value={regPassword} onChange={(e) => setRegPassword(e.target.value)} placeholder="12자 이상" autoComplete="new-password" aria-describedby="register-password-note" /></div>
                 </div>
-
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">이메일 (로그인 ID)</label>
-                  <div className="relative">
-                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 dark:text-slate-500" />
-                    <input
-                      type="email"
-                      required
-                      maxLength={254}
-                      value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      placeholder="admin@yourcompany.com"
-                      className="w-full pl-12 pr-4 py-3.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-600/50 rounded-2xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all font-medium"
-                    />
-                  </div>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 ml-1">본인이 확인할 수 있는 이메일을 입력해 주세요.</p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">비밀번호</label>
-                    <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
-                      <input
-                        type="password"
-                        required
-                        minLength={12}
-                        maxLength={128}
-                        value={regPassword}
-                        onChange={(e) => setRegPassword(e.target.value)}
-                        placeholder="12자 이상"
-                        className="w-full pl-11 pr-3 py-3.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-600/50 rounded-2xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all font-medium text-sm"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">비밀번호 확인</label>
-                    <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
-                      <input
-                        type="password"
-                        required
-                        minLength={12}
-                        maxLength={128}
-                        value={regConfirmPassword}
-                        onChange={(e) => setRegConfirmPassword(e.target.value)}
-                        placeholder="재입력"
-                        className={`w-full pl-11 pr-3 py-3.5 bg-slate-50 dark:bg-slate-900/50 border rounded-2xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:ring-2 outline-none transition-all font-medium text-sm ${
-                          regConfirmPassword && regPassword !== regConfirmPassword 
-                            ? 'border-rose-300 dark:border-rose-500/50 focus:border-rose-500 focus:ring-rose-500/20' 
-                            : 'border-slate-200 dark:border-slate-600/50 focus:border-indigo-500 focus:ring-indigo-500/20'
-                        }`}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* 구분선 */}
-                <div className="flex items-center gap-3 pt-2">
-                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
-                  <Building2 className="w-4 h-4 text-slate-400 dark:text-slate-500" />
-                  <span className="text-[10px] font-black text-slate-500 dark:text-slate-500 uppercase tracking-widest">조직 정보</span>
-                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">조직명 (한글)</label>
-                  <div className="relative">
-                    <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 dark:text-slate-500" />
-                    <input
-                      type="text"
-                      required
-                      maxLength={120}
-                      value={regOrgKo}
-                      onChange={(e) => setRegOrgKo(e.target.value)}
-                      placeholder="에테르노"
-                      className="w-full pl-12 pr-4 py-3.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-600/50 rounded-2xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all font-medium"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">조직명 (영문)</label>
-                  <div className="relative">
-                    <Globe className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 dark:text-slate-500" />
-                    <input
-                      type="text"
-                      required
-                      maxLength={120}
-                      value={regOrgEn}
-                      onChange={(e) => setRegOrgEn(e.target.value)}
-                      placeholder="Aeterno"
-                      className="w-full pl-12 pr-4 py-3.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-600/50 rounded-2xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all font-medium"
-                    />
-                  </div>
+                <div className="auth-entry-field">
+                  <label htmlFor="register-password-confirm">비밀번호 확인</label>
+                  <div className="auth-entry-control"><Lock aria-hidden="true" /><Input id="register-password-confirm" type="password" required minLength={12} maxLength={128} value={regConfirmPassword} onChange={(e) => setRegConfirmPassword(e.target.value)} placeholder="재입력" autoComplete="new-password" aria-invalid={!!regConfirmPassword && regPassword !== regConfirmPassword} className={regConfirmPassword && regPassword !== regConfirmPassword ? 'auth-entry-invalid' : undefined} /></div>
                 </div>
               </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full flex items-center justify-center gap-3 py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-200 dark:shadow-indigo-900/30 active:scale-[0.98] disabled:opacity-50 mt-2"
-              >
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <UserPlus className="w-5 h-5" />}
-                {loading ? '등록 중...' : '가입 및 이메일 인증'}
-              </button>
+              <p id="register-password-note" className="auth-entry-field-note auth-entry-password-note">비밀번호는 12~128자로 입력해 주세요.</p>
+              <div className="auth-entry-section-label"><Building2 aria-hidden="true" /><span>조직 정보</span></div>
+              <div className="auth-entry-field">
+                <label htmlFor="register-company-ko">조직명 (한글)</label>
+                <div className="auth-entry-control"><Building2 aria-hidden="true" /><Input id="register-company-ko" type="text" required maxLength={120} value={regOrgKo} onChange={(e) => setRegOrgKo(e.target.value)} placeholder="에테르노" autoComplete="organization" /></div>
+              </div>
+              <div className="auth-entry-field">
+                <label htmlFor="register-company-en">조직명 (영문)</label>
+                <div className="auth-entry-control"><Globe aria-hidden="true" /><Input id="register-company-en" type="text" required maxLength={120} value={regOrgEn} onChange={(e) => setRegOrgEn(e.target.value)} placeholder="Aeterno" /></div>
+              </div>
+              <Button type="submit" disabled={loading} className="wf-btn-primary auth-entry-submit">{loading ? <Loader2 className="auth-entry-spinner" aria-hidden="true" /> : <UserPlus aria-hidden="true" />}{loading ? '등록 중...' : '가입 및 이메일 인증'}</Button>
             </form>
           )}
-        </div>
-
-        {/* 하단 */}
-        <p className="text-center text-slate-500 dark:text-slate-600 text-xs mt-8 font-medium">
-          © 2026 HR Flow SaaS Platform. All rights reserved.
-        </p>
-      </div>
+        </Panel>
+        <p className="auth-entry-copyright">© 2026 HR Flow SaaS Platform. All rights reserved.</p>
+      </main>
     </div>
   );
 };

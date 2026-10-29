@@ -1,0 +1,42 @@
+.workflow-theme.profile-setup-screen { display:grid; place-items:center; min-height:100svh; min-width:0; padding:40px 20px; background:var(--wf-bg); }
+.profile-setup-screen .profile-setup-layout { width:100%; max-width:480px; min-width:0; }
+.profile-setup-screen .profile-setup-brand { display:flex; align-items:center; justify-content:center; gap:9px; margin-bottom:22px; color:var(--wf-strong); }
+.profile-setup-screen .profile-setup-brand > span { display:grid; place-items:center; width:32px; height:32px; border-radius:8px; background:var(--wf-primary-800); color:var(--wf-on-primary); font-size:13px; font-weight:600; }
+.profile-setup-screen .profile-setup-brand > strong { font-size:18px; font-weight:600; letter-spacing:-.4px; }
+.profile-setup-screen .profile-setup-card { padding:28px; }
+.profile-setup-screen .profile-setup-heading { margin-bottom:22px; }
+.profile-setup-screen .profile-setup-heading > p { margin:0 0 8px; color:var(--wf-primary-800); font-size:11px; font-weight:600; letter-spacing:.8px; }
+.profile-setup-screen .profile-setup-heading > span { display:block; margin-top:10px; color:var(--wf-muted); font-size:13px; line-height:1.8; }
+.profile-setup-screen .profile-setup-note { display:flex; align-items:flex-start; gap:9px; padding:13px; margin-bottom:18px; border-radius:8px; background:var(--wf-warning-bg); color:var(--wf-text); }
+.profile-setup-screen .profile-setup-note > svg { flex:0 0 auto; width:17px; height:17px; margin-top:3px; }
+.profile-setup-screen .profile-setup-note strong { font-size:12px; font-weight:600; line-height:1.7; word-break:keep-all; overflow-wrap:anywhere; }
+.profile-setup-screen .profile-setup-note p { margin:6px 0 0; font-size:12px; line-height:1.8; word-break:keep-all; overflow-wrap:anywhere; }
+.profile-setup-screen .profile-setup-verification { min-width:0; padding:16px; margin-bottom:22px; border:1px solid var(--wf-border); border-radius:8px; background:var(--wf-subtle); }
+.profile-setup-screen .profile-setup-email { display:flex; align-items:flex-start; gap:8px; margin-bottom:12px; color:var(--wf-text); font-size:13px; font-weight:500; }
+.profile-setup-screen .profile-setup-email svg { flex:0 0 auto; width:16px; height:16px; margin-top:2px; color:var(--wf-muted); }
+.profile-setup-screen .profile-setup-email span { min-width:0; overflow-wrap:anywhere; }
+.profile-setup-screen .profile-setup-verification > p { margin:10px 0 0; color:var(--wf-muted); font-size:12px; line-height:1.8; word-break:keep-all; overflow-wrap:anywhere; }
+.profile-setup-screen .profile-setup-verification-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:13px; }
+.profile-setup-screen .profile-setup-verification-actions .wf-btn { min-height:36px; padding:7px 9px; font-size:12px; }
+.profile-setup-screen .profile-setup-verification .profile-setup-notice { color:var(--wf-text); background:var(--wf-success-bg); padding:10px; border-radius:6px; }
+.profile-setup-screen .profile-setup-form { display:flex; flex-direction:column; gap:18px; }
+.profile-setup-screen .profile-setup-input { position:relative; }
+.profile-setup-screen .profile-setup-input > svg { position:absolute; left:12px; top:50%; width:17px; height:17px; transform:translateY(-50%); color:var(--wf-muted); pointer-events:none; }
+.profile-setup-screen .profile-setup-input .wf-input { min-height:44px; padding-left:38px; }
+.profile-setup-screen .profile-setup-submit { width:100%; min-height:44px; gap:8px; margin-top:2px; }
+.profile-setup-screen .profile-setup-submit svg { width:18px; height:18px; }
+.profile-setup-screen .profile-setup-error { display:flex; align-items:flex-start; gap:8px; margin:0; padding:12px; border-radius:8px; color:var(--wf-text); background:var(--wf-error-bg); font-size:13px; line-height:1.8; overflow-wrap:anywhere; }
+.profile-setup-screen .profile-setup-error svg { flex:0 0 auto; width:18px; height:18px; margin-top:3px; color:var(--color-error-fg); }
+.profile-setup-screen .profile-setup-footer { margin-top:23px; padding-top:17px; border-top:1px solid var(--wf-border); }
+.profile-setup-screen .profile-setup-footer .wf-btn { width:100%; font-size:13px; }
+.profile-setup-screen .profile-setup-footer svg { width:16px; height:16px; }
+.profile-setup-screen .profile-setup-spinner { animation:profile-setup-spin 1s linear infinite; }
+@keyframes profile-setup-spin { to { transform:rotate(360deg); } }
+@media (max-width:767px) {
+  .workflow-theme.profile-setup-screen { padding:24px 16px; place-items:start center; }
+  .profile-setup-screen .profile-setup-brand { margin-bottom:18px; }
+  .profile-setup-screen .profile-setup-card { padding:24px 20px; }
+  .profile-setup-screen .profile-setup-verification-actions .wf-btn { min-height:44px; }
+  .profile-setup-screen .profile-setup-input .wf-input { font-size:16px; }
+}
+@media (prefers-reduced-motion:reduce) { .profile-setup-screen .profile-setup-spinner { animation:none; } }

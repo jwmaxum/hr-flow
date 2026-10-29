@@ -1,7 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { test, expect } = require('@playwright/test');
 const { PROJECT_ID, WEB_ORIGIN, HOSTS, assertE2EEnvironment } = require('../../scripts/e2e/safety.cjs');
-const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser } = require('../../scripts/e2e/fixtures.cjs');
+const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile } = require('../../scripts/e2e/fixtures.cjs');
 
 assertE2EEnvironment();
 
@@ -59,10 +59,15 @@ async function actorFor(browser, testInfo) {
     hasTouch: Boolean(settings.hasTouch), locale: 'ko-KR', timezoneId: 'Asia/Seoul',
     reducedMotion: 'reduce', acceptDownloads: true, serviceWorkers: 'block',
   });
-  const actor = { context, page: await context.newPage(), violations: [], pageErrors: 0, dialogs: 0, token: '' };
+  const actor = { context, page: await context.newPage(), violations: [], pageErrors: 0, dialogs: 0, token: '', passwordChangeAlert: false, passwordChangeNotices: 0 };
   actors.push(actor);
   actor.page.on('pageerror', () => { actor.pageErrors += 1; });
-  actor.page.on('dialog', async dialog => { actor.dialogs += 1; await dialog.dismiss(); });
+  actor.page.on('dialog', async dialog => {
+    if (actor.passwordChangeAlert && dialog.type() === 'alert' && dialog.message() === '비밀번호를 변경했습니다. 1초 후 새 비밀번호로 다시 로그인해 주세요.') {
+      actor.passwordChangeAlert = false; actor.passwordChangeNotices += 1;
+    } else actor.dialogs += 1;
+    await dialog.dismiss();
+  });
   actor.page.on('request', async request => {
     const url = new URL(request.url());
     if (url.protocol === 'http:' && url.host === HOSTS.functions &&
@@ -117,7 +122,8 @@ async function actorFor(browser, testInfo) {
   return actor;
 }
 
-async function login(actor, account, { denied = false } = {}) {
+async function login(actor, account, { denied = false, passwordRequired = false, invalidPassword = false } = {}) {
+  actor.token = '';
   await actor.page.goto('/#/login');
   await actor.page.getByPlaceholder('admin@yourcompany.com').fill(account.email);
   try {
@@ -126,6 +132,17 @@ async function login(actor, account, { denied = false } = {}) {
     throw new Error('Could not enter the generated test-account password.');
   }
   await actor.page.locator('form').getByRole('button', { name: '로그인', exact: true }).click();
+  if (invalidPassword) {
+    await expect(actor.page.getByText(/이메일 또는 비밀번호가 올바르지 않습니다|auth\/(?:wrong-password|invalid-credential)/).first()).toBeVisible();
+    await expect(actor.page).toHaveURL(/#\/login$/);
+    return;
+  }
+  if (passwordRequired) {
+    await expect(actor.page.getByRole('dialog', { name: '비밀번호 변경', exact: true })).toBeVisible({ timeout: 65000 });
+    await expect(actor.page.getByRole('heading', { name: '대시보드', exact: true })).toHaveCount(0);
+    await expect.poll(() => Boolean(actor.token)).toBe(true);
+    return;
+  }
   if (denied) {
     await expect(actor.page.getByText(/활성 계정의 권한이 필요합니다|사용 중지|비활성화|auth\/user-disabled/).first()).toBeVisible({ timeout: 65000 });
     await expect(actor.page).toHaveURL(/#\/login$/);
@@ -288,6 +305,48 @@ test('real expense UI uploads PNG/PDF and downloads the original bytes and filen
     expect(record.companyId).toBe(fixtures.companyA);
     expect(record.userId).toBe(fixtures.accounts.memberA.uid);
     await downloadExpense(actor, record, file);
+  }
+});
+
+test('required and manual password changes keep business gates, logout and new-password login', async ({ browser }, testInfo) => {
+  test.setTimeout(240000);
+  for (const key of ['requiredA', 'passwordA']) {
+    const account = fixtures.accounts[key];
+    const actor = await actorFor(browser, testInfo);
+    await login(actor, account, { passwordRequired: key === 'requiredA' });
+    if (key === 'passwordA') await actor.page.getByRole('button', { name: '보안 설정', exact: true }).click();
+    const dialog = actor.page.getByRole('dialog', { name: '비밀번호 변경', exact: true });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveCSS('font-family', /SUIT Variable/);
+    if (key === 'requiredA') {
+      await expect(dialog.getByLabel('현재 비밀번호', { exact: true })).toHaveCount(0);
+      await expect(dialog.getByRole('button', { name: '비밀번호 변경 닫기', exact: true })).toHaveCount(0);
+      await actor.page.keyboard.press('Escape');
+      await expect(dialog).toBeVisible();
+    }
+    const nextPassword = `E2E-New!${randomUUID()}`;
+    try {
+      if (key === 'passwordA') await dialog.getByLabel('현재 비밀번호', { exact: true }).fill(account.password);
+      await dialog.getByLabel('새 비밀번호', { exact: true }).fill(nextPassword);
+      await dialog.getByLabel('새 비밀번호 확인', { exact: true }).fill(nextPassword);
+    } catch { throw new Error('Could not fill the isolated password-change form.'); }
+    actor.passwordChangeAlert = true;
+    await dialog.getByRole('button', { name: '비밀번호 변경 후 다시 로그인', exact: true }).click();
+    // Required-password routing can remount HashRouter. Check the signed-out
+    // form and absence of the private shell before explicitly reopening login.
+    await expect(actor.page.getByPlaceholder('admin@yourcompany.com')).toBeVisible({ timeout: 65000 });
+    await expect(actor.page.locator('.workspace-shell')).toHaveCount(0);
+    await expect.poll(() => actor.passwordChangeNotices).toBe(1);
+    const profile = await readProfile(account);
+    expect(profile.mustChangePassword).toBe(false);
+    expect(profile.companyId).toBe(account.companyId);
+    expect(profile.role).toBe(account.role);
+    // The service intentionally delays signing in again for one second.
+    await actor.page.waitForTimeout(1200);
+    await login(actor, account, { invalidPassword: true });
+    await login(actor, { ...account, password: nextPassword });
+    actor.token = '';
+    await actor.context.close();
   }
 });
 

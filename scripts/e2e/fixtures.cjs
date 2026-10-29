@@ -50,6 +50,8 @@ async function seedFixtures() {
     platform: ['플랫폼 운영자', 'SUPER_ADMIN', 'PLATFORM', '', '', 'ACTIVE'],
     adminA: ['A 관리자', 'ADMIN', companyA, divisionA, teamA, 'ACTIVE'],
     memberA: ['A 직원', 'MEMBER', companyA, divisionA, teamA, 'ACTIVE'],
+    passwordA: ['A 비밀번호 직원', 'MEMBER', companyA, divisionA, teamA, 'ACTIVE'],
+    requiredA: ['A 초기 비밀번호 직원', 'MEMBER', companyA, divisionA, teamA, 'ACTIVE'],
     memberB: ['B 직원', 'MEMBER', companyB, divisionB, teamB, 'ACTIVE'],
     managerA: ['A 본부장', 'SUB_ADMIN', companyA, divisionA, teamA, 'ACTIVE'],
     otherManagerA: ['다른 A 본부장', 'SUB_ADMIN', companyA, divisionOtherA, otherTeamA, 'ACTIVE'],
@@ -59,7 +61,7 @@ async function seedFixtures() {
   };
   const accounts = Object.fromEntries(Object.entries(specifications).map(([key, [label, role, companyId, divisionId, teamId, status]]) => [key, {
     uid: id(key), email: `${key.toLowerCase()}.${runId}@e2e.example.invalid`,
-    password: `E2E!${randomBytes(24).toString('base64url')}`, name: `자동점검 ${label}`,
+    password: key === 'requiredA' ? `!${randomBytes(4).toString('base64url')}` : `E2E!${randomBytes(24).toString('base64url')}`, name: `자동점검 ${label}`,
     role, companyId, divisionId, teamId, status,
   }]));
   const fixtures = { accounts, companyA, companyB, divisionA, divisionOtherA, divisionB, teamA, otherTeamA, teamB, runId };
@@ -88,7 +90,7 @@ async function seedFixtures() {
     for (const [key, account] of Object.entries(accounts)) {
       set('UserProfile', account.uid, { uid: account.uid, email: account.email, name: account.name,
         role: account.role, companyId: account.companyId, divisionId: account.divisionId,
-        teamId: account.teamId, status: account.status, mustChangePassword: false,
+        teamId: account.teamId, status: account.status, mustChangePassword: key === 'requiredA',
         teamHistory: [], joinDate: '2025-01-01', annualLeaveTotal: 15, usedLeave: 1,
         annualSalary: 24000000, salaryType: 'ANNUAL', dependents: 1,
         childrenUnder20: 0, nonTaxable: 200000, createdAt,
@@ -151,6 +153,13 @@ async function revokeTestUser(value) {
   await current.auth.revokeRefreshTokens(account.uid);
 }
 
+async function readProfile(value) {
+  const current = runtime(), account = accountFor(value);
+  const snapshot = await current.db.collection('UserProfile').doc(account.uid).get();
+  if (!snapshot.exists || snapshot.data().companyId !== account.companyId) throw new Error('The generated E2E profile is unavailable.');
+  return snapshot.data();
+}
+
 async function clearFixtures() {
   assertE2EEnvironment();
   if (!state) return;
@@ -177,4 +186,4 @@ async function clearFixtures() {
   if (failures.length) throw new Error('Could not completely remove isolated E2E fixtures.');
 }
 
-module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser };
+module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile };

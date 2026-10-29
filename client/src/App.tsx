@@ -9,6 +9,7 @@ import { LandingPage } from './pages/LandingPage';
 import { ProfileSetup } from './pages/ProfileSetup';
 import { RouteContent } from './components/RouteContent';
 import './utils/documentNavigationGuards';
+import './styles/AuthStates.css';
 
 const WorkspaceShell = lazy(() => import('./components/WorkspaceShell').then(module => ({ default: module.WorkspaceShell })));
 const OrganizationAdmin = lazy(() => import('./pages/OrganizationAdmin').then(module => ({ default: module.OrganizationAdmin })));
@@ -45,14 +46,15 @@ function App() {
   const isExpired = !isSuperAdmin && companyData?.subscriptionStatus === 'EXPIRED';
 
   if (user && authError) {
-    return <div className="min-h-screen grid place-items-center bg-slate-50 p-6"><div className="max-w-md space-y-4 bg-white p-8 rounded-2xl shadow">
-      <p role="alert">{authError}</p><button onClick={() => void refreshSession()} className="bg-indigo-600 text-white px-4 py-2 rounded-lg">다시 확인</button>
-      <button onClick={() => void logout()} className="ml-3 px-4 py-2">로그아웃</button>
+    return <div className="workflow-theme auth-state-screen"><div className="wf-panel auth-state-card">
+      <span className="auth-state-brand" aria-hidden="true">HF</span><h1>로그인 상태 확인</h1>
+      <p role="alert" className="auth-state-error">{authError}</p><div className="auth-state-actions"><button onClick={() => void refreshSession()} className="wf-btn wf-btn-primary">다시 확인</button>
+      <button onClick={() => void logout()} className="wf-btn">로그아웃</button></div>
     </div></div>;
   }
 
   if (user && userData && (userData.mustChangePassword || (!sessionReady && !isExpired))) {
-    return <HashRouter><div className="min-h-screen grid place-items-center bg-slate-50 p-6"><p>비밀번호 변경을 완료한 후 업무를 시작할 수 있습니다.</p></div><LoginModal /></HashRouter>;
+    return <HashRouter><div className="workflow-theme auth-state-screen"><div className="wf-panel auth-state-card"><span className="auth-state-brand" aria-hidden="true">HF</span><h1>계정 보안 설정</h1><p>비밀번호 변경을 완료한 후 업무를 시작할 수 있습니다.</p></div></div><LoginModal /></HashRouter>;
   }
 
   if (user && !loading && !userData) {

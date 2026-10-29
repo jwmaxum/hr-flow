@@ -1,0 +1,16 @@
+.workflow-theme.auth-state-screen { display:grid; place-items:center; min-height:100dvh; padding:24px; background:var(--wf-bg); }
+.auth-state-screen .auth-state-card { width:100%; max-width:440px; padding:28px; }
+.auth-state-screen .auth-state-brand { display:inline-grid; place-items:center; width:36px; height:36px; border-radius:8px; background:var(--wf-primary-800); color:var(--wf-on-primary); font-size:14px; font-weight:600; }
+.auth-state-screen h1 { margin:20px 0 14px; font-size:24px; line-height:1.4; font-weight:600; color:var(--wf-strong); letter-spacing:-.6px; }
+.auth-state-screen p { color:var(--wf-muted); font-size:14px; line-height:1.8; overflow-wrap:anywhere; }
+.auth-state-screen .auth-state-error { padding:12px; border-radius:8px; background:var(--wf-error-bg); color:var(--wf-text); }
+.auth-state-screen .auth-state-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:22px; }
+.workflow-theme.auth-loading-screen { position:fixed; inset:0; z-index:999; padding:24px; }
+.auth-loading-screen .auth-loading-content { text-align:center; }
+.auth-loading-screen h1 { margin:16px 0 26px; }
+.auth-loading-screen .auth-loading-status { display:flex; align-items:center; justify-content:center; gap:9px; }
+.auth-loading-screen .auth-loading-status svg { width:18px; height:18px; color:var(--wf-primary-800); animation:auth-loading-spin 1s linear infinite; }
+.auth-loading-screen .auth-loading-copyright { position:absolute; bottom:24px; font-size:11px; }
+@keyframes auth-loading-spin { to { transform:rotate(360deg); } }
+@media(max-width:767px) { .workflow-theme.auth-state-screen { padding:16px; } .auth-state-screen .auth-state-card { padding:24px 20px; } .auth-state-screen .auth-state-actions .wf-btn { flex:1; min-height:44px; } }
+@media(prefers-reduced-motion:reduce) { .auth-loading-screen .auth-loading-status svg { animation:none; } }
