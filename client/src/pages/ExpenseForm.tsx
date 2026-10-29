@@ -84,10 +84,10 @@ export const ExpenseForm: React.FC = () => {
     : requests.filter(req => req.date.substring(0, 7) === filterMonth);
 
   // 최근 12개월 목록 생성 (필터용)
+  const monthStart = new Date();
   const monthOptions = Array.from({ length: 13 }, (_, i) => {
     if (i === 12) return { value: 'all', label: '전체 보기' };
-    const d = new Date();
-    d.setMonth(d.getMonth() - i);
+    const d = new Date(monthStart.getFullYear(), monthStart.getMonth() - i, 1);
     return { 
       value: format(d, 'yyyy-MM'), 
       label: format(d, 'yyyy년 MM월') 

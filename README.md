@@ -26,6 +26,19 @@ management works — 인사·근태·결재를 관리하는 HR Flow(Easy Works E
 - **Frontend Framework**: `React v19` + `Vite`
 - **CI/CD**: Cloudflare는 root `client`, 명령 `npm run lint && npm run test:unit && npm run build`, 출력 `dist`로 배포합니다. `Verify HR Flow` Actions는 린트·단위/관리자 보안 회귀·타입·빌드를 검증하며 배포 자격 증명을 사용하지 않습니다.
 
+### 로그인·첨부파일 자동 점검
+
+Node.js `24`·Java `21` 환경에서 실제 로그인과 PNG/PDF 업로드·다운로드, 회사·본부 격리를 데스크톱·모바일 브라우저로 검증합니다. 운영 계정이나 자격 증명은 사용하지 않습니다. 준비 과정과 점검 범위는 [브라우저 E2E 가이드](docs/e2e-testing.md)를 참고하세요.
+
+```sh
+npm ci
+npm --prefix client ci
+npm --prefix functions ci
+npx playwright install chromium
+npm run test:e2e:safety
+npm run test:e2e
+```
+
 ## 2. 데이터베이스 및 보안 (SaaS 아키텍처)
 - **Firebase Database**: Firestore (**ID: `(default)`** 사용)
 - **데이터베이스 정책**: 기존 운영 `VITE_FIREBASE_DATABASE_ID`를 유지합니다. 값을 생략하면 코드가 `(default)`를 사용하므로 새 배포에 다른 DB를 잘못 연결하지 않도록 확인합니다.

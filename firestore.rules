@@ -40,9 +40,27 @@ service cloud.firestore {
     function validTenant(data) {
       return data.companyId is string && data.companyId != '' && data.get('tenantId', data.companyId) == data.companyId;
     }
-    function validAttachmentInput(data) { return data.get('attachmentUrl', '') == ''; }
-    function validAttachmentUpdate() {
-      return validAttachmentInput(request.resource.data) || unchanged(['attachmentUrl']);
+    function validAttachmentFilename(name) {
+      return name is string && name.size() > 0 && name != '.' &&
+        !name.matches('.*[.][.].*') && name.matches('[^[:cntrl:]\\\\]+');
+    }
+    function validAttachmentPath(data, category) {
+      let attachment = data.get('attachmentPath', '');
+      let parts = attachment is string ? attachment.split('/') : [];
+      let length = category == 'notices' ? 4 : 5;
+      return attachment is string && (attachment == '' ||
+        (attachment.size() <= 1024 && parts.size() == length &&
+          parts[0] == 'companies' && parts[1] == data.companyId && parts[2] == category &&
+          (category == 'notices' || parts[3] == data.userId) && validAttachmentFilename(parts[length - 1])));
+    }
+    function validAttachmentInput(data, category) {
+      return data.get('attachmentUrl', '') == '' && validAttachmentPath(data, category);
+    }
+    function validAttachmentUpdate(category) {
+      // Existing legacy references remain editable without permitting a new URL
+      // or replacing a private path with another tenant/category/owner's object.
+      return (request.resource.data.get('attachmentUrl', '') == '' || unchanged(['attachmentUrl'])) &&
+        (validAttachmentPath(request.resource.data, category) || unchanged(['attachmentPath']));
     }
     function validOptionalSubject(data) {
       return !('userId' in data) || (data.userId is string && data.userId != '' &&
@@ -145,9 +163,9 @@ service cloud.firestore {
         divisionManager(resource.data.companyId, resource.data.get('divisionId', '')) ||
         (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid);
       allow create: if sameCompany(request.resource.data.companyId) && request.resource.data.userId == request.auth.uid &&
-        request.resource.data.status == 'PENDING' && validOwnRoute(request.resource.data) && validAttachmentInput(request.resource.data);
+        request.resource.data.status == 'PENDING' && validOwnRoute(request.resource.data) && validAttachmentInput(request.resource.data, 'expenses');
       allow update: if (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid &&
-        resource.data.status == 'PENDING' && validOwnRoute(request.resource.data) && validAttachmentUpdate() &&
+        resource.data.status == 'PENDING' && validOwnRoute(request.resource.data) && validAttachmentUpdate('expenses') &&
         unchanged(['companyId', 'tenantId', 'userId', 'status', 'createdAt', 'divisionId', 'teamId'])) || validApproval();
       allow delete: if superAdmin() || companyAdmin(resource.data.companyId) ||
         (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid && resource.data.status == 'PENDING');
@@ -157,7 +175,7 @@ service cloud.firestore {
         divisionManager(resource.data.companyId, resource.data.get('divisionId', '')) ||
         (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid);
       allow create: if sameCompany(request.resource.data.companyId) && request.resource.data.userId == request.auth.uid &&
-        request.resource.data.status == 'PENDING' && validOwnRoute(request.resource.data) && validAttachmentInput(request.resource.data);
+        request.resource.data.status == 'PENDING' && validOwnRoute(request.resource.data) && validAttachmentInput(request.resource.data, 'leaves');
       allow update: if validApproval();
       allow delete: if superAdmin() || companyAdmin(resource.data.companyId) ||
         (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid && resource.data.status == 'PENDING');
@@ -175,10 +193,10 @@ service cloud.firestore {
     match /notices/{id} {
       allow read: if superAdmin() || sameCompany(resource.data.companyId);
       allow create: if companyManager(request.resource.data.companyId) && request.resource.data.authorId == request.auth.uid &&
-        validTenant(request.resource.data) && validAttachmentInput(request.resource.data);
+        validTenant(request.resource.data) && validAttachmentInput(request.resource.data, 'notices');
       allow update: if (superAdmin() || companyAdmin(resource.data.companyId) ||
         (companyManager(resource.data.companyId) && resource.data.authorId == request.auth.uid)) &&
-        unchanged(['companyId', 'tenantId', 'authorId', 'createdAt']) && validAttachmentUpdate();
+        unchanged(['companyId', 'tenantId', 'authorId', 'createdAt']) && validAttachmentUpdate('notices');
       allow delete: if superAdmin() || companyAdmin(resource.data.companyId);
     }
     match /AuditLogs/{id} {

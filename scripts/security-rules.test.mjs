@@ -76,6 +76,9 @@ try {
     }
     await setDoc(doc(seed, 'notices', 'manager-own'), { companyId: 'a', authorId: 'manager', title: 'Own notice' });
     await setDoc(doc(seed, 'expenses', 'legacy-attachment'), { ...ownRequest(), attachmentUrl: 'https://example.invalid/legacy' });
+    await setDoc(doc(seed, 'expenses', 'legacy-private-path'), { ...ownRequest(), attachmentPath: 'companies/a/expenses/bob/legacy/archive.png' });
+    await setDoc(doc(seed, 'notices', 'legacy-notice-attachment'), { companyId: 'a', authorId: 'manager', title: 'Legacy notice',
+      attachmentUrl: 'https://example.invalid/legacy-notice', attachmentPath: '' });
     await setDoc(doc(seed, 'tenantRegistry', 'deleted'), { companyId: 'deleted', status: 'DELETED' });
     await setDoc(doc(seed, 'officialLetters', 'letter-a'), { companyId: 'a', creatorId: 'bob', participantIds: ['bob', 'manager'], status: 'ISSUED', revision: 1 });
     await setDoc(doc(seed, 'officialLetters', 'letter-a', 'history', '000001'), { companyId: 'a', content: 'archived' });
@@ -179,6 +182,24 @@ try {
   // Routing is derived from the current server profile, with validated organization references.
   for (const name of ['expenses', 'leaves']) {
     await allow(`own routed ${name}`, setDoc(document('bob', name, `own-${name}`), ownRequest()));
+    const privatePath = `companies/a/${name}/bob/receipt.png`;
+    await allow(`own private ${name} attachment`, setDoc(document('bob', name, `attachment-${name}`), {
+      ...ownRequest(), attachmentPath: privatePath, attachmentName: 'receipt.png', attachmentUrl: ''
+    }));
+    for (const attachmentPath of [
+      `companies/b/${name}/bob/receipt.png`, `companies/ab/${name}/bob/receipt.png`,
+      `companies/a/${name === 'expenses' ? 'leaves' : 'expenses'}/bob/receipt.png`,
+      `companies/a/${name}/carol/receipt.png`, `companies/a/${name}/bob-other/receipt.png`,
+      `companies/a/${name}/bob/`, `companies/a/${name}/bob/..`, `companies/a/${name}/bob/.`,
+      `companies/a/${name}/bob/../carol/receipt.png`, `companies/a/${name}/bob/nested/receipt.png`,
+      `companies/a/${name}/bob/receipt\\forged.png`, `companies/a/${name}/bob/receipt\nforged.png`,
+      `companies/a/${name}/bob/${'x'.repeat(1024)}.png`, 'https://example.invalid/private.png',
+      null, 42, { path: privatePath }, [privatePath]
+    ]) {
+      await deny(`forged ${name} current attachment path/type`, setDoc(document('bob', name, `forged-path-${name}`), {
+        ...ownRequest(), attachmentPath, attachmentUrl: ''
+      }));
+    }
     await allow(`member own ${name} read`, getDoc(document('bob', name, `own-${name}`)));
     await allow(`member own ${name} query`, getDocs(query(collection(db('bob'), name), where('companyId', '==', 'a'), where('userId', '==', 'bob'))));
     await allow(`manager own-division ${name} read`, getDoc(document('manager', name, `own-${name}`)));
@@ -191,11 +212,33 @@ try {
     await deny(`forged ${name} route update`, updateDoc(document('bob', name, `own-${name}`), { divisionId: 'div2', teamId: 'team2' }));
     await deny(`wrong division ${name} read`, getDoc(document('manager2', name, `own-${name}`)));
     await deny(`wrong division ${name} approval`, updateDoc(document('manager2', name, `own-${name}`), { status: 'SUB_APPROVED' }));
+    for (const attachmentPath of [`companies/b/${name}/bob/receipt.png`, `companies/a/${name}/carol/receipt.png`]) {
+      await deny(`approval cannot replace ${name} private attachment`, updateDoc(document('manager', name, `own-${name}`), {
+        status: 'SUB_APPROVED', attachmentPath
+      }));
+    }
+    if (name === 'expenses') {
+      await allow('pending expense can replace its own private attachment', updateDoc(document('bob', name, 'own-expenses'), {
+        attachmentPath: privatePath, attachmentName: 'receipt.png'
+      }));
+      for (const attachmentPath of ['companies/b/expenses/bob/receipt.png', 'companies/a/expenses/carol/receipt.png',
+        'companies/a/leaves/bob/receipt.png', null]) {
+        await deny('pending expense cannot rebind private attachment scope', updateDoc(document('bob', name, 'own-expenses'), { attachmentPath }));
+      }
+      await allow('pending expense can clear its private attachment', updateDoc(document('bob', name, 'own-expenses'), { attachmentPath: '' }));
+    }
     await allow(`correct division ${name} approval`, updateDoc(document('manager', name, `own-${name}`), { status: 'SUB_APPROVED', updatedAt: '2026-10-24', updatedBy: 'manager' }));
     await allow(`ADMIN ${name} final approval`, updateDoc(document('alice', name, `own-${name}`), { status: 'APPROVED' }));
   }
   await allow('legacy attachment retained on content edit', updateDoc(document('bob', 'expenses', 'legacy-attachment'), { amount: 123 }));
+  await allow('legacy private attachment retained on content edit', updateDoc(document('bob', 'expenses', 'legacy-private-path'), { amount: 123 }));
+  await deny('legacy private attachment cannot be replaced with foreign path', updateDoc(document('bob', 'expenses', 'legacy-private-path'), {
+    attachmentPath: 'companies/b/expenses/bob/forged.png'
+  }));
   await deny('legacy URL cannot be replaced by new bearer URL', updateDoc(document('bob', 'expenses', 'legacy-attachment'), { attachmentUrl: 'https://example.invalid/new' }));
+  await deny('unchanged legacy URL cannot authorize a foreign private expense path', updateDoc(document('bob', 'expenses', 'legacy-attachment'), {
+    attachmentPath: 'companies/b/expenses/bob/forged.png'
+  }));
   await allow('legacy URL can be cleared for private path migration', updateDoc(document('bob', 'expenses', 'legacy-attachment'), { attachmentUrl: '', attachmentPath: 'companies/a/expenses/bob/private.png', attachmentName: 'private.png' }));
   for (const patch of [{ headId: 'outsider' }, { headId: 'retired' }, { companyId: 'b' }, { tenantId: 'b' }]) await deny('division foreign/retired head or tenant', updateDoc(document('alice', 'divisions', 'div1'), patch));
   for (const patch of [{ divisionId: 'divB' }, { leaderId: 'outsider' }, { leaderId: 'retired' }, { companyId: 'b' }, { tenantId: 'b' }]) await deny('team foreign/retired reference or tenant', updateDoc(document('alice', 'teams', 'team1'), patch));
@@ -220,6 +263,35 @@ try {
   await deny('SUB_ADMIN edits another author notice', updateDoc(document('manager', 'notices', 'notice-a'), { title: 'Forged' }));
   await allow('SUB_ADMIN edits own notice', updateDoc(document('manager', 'notices', 'manager-own'), { title: 'Updated' }));
   await allow('ADMIN edits company notice', updateDoc(document('alice', 'notices', 'manager-own'), { title: 'Admin Updated' }));
+  const notice = { companyId: 'a', authorId: 'manager', title: 'Private notice', createdAt: '2026-10-24', attachmentUrl: '' };
+  await allow('SUB_ADMIN creates own company notice attachment', setDoc(document('manager', 'notices', 'private-notice'), {
+    ...notice, attachmentPath: 'companies/a/notices/notice.png'
+  }));
+  for (const attachmentPath of ['companies/b/notices/notice.png', 'companies/ab/notices/notice.png',
+    'companies/a/expenses/manager/notice.png', 'companies/a/notices/', 'companies/a/notices/..',
+    'companies/a/notices/../b/notice.png', 'companies/a/notices/notice\\forged.png',
+    'companies/a/notices/notice\nforged.png', null, 42, { path: 'companies/a/notices/notice.png' }]) {
+    await deny('notice creation cannot inject current attachment path/type', setDoc(document('manager', 'notices', 'forged-private-notice'), {
+      ...notice, attachmentPath
+    }));
+    for (const uid of ['manager', 'alice', 'root']) {
+      await deny(`${uid} cannot replace notice attachment scope/type`, updateDoc(document(uid, 'notices', 'private-notice'), { attachmentPath }));
+    }
+  }
+  await allow('ADMIN replaces same-company notice attachment', updateDoc(document('alice', 'notices', 'private-notice'), {
+    attachmentPath: 'companies/a/notices/replacement.pdf', attachmentName: 'replacement.pdf'
+  }));
+  await allow('ADMIN clears company notice attachment', updateDoc(document('alice', 'notices', 'private-notice'), { attachmentPath: '' }));
+  await allow('legacy notice attachment retained on content edit', updateDoc(document('manager', 'notices', 'legacy-notice-attachment'), { title: 'Legacy updated' }));
+  await deny('legacy notice URL cannot be replaced with a new bearer URL', updateDoc(document('alice', 'notices', 'legacy-notice-attachment'), {
+    attachmentUrl: 'https://example.invalid/new-notice-token'
+  }));
+  await deny('unchanged legacy URL cannot authorize a foreign private notice path', updateDoc(document('alice', 'notices', 'legacy-notice-attachment'), {
+    attachmentPath: 'companies/b/notices/forged.pdf'
+  }));
+  await allow('legacy notice migrates to private company attachment', updateDoc(document('alice', 'notices', 'legacy-notice-attachment'), {
+    attachmentUrl: '', attachmentPath: 'companies/a/notices/private.pdf'
+  }));
 
   // Company transfer never results in a record visible in the victim tenant.
   for (const name of ['attendance', 'payroll_records']) {

@@ -64,3 +64,61 @@ jobs:
           VITE_FIREBASE_DATABASE_ID: ${{ secrets.VITE_FIREBASE_DATABASE_ID }}
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
           VITE_PAYPAL_CLIENT_ID: ${{ secrets.VITE_PAYPAL_CLIENT_ID }}
+
+      - name: Verify test bootstrap is absent from production
+        working-directory: .
+        run: npm run test:e2e:boundary
+
+  browser-e2e:
+    name: Isolated login and attachment checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+            functions/package-lock.json
+
+      - name: Set up Java 21 for Firebase emulators
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install test, client and function dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix client ci
+          npm --prefix functions ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Check emulator safety guards
+        run: npm run test:e2e:safety
+
+      - name: Test desktop and mobile against isolated Firebase emulators
+        run: npm run test:e2e
+
+      - name: Save safe test summary and synthetic screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: isolated-browser-e2e
+          path: |
+            test-results/e2e/results.json
+            test-results/e2e/artifacts/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7

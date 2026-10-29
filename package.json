@@ -12,7 +12,10 @@
     "test:members": "node --test --experimental-test-coverage --test-coverage-include=functions/member-service.js functions/tests/members.test.js",
     "test:rules": "node scripts/security-rules.test.mjs",
     "test:security-api": "node --test --experimental-test-coverage --test-coverage-include=functions/*security*.js --test-coverage-include=functions/attachment-service.js functions/tests/account-security.test.js functions/tests/admin-security.test.js functions/tests/attachment-security.test.js functions/tests/tenant-security-migration.test.js",
-    "test:auth-state": "node --test scripts/tests/auth-store-security.test.cjs"
+    "test:auth-state": "node --test scripts/tests/auth-store-security.test.cjs",
+    "test:e2e": "node scripts/e2e/run.cjs",
+    "test:e2e:safety": "node --test scripts/tests/e2e-safety.test.cjs",
+    "test:e2e:boundary": "node scripts/e2e/check-production.cjs"
   },
   "dependencies": {
     "firebase": "^12.12.1"
@@ -21,6 +24,8 @@
     "@grpc/grpc-js": "^1.14.6"
   },
   "devDependencies": {
-    "@firebase/rules-unit-testing": "^5.0.2"
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "@playwright/test": "1.62.1",
+    "firebase-tools": "15.34.1"
   }
 }

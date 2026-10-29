@@ -63,3 +63,7 @@ Desktop.ini
 scratch/
 tmp/
 temp/
+
+# Local browser test reports (synthetic accounts only; never source files)
+test-results/
+playwright-report/
