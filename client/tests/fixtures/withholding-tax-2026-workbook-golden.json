@@ -1,0 +1,2620 @@
+{
+  "provenance": {
+    "sourceFileName": "근로소득 간이세액표_2026.03.01.xlsx",
+    "workbookSHA256": "66e2d1a24a10d91e28f2c5dd2ede63871b105e1dc4adebb001a13265bec42737",
+    "officialSource": "https://www.law.go.kr/LSW/flDownload.do?bylClsCd=110201&flSeq=161861245&gubun=",
+    "bracketBounds": "근로소득간이세액표!A5:B650",
+    "taxCells": "근로소득간이세액표!C5:M650",
+    "tenMillionBase": "근로소득간이세액표!C651:M651",
+    "highIncomeFormulaCells": [
+      "근로소득간이세액표!C652",
+      "근로소득간이세액표!C654",
+      "근로소득간이세액표!C656",
+      "근로소득간이세액표!C658",
+      "근로소득간이세액표!C660",
+      "근로소득간이세액표!C662"
+    ],
+    "childRule": "소득령 별표2!A14:A18",
+    "familyOver11Rule": "소득령 별표2!A19:A21",
+    "generation": "Read-only extraction of the actual workbook; independent Python Decimal arithmetic from the textual source rules. No application calculation function was used to produce expected amounts.",
+    "canonicalShape": "JSON.stringify({brackets:[{min,max,taxes}],taxAt10Million}) in source row/column order; KRW integers; salary bounds are thousand KRW.",
+    "canonicalSHA256": "3c964a668e84f36c4e7b2da4368689f45c65deac8c5536edc20c5ee99af89a25",
+    "bracketCount": 646,
+    "taxCellCount": 7106,
+    "baseTaxCellCount": 11
+  },
+  "cases": [
+    {
+      "income": 9999999,
+      "dependents": 1,
+      "children": 0,
+      "expected": 1503990
+    },
+    {
+      "income": 9999999,
+      "dependents": 1,
+      "children": 1,
+      "expected": 1407340
+    },
+    {
+      "income": 9999999,
+      "dependents": 1,
+      "children": 2,
+      "expected": 1152820
+    },
+    {
+      "income": 9999999,
+      "dependents": 1,
+      "children": 3,
+      "expected": 1089490
+    },
+    {
+      "income": 9999999,
+      "dependents": 2,
+      "children": 0,
+      "expected": 1428170
+    },
+    {
+      "income": 9999999,
+      "dependents": 2,
+      "children": 1,
+      "expected": 1407340
+    },
+    {
+      "income": 9999999,
+      "dependents": 2,
+      "children": 2,
+      "expected": 1152820
+    },
+    {
+      "income": 9999999,
+      "dependents": 2,
+      "children": 3,
+      "expected": 1089490
+    },
+    {
+      "income": 9999999,
+      "dependents": 11,
+      "children": 0,
+      "expected": 958650
+    },
+    {
+      "income": 9999999,
+      "dependents": 11,
+      "children": 1,
+      "expected": 937820
+    },
+    {
+      "income": 9999999,
+      "dependents": 11,
+      "children": 2,
+      "expected": 912820
+    },
+    {
+      "income": 9999999,
+      "dependents": 11,
+      "children": 3,
+      "expected": 879490
+    },
+    {
+      "income": 9999999,
+      "dependents": 12,
+      "children": 0,
+      "expected": 928650
+    },
+    {
+      "income": 9999999,
+      "dependents": 12,
+      "children": 1,
+      "expected": 907820
+    },
+    {
+      "income": 9999999,
+      "dependents": 12,
+      "children": 2,
+      "expected": 882820
+    },
+    {
+      "income": 9999999,
+      "dependents": 12,
+      "children": 3,
+      "expected": 849490
+    },
+    {
+      "income": 9999999,
+      "dependents": 44,
+      "children": 0,
+      "expected": 0
+    },
+    {
+      "income": 9999999,
+      "dependents": 44,
+      "children": 1,
+      "expected": 0
+    },
+    {
+      "income": 9999999,
+      "dependents": 44,
+      "children": 2,
+      "expected": 0
+    },
+    {
+      "income": 9999999,
+      "dependents": 44,
+      "children": 3,
+      "expected": 0
+    },
+    {
+      "income": 9999999,
+      "dependents": 100,
+      "children": 0,
+      "expected": 0
+    },
+    {
+      "income": 9999999,
+      "dependents": 100,
+      "children": 1,
+      "expected": 0
+    },
+    {
+      "income": 9999999,
+      "dependents": 100,
+      "children": 2,
+      "expected": 0
+    },
+    {
+      "income": 9999999,
+      "dependents": 100,
+      "children": 3,
+      "expected": 0
+    },
+    {
+      "income": 10000000,
+      "dependents": 1,
+      "children": 0,
+      "expected": 1507400
+    },
+    {
+      "income": 10000000,
+      "dependents": 1,
+      "children": 1,
+      "expected": 1410740
+    },
+    {
+      "income": 10000000,
+      "dependents": 1,
+      "children": 2,
+      "expected": 1155010
+    },
+    {
+      "income": 10000000,
+      "dependents": 1,
+      "children": 3,
+      "expected": 1091680
+    },
+    {
+      "income": 10000000,
+      "dependents": 2,
+      "children": 0,
+      "expected": 1431570
+    },
+    {
+      "income": 10000000,
+      "dependents": 2,
+      "children": 1,
+      "expected": 1410740
+    },
+    {
+      "income": 10000000,
+      "dependents": 2,
+      "children": 2,
+      "expected": 1155010
+    },
+    {
+      "income": 10000000,
+      "dependents": 2,
+      "children": 3,
+      "expected": 1091680
+    },
+    {
+      "income": 10000000,
+      "dependents": 11,
+      "children": 0,
+      "expected": 960840
+    },
+    {
+      "income": 10000000,
+      "dependents": 11,
+      "children": 1,
+      "expected": 940010
+    },
+    {
+      "income": 10000000,
+      "dependents": 11,
+      "children": 2,
+      "expected": 915010
+    },
+    {
+      "income": 10000000,
+      "dependents": 11,
+      "children": 3,
+      "expected": 881680
+    },
+    {
+      "income": 10000000,
+      "dependents": 12,
+      "children": 0,
+      "expected": 930840
+    },
+    {
+      "income": 10000000,
+      "dependents": 12,
+      "children": 1,
+      "expected": 910010
+    },
+    {
+      "income": 10000000,
+      "dependents": 12,
+      "children": 2,
+      "expected": 885010
+    },
+    {
+      "income": 10000000,
+      "dependents": 12,
+      "children": 3,
+      "expected": 851680
+    },
+    {
+      "income": 10000000,
+      "dependents": 44,
+      "children": 0,
+      "expected": 0
+    },
+    {
+      "income": 10000000,
+      "dependents": 44,
+      "children": 1,
+      "expected": 0
+    },
+    {
+      "income": 10000000,
+      "dependents": 44,
+      "children": 2,
+      "expected": 0
+    },
+    {
+      "income": 10000000,
+      "dependents": 44,
+      "children": 3,
+      "expected": 0
+    },
+    {
+      "income": 10000000,
+      "dependents": 100,
+      "children": 0,
+      "expected": 0
+    },
+    {
+      "income": 10000000,
+      "dependents": 100,
+      "children": 1,
+      "expected": 0
+    },
+    {
+      "income": 10000000,
+      "dependents": 100,
+      "children": 2,
+      "expected": 0
+    },
+    {
+      "income": 10000000,
+      "dependents": 100,
+      "children": 3,
+      "expected": 0
+    },
+    {
+      "income": 10000001,
+      "dependents": 1,
+      "children": 0,
+      "expected": 1532400
+    },
+    {
+      "income": 10000001,
+      "dependents": 1,
+      "children": 1,
+      "expected": 1435740
+    },
+    {
+      "income": 10000001,
+      "dependents": 1,
+      "children": 2,
+      "expected": 1180010
+    },
+    {
+      "income": 10000001,
+      "dependents": 1,
+      "children": 3,
+      "expected": 1116680
+    },
+    {
+      "income": 10000001,
+      "dependents": 2,
+      "children": 0,
+      "expected": 1456570
+    },
+    {
+      "income": 10000001,
+      "dependents": 2,
+      "children": 1,
+      "expected": 1435740
+    },
+    {
+      "income": 10000001,
+      "dependents": 2,
+      "children": 2,
+      "expected": 1180010
+    },
+    {
+      "income": 10000001,
+      "dependents": 2,
+      "children": 3,
+      "expected": 1116680
+    },
+    {
+      "income": 10000001,
+      "dependents": 11,
+      "children": 0,
+      "expected": 985840
+    },
+    {
+      "income": 10000001,
+      "dependents": 11,
+      "children": 1,
+      "expected": 965010
+    },
+    {
+      "income": 10000001,
+      "dependents": 11,
+      "children": 2,
+      "expected": 940010
+    },
+    {
+      "income": 10000001,
+      "dependents": 11,
+      "children": 3,
+      "expected": 906680
+    },
+    {
+      "income": 10000001,
+      "dependents": 12,
+      "children": 0,
+      "expected": 955840
+    },
+    {
+      "income": 10000001,
+      "dependents": 12,
+      "children": 1,
+      "expected": 935010
+    },
+    {
+      "income": 10000001,
+      "dependents": 12,
+      "children": 2,
+      "expected": 910010
+    },
+    {
+      "income": 10000001,
+      "dependents": 12,
+      "children": 3,
+      "expected": 876680
+    },
+    {
+      "income": 10000001,
+      "dependents": 44,
+      "children": 0,
+      "expected": 0
+    },
+    {
+      "income": 10000001,
+      "dependents": 44,
+      "children": 1,
+      "expected": 0
+    },
+    {
+      "income": 10000001,
+      "dependents": 44,
+      "children": 2,
+      "expected": 0
+    },
+    {
+      "income": 10000001,
+      "dependents": 44,
+      "children": 3,
+      "expected": 0
+    },
+    {
+      "income": 10000001,
+      "dependents": 100,
+      "children": 0,
+      "expected": 0
+    },
+    {
+      "income": 10000001,
+      "dependents": 100,
+      "children": 1,
+      "expected": 0
+    },
+    {
+      "income": 10000001,
+      "dependents": 100,
+      "children": 2,
+      "expected": 0
+    },
+    {
+      "income": 10000001,
+      "dependents": 100,
+      "children": 3,
+      "expected": 0
+    },
+    {
+      "income": 13999999,
+      "dependents": 1,
+      "children": 0,
+      "expected": 2904390
+    },
+    {
+      "income": 13999999,
+      "dependents": 1,
+      "children": 1,
+      "expected": 2807730
+    },
+    {
+      "income": 13999999,
+      "dependents": 1,
+      "children": 2,
+      "expected": 2552000
+    },
+    {
+      "income": 13999999,
+      "dependents": 1,
+      "children": 3,
+      "expected": 2488670
+    },
+    {
+      "income": 13999999,
+      "dependents": 2,
+      "children": 0,
+      "expected": 2828560
+    },
+    {
+      "income": 13999999,
+      "dependents": 2,
+      "children": 1,
+      "expected": 2807730
+    },
+    {
+      "income": 13999999,
+      "dependents": 2,
+      "children": 2,
+      "expected": 2552000
+    },
+    {
+      "income": 13999999,
+      "dependents": 2,
+      "children": 3,
+      "expected": 2488670
+    },
+    {
+      "income": 13999999,
+      "dependents": 11,
+      "children": 0,
+      "expected": 2357830
+    },
+    {
+      "income": 13999999,
+      "dependents": 11,
+      "children": 1,
+      "expected": 2337000
+    },
+    {
+      "income": 13999999,
+      "dependents": 11,
+      "children": 2,
+      "expected": 2312000
+    },
+    {
+      "income": 13999999,
+      "dependents": 11,
+      "children": 3,
+      "expected": 2278670
+    },
+    {
+      "income": 13999999,
+      "dependents": 12,
+      "children": 0,
+      "expected": 2327830
+    },
+    {
+      "income": 13999999,
+      "dependents": 12,
+      "children": 1,
+      "expected": 2307000
+    },
+    {
+      "income": 13999999,
+      "dependents": 12,
+      "children": 2,
+      "expected": 2282000
+    },
+    {
+      "income": 13999999,
+      "dependents": 12,
+      "children": 3,
+      "expected": 2248670
+    },
+    {
+      "income": 13999999,
+      "dependents": 44,
+      "children": 0,
+      "expected": 1367830
+    },
+    {
+      "income": 13999999,
+      "dependents": 44,
+      "children": 1,
+      "expected": 1347000
+    },
+    {
+      "income": 13999999,
+      "dependents": 44,
+      "children": 2,
+      "expected": 1322000
+    },
+    {
+      "income": 13999999,
+      "dependents": 44,
+      "children": 3,
+      "expected": 1288670
+    },
+    {
+      "income": 13999999,
+      "dependents": 100,
+      "children": 0,
+      "expected": 0
+    },
+    {
+      "income": 13999999,
+      "dependents": 100,
+      "children": 1,
+      "expected": 0
+    },
+    {
+      "income": 13999999,
+      "dependents": 100,
+      "children": 2,
+      "expected": 0
+    },
+    {
+      "income": 13999999,
+      "dependents": 100,
+      "children": 3,
+      "expected": 0
+    },
+    {
+      "income": 14000000,
+      "dependents": 1,
+      "children": 0,
+      "expected": 2904400
+    },
+    {
+      "income": 14000000,
+      "dependents": 1,
+      "children": 1,
+      "expected": 2807740
+    },
+    {
+      "income": 14000000,
+      "dependents": 1,
+      "children": 2,
+      "expected": 2552010
+    },
+    {
+      "income": 14000000,
+      "dependents": 1,
+      "children": 3,
+      "expected": 2488680
+    },
+    {
+      "income": 14000000,
+      "dependents": 2,
+      "children": 0,
+      "expected": 2828570
+    },
+    {
+      "income": 14000000,
+      "dependents": 2,
+      "children": 1,
+      "expected": 2807740
+    },
+    {
+      "income": 14000000,
+      "dependents": 2,
+      "children": 2,
+      "expected": 2552010
+    },
+    {
+      "income": 14000000,
+      "dependents": 2,
+      "children": 3,
+      "expected": 2488680
+    },
+    {
+      "income": 14000000,
+      "dependents": 11,
+      "children": 0,
+      "expected": 2357840
+    },
+    {
+      "income": 14000000,
+      "dependents": 11,
+      "children": 1,
+      "expected": 2337010
+    },
+    {
+      "income": 14000000,
+      "dependents": 11,
+      "children": 2,
+      "expected": 2312010
+    },
+    {
+      "income": 14000000,
+      "dependents": 11,
+      "children": 3,
+      "expected": 2278680
+    },
+    {
+      "income": 14000000,
+      "dependents": 12,
+      "children": 0,
+      "expected": 2327840
+    },
+    {
+      "income": 14000000,
+      "dependents": 12,
+      "children": 1,
+      "expected": 2307010
+    },
+    {
+      "income": 14000000,
+      "dependents": 12,
+      "children": 2,
+      "expected": 2282010
+    },
+    {
+      "income": 14000000,
+      "dependents": 12,
+      "children": 3,
+      "expected": 2248680
+    },
+    {
+      "income": 14000000,
+      "dependents": 44,
+      "children": 0,
+      "expected": 1367840
+    },
+    {
+      "income": 14000000,
+      "dependents": 44,
+      "children": 1,
+      "expected": 1347010
+    },
+    {
+      "income": 14000000,
+      "dependents": 44,
+      "children": 2,
+      "expected": 1322010
+    },
+    {
+      "income": 14000000,
+      "dependents": 44,
+      "children": 3,
+      "expected": 1288680
+    },
+    {
+      "income": 14000000,
+      "dependents": 100,
+      "children": 0,
+      "expected": 0
+    },
+    {
+      "income": 14000000,
+      "dependents": 100,
+      "children": 1,
+      "expected": 0
+    },
+    {
+      "income": 14000000,
+      "dependents": 100,
+      "children": 2,
+      "expected": 0
+    },
+    {
+      "income": 14000000,
+      "dependents": 100,
+      "children": 3,
+      "expected": 0
+    },
+    {
+      "income": 14000001,
+      "dependents": 1,
+      "children": 0,
+      "expected": 2904400
+    },
+    {
+      "income": 14000001,
+      "dependents": 1,
+      "children": 1,
+      "expected": 2807740
+    },
+    {
+      "income": 14000001,
+      "dependents": 1,
+      "children": 2,
+      "expected": 2552010
+    },
+    {
+      "income": 14000001,
+      "dependents": 1,
+      "children": 3,
+      "expected": 2488680
+    },
+    {
+      "income": 14000001,
+      "dependents": 2,
+      "children": 0,
+      "expected": 2828570
+    },
+    {
+      "income": 14000001,
+      "dependents": 2,
+      "children": 1,
+      "expected": 2807740
+    },
+    {
+      "income": 14000001,
+      "dependents": 2,
+      "children": 2,
+      "expected": 2552010
+    },
+    {
+      "income": 14000001,
+      "dependents": 2,
+      "children": 3,
+      "expected": 2488680
+    },
+    {
+      "income": 14000001,
+      "dependents": 11,
+      "children": 0,
+      "expected": 2357840
+    },
+    {
+      "income": 14000001,
+      "dependents": 11,
+      "children": 1,
+      "expected": 2337010
+    },
+    {
+      "income": 14000001,
+      "dependents": 11,
+      "children": 2,
+      "expected": 2312010
+    },
+    {
+      "income": 14000001,
+      "dependents": 11,
+      "children": 3,
+      "expected": 2278680
+    },
+    {
+      "income": 14000001,
+      "dependents": 12,
+      "children": 0,
+      "expected": 2327840
+    },
+    {
+      "income": 14000001,
+      "dependents": 12,
+      "children": 1,
+      "expected": 2307010
+    },
+    {
+      "income": 14000001,
+      "dependents": 12,
+      "children": 2,
+      "expected": 2282010
+    },
+    {
+      "income": 14000001,
+      "dependents": 12,
+      "children": 3,
+      "expected": 2248680
+    },
+    {
+      "income": 14000001,
+      "dependents": 44,
+      "children": 0,
+      "expected": 1367840
+    },
+    {
+      "income": 14000001,
+      "dependents": 44,
+      "children": 1,
+      "expected": 1347010
+    },
+    {
+      "income": 14000001,
+      "dependents": 44,
+      "children": 2,
+      "expected": 1322010
+    },
+    {
+      "income": 14000001,
+      "dependents": 44,
+      "children": 3,
+      "expected": 1288680
+    },
+    {
+      "income": 14000001,
+      "dependents": 100,
+      "children": 0,
+      "expected": 0
+    },
+    {
+      "income": 14000001,
+      "dependents": 100,
+      "children": 1,
+      "expected": 0
+    },
+    {
+      "income": 14000001,
+      "dependents": 100,
+      "children": 2,
+      "expected": 0
+    },
+    {
+      "income": 14000001,
+      "dependents": 100,
+      "children": 3,
+      "expected": 0
+    },
+    {
+      "income": 27999999,
+      "dependents": 1,
+      "children": 0,
+      "expected": 8117990
+    },
+    {
+      "income": 27999999,
+      "dependents": 1,
+      "children": 1,
+      "expected": 8021330
+    },
+    {
+      "income": 27999999,
+      "dependents": 1,
+      "children": 2,
+      "expected": 7765600
+    },
+    {
+      "income": 27999999,
+      "dependents": 1,
+      "children": 3,
+      "expected": 7702270
+    },
+    {
+      "income": 27999999,
+      "dependents": 2,
+      "children": 0,
+      "expected": 8042160
+    },
+    {
+      "income": 27999999,
+      "dependents": 2,
+      "children": 1,
+      "expected": 8021330
+    },
+    {
+      "income": 27999999,
+      "dependents": 2,
+      "children": 2,
+      "expected": 7765600
+    },
+    {
+      "income": 27999999,
+      "dependents": 2,
+      "children": 3,
+      "expected": 7702270
+    },
+    {
+      "income": 27999999,
+      "dependents": 11,
+      "children": 0,
+      "expected": 7571430
+    },
+    {
+      "income": 27999999,
+      "dependents": 11,
+      "children": 1,
+      "expected": 7550600
+    },
+    {
+      "income": 27999999,
+      "dependents": 11,
+      "children": 2,
+      "expected": 7525600
+    },
+    {
+      "income": 27999999,
+      "dependents": 11,
+      "children": 3,
+      "expected": 7492270
+    },
+    {
+      "income": 27999999,
+      "dependents": 12,
+      "children": 0,
+      "expected": 7541430
+    },
+    {
+      "income": 27999999,
+      "dependents": 12,
+      "children": 1,
+      "expected": 7520600
+    },
+    {
+      "income": 27999999,
+      "dependents": 12,
+      "children": 2,
+      "expected": 7495600
+    },
+    {
+      "income": 27999999,
+      "dependents": 12,
+      "children": 3,
+      "expected": 7462270
+    },
+    {
+      "income": 27999999,
+      "dependents": 44,
+      "children": 0,
+      "expected": 6581430
+    },
+    {
+      "income": 27999999,
+      "dependents": 44,
+      "children": 1,
+      "expected": 6560600
+    },
+    {
+      "income": 27999999,
+      "dependents": 44,
+      "children": 2,
+      "expected": 6535600
+    },
+    {
+      "income": 27999999,
+      "dependents": 44,
+      "children": 3,
+      "expected": 6502270
+    },
+    {
+      "income": 27999999,
+      "dependents": 100,
+      "children": 0,
+      "expected": 4901430
+    },
+    {
+      "income": 27999999,
+      "dependents": 100,
+      "children": 1,
+      "expected": 4880600
+    },
+    {
+      "income": 27999999,
+      "dependents": 100,
+      "children": 2,
+      "expected": 4855600
+    },
+    {
+      "income": 27999999,
+      "dependents": 100,
+      "children": 3,
+      "expected": 4822270
+    },
+    {
+      "income": 28000000,
+      "dependents": 1,
+      "children": 0,
+      "expected": 8118000
+    },
+    {
+      "income": 28000000,
+      "dependents": 1,
+      "children": 1,
+      "expected": 8021340
+    },
+    {
+      "income": 28000000,
+      "dependents": 1,
+      "children": 2,
+      "expected": 7765610
+    },
+    {
+      "income": 28000000,
+      "dependents": 1,
+      "children": 3,
+      "expected": 7702280
+    },
+    {
+      "income": 28000000,
+      "dependents": 2,
+      "children": 0,
+      "expected": 8042170
+    },
+    {
+      "income": 28000000,
+      "dependents": 2,
+      "children": 1,
+      "expected": 8021340
+    },
+    {
+      "income": 28000000,
+      "dependents": 2,
+      "children": 2,
+      "expected": 7765610
+    },
+    {
+      "income": 28000000,
+      "dependents": 2,
+      "children": 3,
+      "expected": 7702280
+    },
+    {
+      "income": 28000000,
+      "dependents": 11,
+      "children": 0,
+      "expected": 7571440
+    },
+    {
+      "income": 28000000,
+      "dependents": 11,
+      "children": 1,
+      "expected": 7550610
+    },
+    {
+      "income": 28000000,
+      "dependents": 11,
+      "children": 2,
+      "expected": 7525610
+    },
+    {
+      "income": 28000000,
+      "dependents": 11,
+      "children": 3,
+      "expected": 7492280
+    },
+    {
+      "income": 28000000,
+      "dependents": 12,
+      "children": 0,
+      "expected": 7541440
+    },
+    {
+      "income": 28000000,
+      "dependents": 12,
+      "children": 1,
+      "expected": 7520610
+    },
+    {
+      "income": 28000000,
+      "dependents": 12,
+      "children": 2,
+      "expected": 7495610
+    },
+    {
+      "income": 28000000,
+      "dependents": 12,
+      "children": 3,
+      "expected": 7462280
+    },
+    {
+      "income": 28000000,
+      "dependents": 44,
+      "children": 0,
+      "expected": 6581440
+    },
+    {
+      "income": 28000000,
+      "dependents": 44,
+      "children": 1,
+      "expected": 6560610
+    },
+    {
+      "income": 28000000,
+      "dependents": 44,
+      "children": 2,
+      "expected": 6535610
+    },
+    {
+      "income": 28000000,
+      "dependents": 44,
+      "children": 3,
+      "expected": 6502280
+    },
+    {
+      "income": 28000000,
+      "dependents": 100,
+      "children": 0,
+      "expected": 4901440
+    },
+    {
+      "income": 28000000,
+      "dependents": 100,
+      "children": 1,
+      "expected": 4880610
+    },
+    {
+      "income": 28000000,
+      "dependents": 100,
+      "children": 2,
+      "expected": 4855610
+    },
+    {
+      "income": 28000000,
+      "dependents": 100,
+      "children": 3,
+      "expected": 4822280
+    },
+    {
+      "income": 28000001,
+      "dependents": 1,
+      "children": 0,
+      "expected": 8118000
+    },
+    {
+      "income": 28000001,
+      "dependents": 1,
+      "children": 1,
+      "expected": 8021340
+    },
+    {
+      "income": 28000001,
+      "dependents": 1,
+      "children": 2,
+      "expected": 7765610
+    },
+    {
+      "income": 28000001,
+      "dependents": 1,
+      "children": 3,
+      "expected": 7702280
+    },
+    {
+      "income": 28000001,
+      "dependents": 2,
+      "children": 0,
+      "expected": 8042170
+    },
+    {
+      "income": 28000001,
+      "dependents": 2,
+      "children": 1,
+      "expected": 8021340
+    },
+    {
+      "income": 28000001,
+      "dependents": 2,
+      "children": 2,
+      "expected": 7765610
+    },
+    {
+      "income": 28000001,
+      "dependents": 2,
+      "children": 3,
+      "expected": 7702280
+    },
+    {
+      "income": 28000001,
+      "dependents": 11,
+      "children": 0,
+      "expected": 7571440
+    },
+    {
+      "income": 28000001,
+      "dependents": 11,
+      "children": 1,
+      "expected": 7550610
+    },
+    {
+      "income": 28000001,
+      "dependents": 11,
+      "children": 2,
+      "expected": 7525610
+    },
+    {
+      "income": 28000001,
+      "dependents": 11,
+      "children": 3,
+      "expected": 7492280
+    },
+    {
+      "income": 28000001,
+      "dependents": 12,
+      "children": 0,
+      "expected": 7541440
+    },
+    {
+      "income": 28000001,
+      "dependents": 12,
+      "children": 1,
+      "expected": 7520610
+    },
+    {
+      "income": 28000001,
+      "dependents": 12,
+      "children": 2,
+      "expected": 7495610
+    },
+    {
+      "income": 28000001,
+      "dependents": 12,
+      "children": 3,
+      "expected": 7462280
+    },
+    {
+      "income": 28000001,
+      "dependents": 44,
+      "children": 0,
+      "expected": 6581440
+    },
+    {
+      "income": 28000001,
+      "dependents": 44,
+      "children": 1,
+      "expected": 6560610
+    },
+    {
+      "income": 28000001,
+      "dependents": 44,
+      "children": 2,
+      "expected": 6535610
+    },
+    {
+      "income": 28000001,
+      "dependents": 44,
+      "children": 3,
+      "expected": 6502280
+    },
+    {
+      "income": 28000001,
+      "dependents": 100,
+      "children": 0,
+      "expected": 4901440
+    },
+    {
+      "income": 28000001,
+      "dependents": 100,
+      "children": 1,
+      "expected": 4880610
+    },
+    {
+      "income": 28000001,
+      "dependents": 100,
+      "children": 2,
+      "expected": 4855610
+    },
+    {
+      "income": 28000001,
+      "dependents": 100,
+      "children": 3,
+      "expected": 4822280
+    },
+    {
+      "income": 29999999,
+      "dependents": 1,
+      "children": 0,
+      "expected": 8901990
+    },
+    {
+      "income": 29999999,
+      "dependents": 1,
+      "children": 1,
+      "expected": 8805330
+    },
+    {
+      "income": 29999999,
+      "dependents": 1,
+      "children": 2,
+      "expected": 8549600
+    },
+    {
+      "income": 29999999,
+      "dependents": 1,
+      "children": 3,
+      "expected": 8486270
+    },
+    {
+      "income": 29999999,
+      "dependents": 2,
+      "children": 0,
+      "expected": 8826160
+    },
+    {
+      "income": 29999999,
+      "dependents": 2,
+      "children": 1,
+      "expected": 8805330
+    },
+    {
+      "income": 29999999,
+      "dependents": 2,
+      "children": 2,
+      "expected": 8549600
+    },
+    {
+      "income": 29999999,
+      "dependents": 2,
+      "children": 3,
+      "expected": 8486270
+    },
+    {
+      "income": 29999999,
+      "dependents": 11,
+      "children": 0,
+      "expected": 8355430
+    },
+    {
+      "income": 29999999,
+      "dependents": 11,
+      "children": 1,
+      "expected": 8334600
+    },
+    {
+      "income": 29999999,
+      "dependents": 11,
+      "children": 2,
+      "expected": 8309600
+    },
+    {
+      "income": 29999999,
+      "dependents": 11,
+      "children": 3,
+      "expected": 8276270
+    },
+    {
+      "income": 29999999,
+      "dependents": 12,
+      "children": 0,
+      "expected": 8325430
+    },
+    {
+      "income": 29999999,
+      "dependents": 12,
+      "children": 1,
+      "expected": 8304600
+    },
+    {
+      "income": 29999999,
+      "dependents": 12,
+      "children": 2,
+      "expected": 8279600
+    },
+    {
+      "income": 29999999,
+      "dependents": 12,
+      "children": 3,
+      "expected": 8246270
+    },
+    {
+      "income": 29999999,
+      "dependents": 44,
+      "children": 0,
+      "expected": 7365430
+    },
+    {
+      "income": 29999999,
+      "dependents": 44,
+      "children": 1,
+      "expected": 7344600
+    },
+    {
+      "income": 29999999,
+      "dependents": 44,
+      "children": 2,
+      "expected": 7319600
+    },
+    {
+      "income": 29999999,
+      "dependents": 44,
+      "children": 3,
+      "expected": 7286270
+    },
+    {
+      "income": 29999999,
+      "dependents": 100,
+      "children": 0,
+      "expected": 5685430
+    },
+    {
+      "income": 29999999,
+      "dependents": 100,
+      "children": 1,
+      "expected": 5664600
+    },
+    {
+      "income": 29999999,
+      "dependents": 100,
+      "children": 2,
+      "expected": 5639600
+    },
+    {
+      "income": 29999999,
+      "dependents": 100,
+      "children": 3,
+      "expected": 5606270
+    },
+    {
+      "income": 30000000,
+      "dependents": 1,
+      "children": 0,
+      "expected": 8902000
+    },
+    {
+      "income": 30000000,
+      "dependents": 1,
+      "children": 1,
+      "expected": 8805340
+    },
+    {
+      "income": 30000000,
+      "dependents": 1,
+      "children": 2,
+      "expected": 8549610
+    },
+    {
+      "income": 30000000,
+      "dependents": 1,
+      "children": 3,
+      "expected": 8486280
+    },
+    {
+      "income": 30000000,
+      "dependents": 2,
+      "children": 0,
+      "expected": 8826170
+    },
+    {
+      "income": 30000000,
+      "dependents": 2,
+      "children": 1,
+      "expected": 8805340
+    },
+    {
+      "income": 30000000,
+      "dependents": 2,
+      "children": 2,
+      "expected": 8549610
+    },
+    {
+      "income": 30000000,
+      "dependents": 2,
+      "children": 3,
+      "expected": 8486280
+    },
+    {
+      "income": 30000000,
+      "dependents": 11,
+      "children": 0,
+      "expected": 8355440
+    },
+    {
+      "income": 30000000,
+      "dependents": 11,
+      "children": 1,
+      "expected": 8334610
+    },
+    {
+      "income": 30000000,
+      "dependents": 11,
+      "children": 2,
+      "expected": 8309610
+    },
+    {
+      "income": 30000000,
+      "dependents": 11,
+      "children": 3,
+      "expected": 8276280
+    },
+    {
+      "income": 30000000,
+      "dependents": 12,
+      "children": 0,
+      "expected": 8325440
+    },
+    {
+      "income": 30000000,
+      "dependents": 12,
+      "children": 1,
+      "expected": 8304610
+    },
+    {
+      "income": 30000000,
+      "dependents": 12,
+      "children": 2,
+      "expected": 8279610
+    },
+    {
+      "income": 30000000,
+      "dependents": 12,
+      "children": 3,
+      "expected": 8246280
+    },
+    {
+      "income": 30000000,
+      "dependents": 44,
+      "children": 0,
+      "expected": 7365440
+    },
+    {
+      "income": 30000000,
+      "dependents": 44,
+      "children": 1,
+      "expected": 7344610
+    },
+    {
+      "income": 30000000,
+      "dependents": 44,
+      "children": 2,
+      "expected": 7319610
+    },
+    {
+      "income": 30000000,
+      "dependents": 44,
+      "children": 3,
+      "expected": 7286280
+    },
+    {
+      "income": 30000000,
+      "dependents": 100,
+      "children": 0,
+      "expected": 5685440
+    },
+    {
+      "income": 30000000,
+      "dependents": 100,
+      "children": 1,
+      "expected": 5664610
+    },
+    {
+      "income": 30000000,
+      "dependents": 100,
+      "children": 2,
+      "expected": 5639610
+    },
+    {
+      "income": 30000000,
+      "dependents": 100,
+      "children": 3,
+      "expected": 5606280
+    },
+    {
+      "income": 30000001,
+      "dependents": 1,
+      "children": 0,
+      "expected": 8902000
+    },
+    {
+      "income": 30000001,
+      "dependents": 1,
+      "children": 1,
+      "expected": 8805340
+    },
+    {
+      "income": 30000001,
+      "dependents": 1,
+      "children": 2,
+      "expected": 8549610
+    },
+    {
+      "income": 30000001,
+      "dependents": 1,
+      "children": 3,
+      "expected": 8486280
+    },
+    {
+      "income": 30000001,
+      "dependents": 2,
+      "children": 0,
+      "expected": 8826170
+    },
+    {
+      "income": 30000001,
+      "dependents": 2,
+      "children": 1,
+      "expected": 8805340
+    },
+    {
+      "income": 30000001,
+      "dependents": 2,
+      "children": 2,
+      "expected": 8549610
+    },
+    {
+      "income": 30000001,
+      "dependents": 2,
+      "children": 3,
+      "expected": 8486280
+    },
+    {
+      "income": 30000001,
+      "dependents": 11,
+      "children": 0,
+      "expected": 8355440
+    },
+    {
+      "income": 30000001,
+      "dependents": 11,
+      "children": 1,
+      "expected": 8334610
+    },
+    {
+      "income": 30000001,
+      "dependents": 11,
+      "children": 2,
+      "expected": 8309610
+    },
+    {
+      "income": 30000001,
+      "dependents": 11,
+      "children": 3,
+      "expected": 8276280
+    },
+    {
+      "income": 30000001,
+      "dependents": 12,
+      "children": 0,
+      "expected": 8325440
+    },
+    {
+      "income": 30000001,
+      "dependents": 12,
+      "children": 1,
+      "expected": 8304610
+    },
+    {
+      "income": 30000001,
+      "dependents": 12,
+      "children": 2,
+      "expected": 8279610
+    },
+    {
+      "income": 30000001,
+      "dependents": 12,
+      "children": 3,
+      "expected": 8246280
+    },
+    {
+      "income": 30000001,
+      "dependents": 44,
+      "children": 0,
+      "expected": 7365440
+    },
+    {
+      "income": 30000001,
+      "dependents": 44,
+      "children": 1,
+      "expected": 7344610
+    },
+    {
+      "income": 30000001,
+      "dependents": 44,
+      "children": 2,
+      "expected": 7319610
+    },
+    {
+      "income": 30000001,
+      "dependents": 44,
+      "children": 3,
+      "expected": 7286280
+    },
+    {
+      "income": 30000001,
+      "dependents": 100,
+      "children": 0,
+      "expected": 5685440
+    },
+    {
+      "income": 30000001,
+      "dependents": 100,
+      "children": 1,
+      "expected": 5664610
+    },
+    {
+      "income": 30000001,
+      "dependents": 100,
+      "children": 2,
+      "expected": 5639610
+    },
+    {
+      "income": 30000001,
+      "dependents": 100,
+      "children": 3,
+      "expected": 5606280
+    },
+    {
+      "income": 44999999,
+      "dependents": 1,
+      "children": 0,
+      "expected": 14901990
+    },
+    {
+      "income": 44999999,
+      "dependents": 1,
+      "children": 1,
+      "expected": 14805330
+    },
+    {
+      "income": 44999999,
+      "dependents": 1,
+      "children": 2,
+      "expected": 14549600
+    },
+    {
+      "income": 44999999,
+      "dependents": 1,
+      "children": 3,
+      "expected": 14486270
+    },
+    {
+      "income": 44999999,
+      "dependents": 2,
+      "children": 0,
+      "expected": 14826160
+    },
+    {
+      "income": 44999999,
+      "dependents": 2,
+      "children": 1,
+      "expected": 14805330
+    },
+    {
+      "income": 44999999,
+      "dependents": 2,
+      "children": 2,
+      "expected": 14549600
+    },
+    {
+      "income": 44999999,
+      "dependents": 2,
+      "children": 3,
+      "expected": 14486270
+    },
+    {
+      "income": 44999999,
+      "dependents": 11,
+      "children": 0,
+      "expected": 14355430
+    },
+    {
+      "income": 44999999,
+      "dependents": 11,
+      "children": 1,
+      "expected": 14334600
+    },
+    {
+      "income": 44999999,
+      "dependents": 11,
+      "children": 2,
+      "expected": 14309600
+    },
+    {
+      "income": 44999999,
+      "dependents": 11,
+      "children": 3,
+      "expected": 14276270
+    },
+    {
+      "income": 44999999,
+      "dependents": 12,
+      "children": 0,
+      "expected": 14325430
+    },
+    {
+      "income": 44999999,
+      "dependents": 12,
+      "children": 1,
+      "expected": 14304600
+    },
+    {
+      "income": 44999999,
+      "dependents": 12,
+      "children": 2,
+      "expected": 14279600
+    },
+    {
+      "income": 44999999,
+      "dependents": 12,
+      "children": 3,
+      "expected": 14246270
+    },
+    {
+      "income": 44999999,
+      "dependents": 44,
+      "children": 0,
+      "expected": 13365430
+    },
+    {
+      "income": 44999999,
+      "dependents": 44,
+      "children": 1,
+      "expected": 13344600
+    },
+    {
+      "income": 44999999,
+      "dependents": 44,
+      "children": 2,
+      "expected": 13319600
+    },
+    {
+      "income": 44999999,
+      "dependents": 44,
+      "children": 3,
+      "expected": 13286270
+    },
+    {
+      "income": 44999999,
+      "dependents": 100,
+      "children": 0,
+      "expected": 11685430
+    },
+    {
+      "income": 44999999,
+      "dependents": 100,
+      "children": 1,
+      "expected": 11664600
+    },
+    {
+      "income": 44999999,
+      "dependents": 100,
+      "children": 2,
+      "expected": 11639600
+    },
+    {
+      "income": 44999999,
+      "dependents": 100,
+      "children": 3,
+      "expected": 11606270
+    },
+    {
+      "income": 45000000,
+      "dependents": 1,
+      "children": 0,
+      "expected": 14902000
+    },
+    {
+      "income": 45000000,
+      "dependents": 1,
+      "children": 1,
+      "expected": 14805340
+    },
+    {
+      "income": 45000000,
+      "dependents": 1,
+      "children": 2,
+      "expected": 14549610
+    },
+    {
+      "income": 45000000,
+      "dependents": 1,
+      "children": 3,
+      "expected": 14486280
+    },
+    {
+      "income": 45000000,
+      "dependents": 2,
+      "children": 0,
+      "expected": 14826170
+    },
+    {
+      "income": 45000000,
+      "dependents": 2,
+      "children": 1,
+      "expected": 14805340
+    },
+    {
+      "income": 45000000,
+      "dependents": 2,
+      "children": 2,
+      "expected": 14549610
+    },
+    {
+      "income": 45000000,
+      "dependents": 2,
+      "children": 3,
+      "expected": 14486280
+    },
+    {
+      "income": 45000000,
+      "dependents": 11,
+      "children": 0,
+      "expected": 14355440
+    },
+    {
+      "income": 45000000,
+      "dependents": 11,
+      "children": 1,
+      "expected": 14334610
+    },
+    {
+      "income": 45000000,
+      "dependents": 11,
+      "children": 2,
+      "expected": 14309610
+    },
+    {
+      "income": 45000000,
+      "dependents": 11,
+      "children": 3,
+      "expected": 14276280
+    },
+    {
+      "income": 45000000,
+      "dependents": 12,
+      "children": 0,
+      "expected": 14325440
+    },
+    {
+      "income": 45000000,
+      "dependents": 12,
+      "children": 1,
+      "expected": 14304610
+    },
+    {
+      "income": 45000000,
+      "dependents": 12,
+      "children": 2,
+      "expected": 14279610
+    },
+    {
+      "income": 45000000,
+      "dependents": 12,
+      "children": 3,
+      "expected": 14246280
+    },
+    {
+      "income": 45000000,
+      "dependents": 44,
+      "children": 0,
+      "expected": 13365440
+    },
+    {
+      "income": 45000000,
+      "dependents": 44,
+      "children": 1,
+      "expected": 13344610
+    },
+    {
+      "income": 45000000,
+      "dependents": 44,
+      "children": 2,
+      "expected": 13319610
+    },
+    {
+      "income": 45000000,
+      "dependents": 44,
+      "children": 3,
+      "expected": 13286280
+    },
+    {
+      "income": 45000000,
+      "dependents": 100,
+      "children": 0,
+      "expected": 11685440
+    },
+    {
+      "income": 45000000,
+      "dependents": 100,
+      "children": 1,
+      "expected": 11664610
+    },
+    {
+      "income": 45000000,
+      "dependents": 100,
+      "children": 2,
+      "expected": 11639610
+    },
+    {
+      "income": 45000000,
+      "dependents": 100,
+      "children": 3,
+      "expected": 11606280
+    },
+    {
+      "income": 45000001,
+      "dependents": 1,
+      "children": 0,
+      "expected": 14902000
+    },
+    {
+      "income": 45000001,
+      "dependents": 1,
+      "children": 1,
+      "expected": 14805340
+    },
+    {
+      "income": 45000001,
+      "dependents": 1,
+      "children": 2,
+      "expected": 14549610
+    },
+    {
+      "income": 45000001,
+      "dependents": 1,
+      "children": 3,
+      "expected": 14486280
+    },
+    {
+      "income": 45000001,
+      "dependents": 2,
+      "children": 0,
+      "expected": 14826170
+    },
+    {
+      "income": 45000001,
+      "dependents": 2,
+      "children": 1,
+      "expected": 14805340
+    },
+    {
+      "income": 45000001,
+      "dependents": 2,
+      "children": 2,
+      "expected": 14549610
+    },
+    {
+      "income": 45000001,
+      "dependents": 2,
+      "children": 3,
+      "expected": 14486280
+    },
+    {
+      "income": 45000001,
+      "dependents": 11,
+      "children": 0,
+      "expected": 14355440
+    },
+    {
+      "income": 45000001,
+      "dependents": 11,
+      "children": 1,
+      "expected": 14334610
+    },
+    {
+      "income": 45000001,
+      "dependents": 11,
+      "children": 2,
+      "expected": 14309610
+    },
+    {
+      "income": 45000001,
+      "dependents": 11,
+      "children": 3,
+      "expected": 14276280
+    },
+    {
+      "income": 45000001,
+      "dependents": 12,
+      "children": 0,
+      "expected": 14325440
+    },
+    {
+      "income": 45000001,
+      "dependents": 12,
+      "children": 1,
+      "expected": 14304610
+    },
+    {
+      "income": 45000001,
+      "dependents": 12,
+      "children": 2,
+      "expected": 14279610
+    },
+    {
+      "income": 45000001,
+      "dependents": 12,
+      "children": 3,
+      "expected": 14246280
+    },
+    {
+      "income": 45000001,
+      "dependents": 44,
+      "children": 0,
+      "expected": 13365440
+    },
+    {
+      "income": 45000001,
+      "dependents": 44,
+      "children": 1,
+      "expected": 13344610
+    },
+    {
+      "income": 45000001,
+      "dependents": 44,
+      "children": 2,
+      "expected": 13319610
+    },
+    {
+      "income": 45000001,
+      "dependents": 44,
+      "children": 3,
+      "expected": 13286280
+    },
+    {
+      "income": 45000001,
+      "dependents": 100,
+      "children": 0,
+      "expected": 11685440
+    },
+    {
+      "income": 45000001,
+      "dependents": 100,
+      "children": 1,
+      "expected": 11664610
+    },
+    {
+      "income": 45000001,
+      "dependents": 100,
+      "children": 2,
+      "expected": 11639610
+    },
+    {
+      "income": 45000001,
+      "dependents": 100,
+      "children": 3,
+      "expected": 11606280
+    },
+    {
+      "income": 86999999,
+      "dependents": 1,
+      "children": 0,
+      "expected": 32541990
+    },
+    {
+      "income": 86999999,
+      "dependents": 1,
+      "children": 1,
+      "expected": 32445330
+    },
+    {
+      "income": 86999999,
+      "dependents": 1,
+      "children": 2,
+      "expected": 32189600
+    },
+    {
+      "income": 86999999,
+      "dependents": 1,
+      "children": 3,
+      "expected": 32126270
+    },
+    {
+      "income": 86999999,
+      "dependents": 2,
+      "children": 0,
+      "expected": 32466160
+    },
+    {
+      "income": 86999999,
+      "dependents": 2,
+      "children": 1,
+      "expected": 32445330
+    },
+    {
+      "income": 86999999,
+      "dependents": 2,
+      "children": 2,
+      "expected": 32189600
+    },
+    {
+      "income": 86999999,
+      "dependents": 2,
+      "children": 3,
+      "expected": 32126270
+    },
+    {
+      "income": 86999999,
+      "dependents": 11,
+      "children": 0,
+      "expected": 31995430
+    },
+    {
+      "income": 86999999,
+      "dependents": 11,
+      "children": 1,
+      "expected": 31974600
+    },
+    {
+      "income": 86999999,
+      "dependents": 11,
+      "children": 2,
+      "expected": 31949600
+    },
+    {
+      "income": 86999999,
+      "dependents": 11,
+      "children": 3,
+      "expected": 31916270
+    },
+    {
+      "income": 86999999,
+      "dependents": 12,
+      "children": 0,
+      "expected": 31965430
+    },
+    {
+      "income": 86999999,
+      "dependents": 12,
+      "children": 1,
+      "expected": 31944600
+    },
+    {
+      "income": 86999999,
+      "dependents": 12,
+      "children": 2,
+      "expected": 31919600
+    },
+    {
+      "income": 86999999,
+      "dependents": 12,
+      "children": 3,
+      "expected": 31886270
+    },
+    {
+      "income": 86999999,
+      "dependents": 44,
+      "children": 0,
+      "expected": 31005430
+    },
+    {
+      "income": 86999999,
+      "dependents": 44,
+      "children": 1,
+      "expected": 30984600
+    },
+    {
+      "income": 86999999,
+      "dependents": 44,
+      "children": 2,
+      "expected": 30959600
+    },
+    {
+      "income": 86999999,
+      "dependents": 44,
+      "children": 3,
+      "expected": 30926270
+    },
+    {
+      "income": 86999999,
+      "dependents": 100,
+      "children": 0,
+      "expected": 29325430
+    },
+    {
+      "income": 86999999,
+      "dependents": 100,
+      "children": 1,
+      "expected": 29304600
+    },
+    {
+      "income": 86999999,
+      "dependents": 100,
+      "children": 2,
+      "expected": 29279600
+    },
+    {
+      "income": 86999999,
+      "dependents": 100,
+      "children": 3,
+      "expected": 29246270
+    },
+    {
+      "income": 87000000,
+      "dependents": 1,
+      "children": 0,
+      "expected": 32542000
+    },
+    {
+      "income": 87000000,
+      "dependents": 1,
+      "children": 1,
+      "expected": 32445340
+    },
+    {
+      "income": 87000000,
+      "dependents": 1,
+      "children": 2,
+      "expected": 32189610
+    },
+    {
+      "income": 87000000,
+      "dependents": 1,
+      "children": 3,
+      "expected": 32126280
+    },
+    {
+      "income": 87000000,
+      "dependents": 2,
+      "children": 0,
+      "expected": 32466170
+    },
+    {
+      "income": 87000000,
+      "dependents": 2,
+      "children": 1,
+      "expected": 32445340
+    },
+    {
+      "income": 87000000,
+      "dependents": 2,
+      "children": 2,
+      "expected": 32189610
+    },
+    {
+      "income": 87000000,
+      "dependents": 2,
+      "children": 3,
+      "expected": 32126280
+    },
+    {
+      "income": 87000000,
+      "dependents": 11,
+      "children": 0,
+      "expected": 31995440
+    },
+    {
+      "income": 87000000,
+      "dependents": 11,
+      "children": 1,
+      "expected": 31974610
+    },
+    {
+      "income": 87000000,
+      "dependents": 11,
+      "children": 2,
+      "expected": 31949610
+    },
+    {
+      "income": 87000000,
+      "dependents": 11,
+      "children": 3,
+      "expected": 31916280
+    },
+    {
+      "income": 87000000,
+      "dependents": 12,
+      "children": 0,
+      "expected": 31965440
+    },
+    {
+      "income": 87000000,
+      "dependents": 12,
+      "children": 1,
+      "expected": 31944610
+    },
+    {
+      "income": 87000000,
+      "dependents": 12,
+      "children": 2,
+      "expected": 31919610
+    },
+    {
+      "income": 87000000,
+      "dependents": 12,
+      "children": 3,
+      "expected": 31886280
+    },
+    {
+      "income": 87000000,
+      "dependents": 44,
+      "children": 0,
+      "expected": 31005440
+    },
+    {
+      "income": 87000000,
+      "dependents": 44,
+      "children": 1,
+      "expected": 30984610
+    },
+    {
+      "income": 87000000,
+      "dependents": 44,
+      "children": 2,
+      "expected": 30959610
+    },
+    {
+      "income": 87000000,
+      "dependents": 44,
+      "children": 3,
+      "expected": 30926280
+    },
+    {
+      "income": 87000000,
+      "dependents": 100,
+      "children": 0,
+      "expected": 29325440
+    },
+    {
+      "income": 87000000,
+      "dependents": 100,
+      "children": 1,
+      "expected": 29304610
+    },
+    {
+      "income": 87000000,
+      "dependents": 100,
+      "children": 2,
+      "expected": 29279610
+    },
+    {
+      "income": 87000000,
+      "dependents": 100,
+      "children": 3,
+      "expected": 29246280
+    },
+    {
+      "income": 87000001,
+      "dependents": 1,
+      "children": 0,
+      "expected": 32542000
+    },
+    {
+      "income": 87000001,
+      "dependents": 1,
+      "children": 1,
+      "expected": 32445340
+    },
+    {
+      "income": 87000001,
+      "dependents": 1,
+      "children": 2,
+      "expected": 32189610
+    },
+    {
+      "income": 87000001,
+      "dependents": 1,
+      "children": 3,
+      "expected": 32126280
+    },
+    {
+      "income": 87000001,
+      "dependents": 2,
+      "children": 0,
+      "expected": 32466170
+    },
+    {
+      "income": 87000001,
+      "dependents": 2,
+      "children": 1,
+      "expected": 32445340
+    },
+    {
+      "income": 87000001,
+      "dependents": 2,
+      "children": 2,
+      "expected": 32189610
+    },
+    {
+      "income": 87000001,
+      "dependents": 2,
+      "children": 3,
+      "expected": 32126280
+    },
+    {
+      "income": 87000001,
+      "dependents": 11,
+      "children": 0,
+      "expected": 31995440
+    },
+    {
+      "income": 87000001,
+      "dependents": 11,
+      "children": 1,
+      "expected": 31974610
+    },
+    {
+      "income": 87000001,
+      "dependents": 11,
+      "children": 2,
+      "expected": 31949610
+    },
+    {
+      "income": 87000001,
+      "dependents": 11,
+      "children": 3,
+      "expected": 31916280
+    },
+    {
+      "income": 87000001,
+      "dependents": 12,
+      "children": 0,
+      "expected": 31965440
+    },
+    {
+      "income": 87000001,
+      "dependents": 12,
+      "children": 1,
+      "expected": 31944610
+    },
+    {
+      "income": 87000001,
+      "dependents": 12,
+      "children": 2,
+      "expected": 31919610
+    },
+    {
+      "income": 87000001,
+      "dependents": 12,
+      "children": 3,
+      "expected": 31886280
+    },
+    {
+      "income": 87000001,
+      "dependents": 44,
+      "children": 0,
+      "expected": 31005440
+    },
+    {
+      "income": 87000001,
+      "dependents": 44,
+      "children": 1,
+      "expected": 30984610
+    },
+    {
+      "income": 87000001,
+      "dependents": 44,
+      "children": 2,
+      "expected": 30959610
+    },
+    {
+      "income": 87000001,
+      "dependents": 44,
+      "children": 3,
+      "expected": 30926280
+    },
+    {
+      "income": 87000001,
+      "dependents": 100,
+      "children": 0,
+      "expected": 29325440
+    },
+    {
+      "income": 87000001,
+      "dependents": 100,
+      "children": 1,
+      "expected": 29304610
+    },
+    {
+      "income": 87000001,
+      "dependents": 100,
+      "children": 2,
+      "expected": 29279610
+    },
+    {
+      "income": 87000001,
+      "dependents": 100,
+      "children": 3,
+      "expected": 29246280
+    }
+  ]
+}

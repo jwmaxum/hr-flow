@@ -50,6 +50,7 @@ export interface UserData {
   dependents?: number; // 부양가족 수 (본인 포함)
   childrenUnder20?: number; // 기존 필드명 유지: 간이세액표 자녀 공제 대상인 8~20세 자녀 수
   nonTaxable?: number; // 비과세액 (기본 200,000원)
+  rrn?: string; // 등록된 인사정보: 국민연금 연령 판정용, 급여 PDF에 포함하지 않음
   additionalLeave?: number; // 관리자가 부여한 추가 연차
 }
 

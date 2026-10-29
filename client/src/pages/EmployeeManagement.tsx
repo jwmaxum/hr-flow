@@ -626,9 +626,10 @@ export const EmployeeManagement: React.FC = () => {
                           value={editingInfo.rrn}
                           onChange={(e) => setEditingInfo({...editingInfo, rrn: e.target.value})}
                           disabled={!isAdmin}
-                          placeholder="예: 800101-*******"
+                          placeholder="예: 660101-1****** (뒤 6자리 마스킹 가능)"
                           className="wf-input"
                         />
+                        <p className="text-xs leading-relaxed text-slate-500">국민연금 연령 판단에는 앞 6자리와 뒤 첫 숫자 1자리가 필요합니다. 나머지 6자리는 가려도 됩니다. 정보가 부족하면 만 60세 미만으로 계산합니다.</p>
                     </div>
                     <div className="space-y-2">
                         <label htmlFor="personnel-personalEmail" className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">개인 이메일</label>

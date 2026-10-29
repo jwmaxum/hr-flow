@@ -100,7 +100,8 @@ test('server-approved payroll, PDF privacy, tenant separation and immutable fina
     });
     await t.test('strict action inputs reject tenant, amount and filtering injection', async () => {
       const f = await fixture();
-      for (const extra of [{ companyId: 'b' }, { rows: [] }, { annualSalary: 1 }, { divisionId: 'db' }, { scope: 'FILTERED' }]) {
+      for (const extra of [{ companyId: 'b' }, { rows: [] }, { annualSalary: 1 }, { divisionId: 'db' }, { scope: 'FILTERED' },
+        { rrn: '600101-1******' }, { birthDate: '1960-01-01' }, { pensionAgeExempt: true }, { age: 70 }]) {
         await denied(f.call('admin', 'preview', { year: 2026, month: 10, ...extra }), 'invalid-argument');
       }
       await denied(f.call('admin', 'approve', { year: 2026, month: 10 }), 'invalid-argument');
@@ -135,6 +136,57 @@ test('server-approved payroll, PDF privacy, tenant separation and immutable fina
       assert(Object.values(stored.rows.find(value => value.userId === 'zero').amounts).every(value => value === 0));
       assert.equal(result.record.rows, undefined); assert.equal(result.record.legacy, false);
     });
+    await t.test('only valid saved HR rrn birth information changes pension while missing or ambiguous detail keeps the existing default', async () => {
+      for (const [rrn, expectedPension] of [
+        ['600101-1******', 0], ['6001015XXXXXX', 0], ['000101-3******', 109250],
+        ['600101-*******', 109250], ['600101', 109250], ['660230-1******', 109250],
+        ['600101-?******', 109250], [null, 109250],
+      ]) {
+        const f = await fixture();
+        await db.doc('UserProfile/member').update({ ...(rrn !== null ? { rrn } : {}),
+          // Per-document/nested dates are deliberately not registered HR DOBs.
+          birthDate: '1960-01-01', personalInfo: { rrn: '600101-1******', birthDate: '1960-01-01' } });
+        const { record } = await f.approve(); const stored = (await db.doc(`payroll_records/${record.id}`).get()).data();
+        const row = stored.rows.find(value => value.userId === 'member');
+        assert.equal(row.amounts.pension, expectedPension, 'saved HR birth source must determine pension');
+        assert.equal(row.amounts.health, 82680); assert.equal(row.amounts.longTerm, 10860); assert.equal(row.amounts.employment, 20700);
+        assert.equal(row.amounts.incomeTax, 29160); assert.equal(row.amounts.localTax, 2910);
+        assert.equal(row.amounts.totalInsurance, expectedPension + 114240); assert.equal(row.amounts.netPay, 2353690 - expectedPension);
+        for (const field of ['rrn', 'birthDate', 'personalInfo', 'dateOfBirth']) assert.equal(JSON.stringify(stored).includes(field), false);
+        if (rrn !== null) assert.equal(JSON.stringify(stored).includes(rrn), false);
+      }
+    });
+    await t.test('saved HR age eligibility uses the selected payroll month and distinguishes first-day from later birthdays', async () => {
+      const f = await fixture();
+      await db.doc('UserProfile/member').update({ rrn: '661101-1******' });
+      await db.doc('UserProfile/sub').update({ rrn: '661102-2******' });
+      const amounts = async month => {
+        const { record } = await f.approve(month);
+        return (await db.doc(`payroll_records/${record.id}`).get()).data().rows;
+      };
+      const october = await amounts(10), november = await amounts(11), december = await amounts(12);
+      const pension = (rows, uid) => rows.find(row => row.userId === uid).amounts.pension;
+      assert.equal(pension(october, 'member'), 109250); assert.equal(pension(october, 'sub'), 109250);
+      assert.equal(pension(november, 'member'), 0); assert.equal(pension(november, 'sub'), 109250);
+      assert.equal(pension(december, 'member'), 0); assert.equal(pension(december, 'sub'), 0);
+    });
+    await t.test('saved HR birth edits invalidate a changed preview but cannot recalculate approved PDF history or expose private birth data', async () => {
+      const f = await fixture(); const originalRrn = '600101-1******';
+      await db.doc('UserProfile/member').update({ rrn: originalRrn });
+      const pending = await f.preview(11);
+      const { record } = await f.approve(10);
+      await db.doc('UserProfile/member').update({ rrn: '900101-1******' });
+      await denied(f.call('admin', 'approve', { year: 2026, month: 11, expectedFingerprint: pending.fingerprint }), 'aborted');
+      await f.call('admin', 'monthlyPdf', { id: record.id });
+      await f.call('admin', 'annualPdf', { year: 2026, employeeId: 'member' });
+      assert.equal(f.monthly[0].record.rows.find(row => row.userId === 'member').amounts.pension, 0);
+      assert.equal(f.annual[0].report.months.find(value => value.month === 10).row.amounts.pension, 0);
+      const result = await f.approve(11); const latest = (await db.doc(`payroll_records/${result.record.id}`).get()).data();
+      assert.equal(latest.rows.find(row => row.userId === 'member').amounts.pension, 109250);
+      const listed = await f.call('admin', 'list', { year: 2026 });
+      const exposed = JSON.stringify({ monthly: f.monthly[0], annual: f.annual[0], listed, approved: result, preview: pending });
+      for (const field of ['rrn', 'birthDate', 'dateOfBirth', 'personalInfo', originalRrn, '900101-1******']) assert.equal(exposed.includes(field), false);
+    });
     await t.test('preview fingerprint rejects changed saved settings, identities, eligibility, organization and tax tables', async () => {
       const f = await fixture();
       for (const mutation of [
@@ -158,6 +210,29 @@ test('server-approved payroll, PDF privacy, tenant separation and immutable fina
       const row = stored.rows.find(value => value.userId === 'member');
       assert.equal(row.amounts.incomeTax, 12340); assert.equal(row.calculation.tableSource, 'uploaded');
       assert.equal(stored.taxTable.uploadedInvalid, false); assert.equal(stored.taxTable.highIncomeSource, 'uploaded');
+    });
+    await t.test('saved payroll applies the under-1000 final withholding exclusion after child credit and preserves zero tax in approved PDFs', async () => {
+      const f = await fixture();
+      await db.doc('UserProfile/member').update({ annualSalary: 2280000 * 12, nonTaxable: 0, dependents: 2, childrenUnder20: 1 });
+      const { record } = await f.approve(); const stored = (await db.doc(`payroll_records/${record.id}`).get()).data();
+      const row = stored.rows.find(value => value.userId === 'member');
+      assert.equal(row.amounts.monthlyGross, 2280000);
+      assert.equal(row.calculation.dependents, 2); assert.equal(row.calculation.children, 1);
+      // The table's 21,520 minus child credit 20,830 is 690, so final wage withholding is zero.
+      assert.equal(row.amounts.incomeTax, 0); assert.equal(row.amounts.localTax, 0);
+      assert.equal(row.amounts.totalDeductions, row.amounts.totalInsurance);
+      assert.equal(row.amounts.netPay, row.amounts.monthlyGross - row.amounts.totalDeductions);
+      for (const field of ['incomeTax', 'localTax', 'totalDeductions', 'netPay']) {
+        assert.equal(stored.sums[field], stored.rows.reduce((sum, value) => sum + value.amounts[field], 0));
+      }
+      assert.equal(stored.sums.totalDeductions, stored.sums.totalInsurance + stored.sums.incomeTax + stored.sums.localTax);
+      await db.doc('UserProfile/member').update({ childrenUnder20: 0 });
+      await f.call('admin', 'monthlyPdf', { id: record.id });
+      await f.call('admin', 'annualPdf', { year: 2026, employeeId: 'member' });
+      const monthly = f.monthly[0].record.rows.find(value => value.userId === 'member').amounts;
+      const annual = f.annual[0].report.months.find(value => value.month === 10).row.amounts;
+      assert.equal(monthly.incomeTax, 0); assert.equal(monthly.localTax, 0);
+      assert.equal(annual.incomeTax, 0); assert.equal(annual.localTax, 0);
     });
     await t.test('reordered tax document fields preserve the same preview fingerprint and approval', async () => {
       const f = await fixture(); const table = uploadedTable(); await db.doc('system_config/tax_table').set(table);

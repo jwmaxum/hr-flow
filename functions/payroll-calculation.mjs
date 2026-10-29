@@ -99,7 +99,29 @@ function periodOf(period) {
   if (!Number.isInteger(chosen.year) || !Number.isInteger(chosen.month) || chosen.year < 1900 || chosen.year > 9999 || chosen.month < 1 || chosen.month > 12) throw new Error('급여 계산 연도와 월을 확인해 주세요.');
   return { year: chosen.year, month: chosen.month };
 }
-const familyTax = (taxes, dependents) => dependents <= 11 ? taxes[dependents - 1] : Math.max(0, taxes[10] - (taxes[9] - taxes[10]) * (dependents - 11));
+function pensionAgeStatus(employee, period) {
+  // Read only the registered HR field, never a certificate's birthDate or
+  // an inferred century. The remaining six private digits may stay masked.
+  if (typeof employee.rrn !== 'string' || employee.rrn.length > 40) return 'BIRTH_DATE_UNAVAILABLE';
+  const match = /^(\d{2})(\d{2})(\d{2})-?([0-9])(?:[0-9*xX•]{6})?$/.exec(employee.rrn.trim().replace(/\s/g, ''));
+  if (!match) return 'BIRTH_DATE_UNAVAILABLE';
+  const century = { 0: 1800, 1: 1900, 2: 1900, 3: 2000, 4: 2000, 5: 1900, 6: 1900, 7: 2000, 8: 2000, 9: 1800 }[match[4]];
+  const year = century + Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+  const birth = `${year}-${match[2]}-${match[3]}`;
+  const parsed = new Date(birth + 'T00:00:00Z');
+  const monthEnd = new Date(Date.UTC(period.year, period.month, 0)).toISOString().slice(0, 10);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== birth || birth > monthEnd) return 'BIRTH_DATE_UNAVAILABLE';
+  // NPS premiums cover the month containing the day before loss of status.
+  // Age-60 status is lost on the 60th birthday: only a loss on the first
+  // excludes that month. Otherwise the following month is the first exempt.
+  // NPS 2026 business guide pp.16,49; Civil Act Arts.158-160.
+  return period.year > year + 60 || period.year === year + 60 &&
+    (period.month > month || period.month === month && day === 1) ? 'AGE_EXEMPT' : 'COVERED';
+}
+// Apply the extra-family deduction to the complete monthly tax. In the
+// high-income bands, clamping this base before adding the band supplement
+// loses part of that deduction. Clamp only the final tax in tenWon().
+const familyTax = (taxes, dependents) => dependents <= 11 ? taxes[dependents - 1] : taxes[10] - (taxes[9] - taxes[10]) * (dependents - 11);
 function highIncomeTax(income, dependents, baseTaxes) {
   const base = familyTax(baseTaxes, dependents);
   if (income === 10000000) return base;
@@ -143,7 +165,10 @@ export function createPayrollCalculator(officialData) {
       base = familyTax(bracket.taxes, family.dependents);
     }
     const childCredit = family.children === 0 ? 0 : family.children === 1 ? 20830 : 45830 + (family.children - 2) * 33330;
-    return { incomeTax: tenWon(base - childCredit), tableSource };
+    const withholding = tenWon(base - childCredit);
+    // Income Tax Act Art.86: ordinary wage withholding below KRW1,000 is
+    // not collected, including a small remainder after the child credit.
+    return { incomeTax: withholding < 1000 ? 0 : withholding, tableSource };
   }
   function calculateNetPay(employee, table, period) {
     const salary = employee.currentVal ?? employee.annualSalary ?? 0;
@@ -155,7 +180,9 @@ export function createPayrollCalculator(officialData) {
     const taxableIncome = Math.max(0, monthlyGross - nonTaxable);
     const july = selected.year > 2026 || selected.year === 2026 && selected.month >= 7;
     const pensionBase = Math.min(july ? 6590000 : 6370000, Math.max(july ? 410000 : 400000, Math.floor(taxableIncome / 1000) * 1000));
-    const pension = taxableIncome > 0 ? tenWon(pensionBase * .0475) : 0;
+    const ageStatus = pensionAgeStatus(employee, selected);
+    const pensionRate = ageStatus === 'AGE_EXEMPT' ? 0 : .0475;
+    const pension = taxableIncome > 0 ? tenWon(pensionBase * pensionRate) : 0;
     const health = tenWon(taxableIncome * .03595), longTerm = tenWon(health * .1314), employment = tenWon(taxableIncome * .009);
     const totalInsurance = pension + health + longTerm + employment;
     const { incomeTax, tableSource } = calculateIncomeTax(taxableIncome, dependents, children, table);
@@ -169,7 +196,8 @@ export function createPayrollCalculator(officialData) {
       netPay: monthlyGross - totalDeductions, nonTaxable, dependents, children,
       isSeveranceIncluded: false, salaryBasis: employee.salaryType === 'MONTHLY' ? 'MONTHLY' : 'ANNUAL',
       metadata: { tableSource, tableStatus, period: selected, policyPeriodSupported: selected.year === 2026 && selected.month >= 3 && effectiveKnown,
-        pensionBase, pensionRate: .0475, healthRate: .03595, longTermRate: .1314, employmentRate: .009, calculationVersion: '2026-03-separate-v1' } };
+        pensionBase: ageStatus === 'AGE_EXEMPT' ? 0 : pensionBase, pensionRate, pensionAgeStatus: ageStatus,
+        healthRate: .03595, longTermRate: .1314, employmentRate: .009, calculationVersion: '2026-03-separate-age60-v2' } };
   }
   return { calculateIncomeTax, calculateNetPay, getDeductionCounts, validateUploadedTaxTable, parseTaxTableWorkbook, getTaxTableStatus };
 }
