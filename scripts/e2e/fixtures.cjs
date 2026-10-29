@@ -49,6 +49,7 @@ async function seedFixtures() {
   const specifications = {
     platform: ['플랫폼 운영자', 'SUPER_ADMIN', 'PLATFORM', '', '', 'ACTIVE'],
     adminA: ['A 관리자', 'ADMIN', companyA, divisionA, teamA, 'ACTIVE'],
+    adminB: ['B 관리자', 'ADMIN', companyB, divisionB, teamB, 'ACTIVE'],
     memberA: ['A 직원', 'MEMBER', companyA, divisionA, teamA, 'ACTIVE'],
     passwordA: ['A 비밀번호 직원', 'MEMBER', companyA, divisionA, teamA, 'ACTIVE'],
     requiredA: ['A 초기 비밀번호 직원', 'MEMBER', companyA, divisionA, teamA, 'ACTIVE'],
@@ -80,7 +81,7 @@ async function seedFixtures() {
       const reference = db.collection(collection).doc(key);
       batch.set(reference, value); state.documentPaths.push(reference.path);
     };
-    for (const [companyId, label, ownerUid] of [[companyA, 'A', accounts.adminA.uid], [companyB, 'B', accounts.memberB.uid]]) {
+    for (const [companyId, label, ownerUid] of [[companyA, 'A', accounts.adminA.uid], [companyB, 'B', accounts.adminB.uid]]) {
       set('companies', companyId, { nameKo: `자동점검 회사 ${label}`, nameEn: `E2E Company ${label}`,
         domain: `company-${label.toLowerCase()}.e2e.example.invalid`, adminUid: ownerUid,
         status: 'ACTIVE', createdAt, accessUntil, subscriptionStatus: 'ACTIVE',
@@ -183,6 +184,26 @@ async function readPayrollRecord(companyId, year, month) {
   return { id: records[0].id, ...record };
 }
 
+async function readHistoricalPayroll(month, revision) {
+  const current = runtime();
+  if (![1, 2].includes(month) || revision !== undefined && ![1, 2].includes(revision)) throw new Error('Only this run\'s historical payroll fixture may be inspected.');
+  const companyId = current.fixtures.companyA;
+  const result = await current.db.collection('payroll_records').where('companyId', '==', companyId)
+    .where('year', '==', 2020).where('month', '==', month).get();
+  if (result.size !== 1) throw new Error('Expected exactly one generated historical payroll month.');
+  let record = result.docs[0].data();
+  if (revision !== undefined) {
+    const archived = await result.docs[0].ref.collection('revisions').doc(`r${String(revision).padStart(6, '0')}`).get();
+    if (!archived.exists || archived.data().companyId !== companyId) throw new Error('The generated payroll revision is unavailable.');
+    record = archived.data().snapshot;
+  }
+  if (record?.companyId !== companyId || record.year !== 2020 || record.month !== month || !Array.isArray(record.rows) ||
+      record.rows.some(row => row.companyId !== companyId || !(row.userId === current.fixtures.accounts.adminA.uid || /^archive_[a-f0-9]{64}$/.test(row.userId)))) {
+    throw new Error('Refusing to inspect unrelated historical payroll rows.');
+  }
+  return { id: result.docs[0].id, ...record };
+}
+
 async function clearFixtures() {
   assertE2EEnvironment();
   if (!state) return;
@@ -194,10 +215,11 @@ async function clearFixtures() {
   // Only this run's company IDs and exact UIDs may be removed. No project-wide
   // clear/reset endpoint is used, even though this is an ephemeral demo project.
   for (const companyId of [current.fixtures.companyA, current.fixtures.companyB]) {
-    for (const collection of ['expenses', 'leaves', 'attendance', 'notices', 'audit_logs', 'salary_history', 'payroll_records']) {
+    for (const collection of ['expenses', 'leaves', 'attendance', 'notices', 'audit_logs', 'salary_history', 'payroll_records', 'payroll_drafts']) {
       await attempt(async () => {
         const records = await current.db.collection(collection).where('companyId', '==', companyId).get();
-        for (const record of records.docs) await attempt(() => record.ref.delete());
+        for (const record of records.docs) await attempt(() => ['payroll_records', 'payroll_drafts'].includes(collection)
+          ? current.db.recursiveDelete(record.ref) : record.ref.delete());
       });
     }
     await attempt(() => current.bucket.deleteFiles({ prefix: `companies/${companyId}/` }));
@@ -209,4 +231,4 @@ async function clearFixtures() {
   if (failures.length) throw new Error('Could not completely remove isolated E2E fixtures.');
 }
 
-module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord };
+module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll };

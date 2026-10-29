@@ -3,6 +3,7 @@ const { Timestamp } = require('firebase-admin/firestore');
 const { authorizeContext, fail } = require('./security-context');
 const { createPayrollCalculator } = require('./payroll-calculation.mjs');
 const officialTable = require('./data/withholdingTaxTable2026.json');
+const { createPayrollWorkflow } = require('./payroll-workflow');
 const {
   normalizePayrollIdentity, normalizePayrollRow, sumPayrollRows, validatePayrollRecord, buildAnnualPayrollReport,
 } = require('./payroll-report-model');
@@ -68,6 +69,8 @@ function recordSummary(record, companyId) {
       employeeCount: checked.rows.length, approvedAtIso: checked.approvedAtIso, approvedByName: checked.approvedByName,
       revision: checked.revision, totalGross: checked.sums.monthlyGross, totalNet: checked.sums.netPay,
       totalDeductions: checked.sums.totalDeductions, sums: checked.sums,
+      ...(checked.origin ? { origin: checked.origin } : {}), ...(checked.reason ? { reason: checked.reason } : {}),
+      ...(checked.source ? { source: checked.source } : {}), ...(checked.dataHash ? { dataHash: checked.dataHash } : {}),
       taxTable: { ...checked.taxTable, uploadedInvalid: extra.uploadedInvalid === true,
         fallbackReason: safeText(extra.fallbackReason, 300), highIncomeSource: safeText(extra.highIncomeSource, 80) } };
   }
@@ -82,7 +85,7 @@ function recordSummary(record, companyId) {
     approvedAtIso: approvalIso(record), approvedByName: safeText(record.approvedByName, 100) };
 }
 
-function createPayrollService({ db, auth, now = () => new Date(),
+function createPayrollService({ db, auth, bucket, now = () => new Date(), parseSourceFile,
   calculator = createPayrollCalculator(officialTable), renderMonthlyPdf, renderAnnualPdf }) {
   const authorize = request => authorizeContext({ db, request, now, roles: ['ADMIN'] });
   async function verifySession(request) {
@@ -187,9 +190,14 @@ function createPayrollService({ db, auth, now = () => new Date(),
     return { id, reference, caller, rows, sums, taxTable, fingerprint: expected };
   }
 
+  const workflow = createPayrollWorkflow({ db, auth, bucket, now, parseSourceFile }, { current, verifySession, recordSummary,
+    payrollRecordId, identifier, inputShape, yearInput, monthInput, renderMonthlyPdf, branding, pdfFile });
+
   return async request => {
     const user = await current(request);
     const input = request.data;
+    const handled = await workflow(request, user);
+    if (handled !== null) return handled;
     if (input?.action === 'preview' || input?.action === 'approve') {
       inputShape(input, input.action === 'preview' ? ['action', 'year', 'month'] : ['action', 'year', 'month', 'expectedFingerprint']);
       const period = { year: yearInput(input.year), month: monthInput(input.month) };

@@ -19,9 +19,11 @@ const { assertE2EEnvironment } = require('./safety.cjs');
   });
   if (rulesCode !== 0) { process.exitCode = rulesCode; return; }
   const payrollCode = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--test', '--experimental-test-coverage',
+    const child = spawn(process.execPath, ['--test', '--test-concurrency=1', '--experimental-test-coverage',
       '--test-coverage-include=functions/payroll-service.js', '--test-coverage-include=functions/payroll-report-model.js',
-      '--test-coverage-include=functions/payroll-pdf.js', 'functions/tests/payroll-service.test.js', 'functions/tests/payroll-reports.test.js'],
+      '--test-coverage-include=functions/payroll-pdf.js', '--test-coverage-include=functions/payroll-workflow.js',
+      '--test-coverage-include=functions/payroll-import-files.js', '--test-coverage-include=functions/payroll-import-schema.mjs',
+      'functions/tests/payroll-service.test.js', 'functions/tests/payroll-reports.test.js', 'functions/tests/payroll-import-files.test.js'],
     { cwd: root, env: process.env, stdio: 'inherit' });
     child.once('error', reject); child.once('exit', code => resolve(code ?? 1));
     for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => child.kill(signal));

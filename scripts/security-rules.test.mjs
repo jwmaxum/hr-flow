@@ -37,7 +37,7 @@ const contexts = Object.fromEntries([...users.map(([uid]) => [uid, testEnv.authe
 contexts.sessionFresh = testEnv.authenticatedContext('sessionUser', { email: 'sessionUser@example.test', auth_time: 200 });
 contexts.sessionUser = testEnv.authenticatedContext('sessionUser', { email: 'sessionUser@example.test', auth_time: 199 });
 const db = uid => contexts[uid].firestore();
-const document = (uid, name, id) => doc(db(uid), name, id);
+const document = (uid, ...path) => doc(db(uid), ...path);
 const ownRequest = (companyId = 'a', userId = 'bob', divisionId = 'div1', teamId = 'team1') => ({ companyId, userId, divisionId, teamId, status: 'PENDING', createdAt: '2026-10-24', amount: 100 });
 const storageRef = (uid, path) => ref(contexts[uid].storage('test.appspot.com'), path);
 const png = new Uint8Array([137, 80, 78, 71]);
@@ -79,6 +79,16 @@ try {
         year: 2026, month: 10, rows: [{ companyId, userId: companyId === 'a' ? 'bob' : 'foreignMember', name: 'Stored snapshot' }],
         sums: { monthlyGross: 100 }, totalGross: 100, totalNet: 90, employeeCount: 1,
         approvedAtIso: '2026-10-24T00:00:00.000Z', revision: 1 });
+      for (const child of ['revisions', 'legacySources']) await setDoc(doc(seed, 'payroll_records', id, child, 'saved-1'), {
+        companyId, recordId: id, revision: 1, snapshot: { companyId, rows: [] }, dataHash: 'synthetic-private-history'
+      });
+      await setDoc(doc(seed, 'payroll_records', id, 'revisions', 'wrong-company'), { companyId: companyId === 'a' ? 'b' : 'a', recordId: id });
+      await setDoc(doc(seed, 'payroll_drafts', 'draft-' + companyId), { companyId, status: 'PENDING', draftVersion: 1, rows: [] });
+      for (const child of ['versions', 'baseline']) {
+        await setDoc(doc(seed, 'payroll_drafts', 'draft-' + companyId, child, 'saved-1'), { companyId, draftId: 'draft-' + companyId, draftVersion: 1 });
+        await setDoc(doc(seed, 'payroll_drafts', 'draft-' + companyId, child, 'wrong-company'), { companyId: companyId === 'a' ? 'b' : 'a', draftId: 'draft-' + companyId });
+        await setDoc(doc(seed, 'payroll_drafts', 'draft-' + companyId, child, 'wrong-parent'), { companyId, draftId: 'another-draft' });
+      }
     }
     await setDoc(doc(seed, 'notices', 'manager-own'), { companyId: 'a', authorId: 'manager', title: 'Own notice' });
     await setDoc(doc(seed, 'expenses', 'legacy-attachment'), { ...ownRequest(), attachmentUrl: 'https://example.invalid/legacy' });
@@ -96,7 +106,7 @@ try {
     await setDoc(doc(seed, 'officialLetterNotifications', 'bob', 'items', 'wrong-company'), notification('bob', 'MEMBER', 'b'));
     await setDoc(doc(seed, 'officialLetterNotifications', 'bob', 'items', 'wrong-role'), notification('bob', 'ADMIN'));
     for (const path of ['companies/a/expenses/bob/receipt.png', 'companies/a/leaves/bob/medical.pdf', 'companies/a/notices/notice.png',
-      'companies/a/official-assets/seal.png', 'companies/a/official-pdfs/letter-a/r1.pdf', 'companies/a/backup/private.json', 'legacy/private.json']) {
+      'companies/a/official-assets/seal.png', 'companies/a/official-pdfs/letter-a/r1.pdf', 'companies/a/payroll-sources/draft-a/source.csv', 'companies/a/backup/private.json', 'legacy/private.json']) {
       await uploadBytes(ref(context.storage('test.appspot.com'), path), png, { contentType: 'image/png' });
     }
   });
@@ -292,6 +302,29 @@ try {
     companyId: 'a', approvedBy: 'alice', totalGross: 1
   }));
   await allow('legacy aggregate delete remains compatible', deleteDoc(document('alice', 'payroll_records', 'legacy-delete')));
+  const payrollPrivatePaths = [
+    ['payroll_drafts', 'draft-a'], ['payroll_drafts', 'draft-a', 'versions', 'saved-1'], ['payroll_drafts', 'draft-a', 'baseline', 'saved-1'],
+    ['payroll_records', 'modern-a', 'revisions', 'saved-1'], ['payroll_records', 'modern-a', 'legacySources', 'saved-1'],
+  ];
+  for (const path of payrollPrivatePaths) {
+    for (const uid of ['alice', 'root']) await allow(`${uid} reads scoped payroll draft/history ${path.join('/')}`, getDoc(document(uid, ...path)));
+    for (const uid of ['outsider', 'bob', 'manager', 'retiredAdmin', 'pendingAdmin']) await deny(`${uid} cannot read private payroll draft/history ${path.join('/')}`, getDoc(document(uid, ...path)));
+    for (const uid of ['alice', 'root', 'outsider', 'bob']) {
+      await deny(`${uid} cannot edit server-managed payroll draft/history`, updateDoc(document(uid, ...path), { companyId: 'b', status: 'APPROVED' }));
+      await deny(`${uid} cannot delete server-managed payroll draft/history`, deleteDoc(document(uid, ...path)));
+    }
+  }
+  for (const uid of ['alice', 'root']) {
+    await deny(`${uid} cannot create payroll draft`, setDoc(document(uid, 'payroll_drafts', 'forged-draft'), { companyId: 'a', status: 'APPROVED' }));
+    for (const path of [['payroll_records', 'modern-a', 'revisions'], ['payroll_records', 'modern-a', 'legacySources'],
+      ['payroll_drafts', 'draft-a', 'versions'], ['payroll_drafts', 'draft-a', 'baseline']]) {
+      await deny(`${uid} cannot create private payroll history`, setDoc(document(uid, ...path, 'forged-history'), { companyId: 'a', recordId: 'modern-a', draftId: 'draft-a' }));
+    }
+    for (const path of [['payroll_records', 'modern-a', 'revisions', 'wrong-company'], ['payroll_drafts', 'draft-a', 'versions', 'wrong-company'],
+      ['payroll_drafts', 'draft-a', 'baseline', 'wrong-company'], ['payroll_drafts', 'draft-a', 'versions', 'wrong-parent'], ['payroll_drafts', 'draft-a', 'baseline', 'wrong-parent']]) {
+      await deny(`${uid} cannot read malformed cross-company payroll child ${path.join('/')}`, getDoc(document(uid, ...path)));
+    }
+  }
   await deny('SUB_ADMIN edits another author notice', updateDoc(document('manager', 'notices', 'notice-a'), { title: 'Forged' }));
   await allow('SUB_ADMIN edits own notice', updateDoc(document('manager', 'notices', 'manager-own'), { title: 'Updated' }));
   await allow('ADMIN edits company notice', updateDoc(document('alice', 'notices', 'manager-own'), { title: 'Admin Updated' }));

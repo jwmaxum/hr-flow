@@ -1,9 +1,10 @@
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { test, expect } = require('@playwright/test');
 const { PROJECT_ID, WEB_ORIGIN, HOSTS, assertE2EEnvironment } = require('../../scripts/e2e/safety.cjs');
-const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord } = require('../../scripts/e2e/fixtures.cjs');
+const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll } = require('../../scripts/e2e/fixtures.cjs');
 
 assertE2EEnvironment();
+const { CSV_TEMPLATE, HEADER_FIELDS } = require('../../functions/payroll-import-schema.mjs');
 
 const attachmentHost = `us-central1-${PROJECT_ID}.cloudfunctions.net`;
 const attachmentEndpoints = new Set(['/uploadCompanyAttachment', '/downloadCompanyAttachment']);
@@ -81,7 +82,8 @@ async function actorFor(browser, testInfo) {
       try {
         const input = request.postDataJSON()?.data;
         if (input && typeof input.action === 'string') actor.payrollRequests.push({ action: input.action,
-          year: input.year, month: input.month, expectedFingerprint: input.expectedFingerprint });
+          year: input.year, month: input.month, expectedFingerprint: input.expectedFingerprint,
+          ...(input.id ? { id: input.id } : {}), ...(input.revision !== undefined ? { revision: input.revision } : {}) });
       } catch { actor.violations.push('local-payroll-request-shape'); }
     }
     if (url.protocol === 'http:' && url.host === HOSTS.functions &&
@@ -245,11 +247,11 @@ function payrollFirestoreUrl(id) {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id)) throw new Error('A synthetic payroll document ID is required.');
   return `http://${HOSTS.firestore}/v1/projects/${PROJECT_ID}/databases/(default)/documents/payroll_records/${id}`;
 }
-async function payrollDownload(actor, button) {
+async function payrollDownload(actor, button, year = 2026) {
   const downloadPromise = actor.page.waitForEvent('download', { timeout: 65000 });
   await button.click();
   const downloaded = await downloadPromise;
-  expect(downloaded.suggestedFilename()).toMatch(/2026.*\.pdf$/);
+  expect(downloaded.suggestedFilename()).toMatch(new RegExp(`${year}.*\\.pdf$`));
   const stream = await downloaded.createReadStream();
   if (!stream) throw new Error('The real approved payroll PDF did not download.');
   const chunks = [];
@@ -259,6 +261,24 @@ async function payrollDownload(actor, button) {
   expect(bytes.length).toBeGreaterThan(1000);
   expect(bytes.subarray(-100).toString()).toMatch(/%%EOF\s*$/);
   return bytes;
+}
+async function payrollSourceDownload(actor, button, expectedName) {
+  const pending = actor.page.waitForEvent('download', { timeout: 65000 });
+  await button.click(); const downloaded = await pending;
+  expect(downloaded.suggestedFilename()).toBe(expectedName);
+  const stream = await downloaded.createReadStream();
+  if (!stream) throw new Error('The generated historical source could not be downloaded.');
+  const chunks = []; for await (const chunk of stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+function historicalCsv(rows) {
+  const cell = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
+  return Buffer.from(CSV_TEMPLATE + rows.map(row => HEADER_FIELDS.map(field => cell(row[field.key])).join(',')).join('\r\n') + '\r\n');
+}
+function confirmHistoricalPayroll(actor, draft) {
+  const won = value => `${value.toLocaleString('ko-KR')}원`;
+  const refunds = draft.rows.filter(row => ['pension', 'health', 'longTerm', 'employment', 'incomeTax', 'localTax', 'otherDeductions'].some(key => (row.amounts[key] ?? 0) < 0)).length;
+  actor.expectedPayrollConfirmation = `${draft.year}년 ${draft.month}월 회사 전체 ${draft.rows.length}명의 자료를 승인·발행합니까?\n\n총 지급액: ${won(draft.sums.monthlyGross)}\n공제합계: ${won(draft.sums.totalDeductions)}\n실지급액: ${won(draft.sums.netPay)}\n추가 ${draft.diff.added.length}명 · 제외 ${draft.diff.removed.length}명 · 변경 ${draft.diff.changed.length}명\n환급 등 음수 공제 포함 ${refunds}명\n\n이 월 전체를 새 개정본으로 발행합니다. 이전 승인본과 원본·수정 이력은 보관하며 연간 명세서에는 새 승인본이 반영됩니다. 승인 전까지 기존 승인본은 유지됩니다.`;
 }
 
 function forgedExpense(account, overrides = {}) {
@@ -476,7 +496,7 @@ test('real payroll UI confirms full-company saved wages and downloads immutable 
   expect(preview.fingerprint).toMatch(/^[a-f0-9]{64}$/);
   const won = value => `${value.toLocaleString('ko-KR')}원`;
   const taxName = preview.taxTable.source === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표';
-  admin.expectedPayrollConfirmation = `${year}년 ${month}월 회사 전체 ${preview.employeeCount}명의 급여를 확정합니다.\n\n총 지급액: ${won(preview.totalGross)}\n총 공제액: ${won(preview.totalDeductions)}\n실지급액: ${won(preview.totalNet)}\n급여 0원: ${preview.zeroCount}명\n계산 기준: ${taxName}\n\n검색·본부·팀 필터와 관계없이 저장된 전체 직원 설정으로 확정되며 승인 후 수정·삭제할 수 없습니다. 계속하시겠습니까?`;
+  admin.expectedPayrollConfirmation = `${year}년 ${month}월 회사 전체 ${preview.employeeCount}명의 급여를 확정합니다.\n\n총 지급액: ${won(preview.totalGross)}\n총 공제액: ${won(preview.totalDeductions)}\n실지급액: ${won(preview.totalNet)}\n급여 0원: ${preview.zeroCount}명\n계산 기준: ${taxName}\n\n검색·본부·팀 필터와 관계없이 저장된 전체 직원 설정으로 확정되며 승인 후에는 정정·재승인 절차로만 변경할 수 있습니다. 계속하시겠습니까?`;
   admin.payrollRequests = [];
   await admin.page.getByRole('button', { name: '회사 전체 급여 확정', exact: true }).click();
   await expect(admin.page.getByRole('button', { name: '확정 완료', exact: true })).toBeDisabled({ timeout: 65000 });
@@ -536,6 +556,114 @@ test('real payroll UI confirms full-company saved wages and downloads immutable 
     await expect(denied.page.getByRole('heading', { name: '급여관리', exact: true })).toHaveCount(0);
     denied.token = ''; await denied.context.close();
   }
+});
+
+test('historical source import, correction and reapproval preserve original files and prior financial versions', async ({ browser }, testInfo) => {
+  test.setTimeout(300000);
+  const admin = await actorFor(browser, testInfo);
+  await login(admin, fixtures.accounts.adminA);
+  const month = testInfo.project.use.isMobile ? 2 : 1, year = 2020;
+  const name = '자동점검 과거, 관리자', archiveCode = `retired-${fixtures.runId}`;
+  const sourceBytes = historicalCsv([
+    { employeeLoginId: fixtures.accounts.adminA.email, name, employeeNumber: 'H-1', joinDate: '2019-01-01',
+      divisionName: '이전 본부', teamName: '이전 팀', monthlyGross: 2500000, nonTaxable: 200000,
+      pension: 109250, health: 82680, longTerm: 10860, employment: 20700,
+      incomeTax: -66480, localTax: -6630, otherDeductions: 10000, totalDeductions: 160380, netPay: 2339620 },
+    { archiveCode, name: '자동점검 삭제된 과거직원', employeeNumber: 'H-2', joinDate: '2018-01-01',
+      monthlyGross: 1000000, nonTaxable: 0, pension: 0, health: 0, longTerm: 0, employment: 0,
+      incomeTax: 0, localTax: 0, otherDeductions: 0, totalDeductions: 0, netPay: 1000000 },
+  ]);
+  const filename = '자동점검-과거급여.csv', sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+  await admin.page.goto('/#/admin/salary');
+  await admin.page.getByRole('button', { name: '과거 급여 등록·정정', exact: true }).click();
+  const manager = admin.page.getByRole('dialog', { name: '과거 급여 등록·정정', exact: true });
+  await expect(manager).toBeVisible();
+  await manager.getByLabel('과거 급여 원본 귀속월', { exact: true }).fill(`${year}-${String(month).padStart(2, '0')}`);
+  await manager.getByLabel('과거 급여 원본 파일', { exact: true }).setInputFiles({ name: filename, mimeType: 'text/csv', buffer: sourceBytes });
+  await manager.getByLabel('과거 급여 등록 사유', { exact: true }).fill('과거 실제 지급 자료 검토');
+  await manager.getByRole('button', { name: '원본 검증·승인 대기 저장', exact: true }).click();
+  await expect(manager.getByRole('heading', { name: `${year}년 ${month}월 과거 원본 검토`, exact: true })).toBeVisible({ timeout: 65000 });
+  const pending = callableResult(await payrollProbe(admin, { action: 'listDrafts', year })).drafts.find(item => item.month === month && item.status === 'PENDING');
+  expect(Boolean(pending?.id)).toBe(true);
+  let draft = callableResult(await payrollProbe(admin, { action: 'getDraft', id: pending.id })).draft;
+  expect(draft.rows.length).toBe(2);
+  expect(draft.source.sha256).toBe(sourceHash);
+  expect(draft.rows.find(row => row.userId === fixtures.accounts.adminA.uid).amounts.incomeTax).toBe(-66480);
+  const archiveId = 'archive_' + createHash('sha256').update(JSON.stringify([fixtures.companyA, archiveCode])).digest('hex');
+  expect(draft.rows.some(row => row.userId === archiveId)).toBe(true);
+  expect(callableResult(await payrollProbe(admin, { action: 'list', year })).records.length).toBe(0);
+  const originalDownload = await payrollSourceDownload(admin, manager.getByRole('button', { name: '등록 원본', exact: true }), filename);
+  expect(originalDownload.equals(sourceBytes)).toBe(true);
+
+  const reviewRow = manager.locator('.pymi-roster article').filter({ hasText: name });
+  await reviewRow.getByRole('button', { name: '금액 수정', exact: true }).click();
+  await reviewRow.getByLabel(`${name} 기타 공제`, { exact: true }).fill('20000');
+  await manager.getByLabel('급여 검토·정정 사유', { exact: true }).fill('원본 기타 공제 검토 후 보정');
+  await expect(manager.getByRole('button', { name: '검토 완료·승인 발행', exact: true })).toBeDisabled();
+  await manager.getByRole('button', { name: '검토 내용 저장', exact: true }).click();
+  await expect(manager.getByRole('button', { name: '검토 완료·승인 발행', exact: true })).toBeEnabled({ timeout: 65000 });
+  draft = callableResult(await payrollProbe(admin, { action: 'getDraft', id: pending.id })).draft;
+  expect(draft.draftVersion).toBe(2);
+  expect(draft.sums.netPay).toBe(3329620);
+  const versions = callableResult(await payrollProbe(admin, { action: 'listDraftVersions', id: draft.id })).versions;
+  expect(versions.length).toBe(2);
+  const firstDraft = callableResult(await payrollProbe(admin, { action: 'getDraftVersion', id: draft.id, draftVersion: 1 })).draft;
+  expect(firstDraft.rows.find(row => row.userId === fixtures.accounts.adminA.uid).amounts.otherDeductions).toBe(10000);
+  confirmHistoricalPayroll(admin, draft);
+  await manager.getByRole('button', { name: '검토 완료·승인 발행', exact: true }).click();
+  await expect(manager.getByRole('button', { name: '개정 1 PDF', exact: true })).toBeVisible({ timeout: 65000 });
+  let approved = await readHistoricalPayroll(month);
+  expect(approved.revision).toBe(1); expect(approved.sums.netPay).toBe(3329620);
+  await payrollDownload(admin, manager.getByRole('button', { name: '개정 1 PDF', exact: true }), year);
+
+  await manager.getByRole('button', { name: '정정 시작', exact: true }).click();
+  await manager.getByLabel('급여 정정 시작 사유', { exact: true }).fill('확정 원장의 기타 공제 재확인');
+  await manager.getByRole('button', { name: '정정 초안 만들기', exact: true }).click();
+  await expect(manager.getByRole('heading', { name: `${year}년 ${month}월 승인본 정정`, exact: true })).toBeVisible({ timeout: 65000 });
+  const correctionRow = manager.locator('.pymi-roster article').filter({ hasText: name });
+  await correctionRow.getByRole('button', { name: '금액 수정', exact: true }).click();
+  await correctionRow.getByLabel(`${name} 기타 공제`, { exact: true }).fill('30000');
+  await manager.getByLabel('급여 검토·정정 사유', { exact: true }).fill('기타 공제 정정 승인 요청');
+  await manager.getByRole('button', { name: '검토 내용 저장', exact: true }).click();
+  await expect(manager.getByRole('button', { name: '검토 완료·승인 발행', exact: true })).toBeEnabled({ timeout: 65000 });
+  const corrections = callableResult(await payrollProbe(admin, { action: 'listDrafts', year })).drafts;
+  const correction = corrections.find(item => item.kind === 'CORRECTION' && item.month === month && item.status === 'PENDING');
+  draft = callableResult(await payrollProbe(admin, { action: 'getDraft', id: correction.id })).draft;
+  expect(draft.diff.changed.length).toBe(1); expect(draft.sums.netPay).toBe(3319620);
+  expect((await readHistoricalPayroll(month)).sums.netPay).toBe(3329620);
+  confirmHistoricalPayroll(admin, draft);
+  await manager.getByRole('button', { name: '검토 완료·승인 발행', exact: true }).click();
+  await expect(manager.getByRole('button', { name: '개정 2 PDF', exact: true })).toBeVisible({ timeout: 65000 });
+  approved = await readHistoricalPayroll(month);
+  expect(approved.revision).toBe(2); expect(approved.sums.netPay).toBe(3319620);
+  const original = await readHistoricalPayroll(month, 1), current = await readHistoricalPayroll(month, 2);
+  expect(original.sums.netPay).toBe(3329620); expect(current.sums.netPay).toBe(3319620);
+  expect(original.source.sha256).toBe(sourceHash); expect(current.source.sha256).toBe(sourceHash);
+  await payrollDownload(admin, manager.getByRole('button', { name: '개정 1 PDF', exact: true }), year);
+  await payrollDownload(admin, manager.getByRole('button', { name: '개정 2 PDF', exact: true }), year);
+  const oldSource = manager.locator('.pymi-revisions article').filter({ hasText: '개정 1 · 이전 승인본' });
+  expect((await payrollSourceDownload(admin, oldSource.getByRole('button', { name: '보관 원본', exact: true }), filename)).equals(sourceBytes)).toBe(true);
+  expect(admin.payrollRequests.some(input => input.action === 'monthlyPdf' && input.id === approved.id && input.revision === 1)).toBe(true);
+  expect(admin.payrollConfirmations).toBe(2);
+  expect(await admin.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await admin.page.screenshot({ path: testInfo.outputPath(`payroll-revisions-${testInfo.project.use.viewport.width}px.png`), fullPage: true });
+  await manager.getByRole('button', { name: '과거 급여 등록·정정 닫기', exact: true }).click();
+  await expect(admin.page.getByRole('combobox', { name: '급여 대상 연도', exact: true })).toHaveValue(String(year));
+  await expect(admin.page.getByRole('combobox', { name: '급여 대상 월', exact: true })).toHaveValue(String(month));
+  await admin.page.getByRole('combobox', { name: '연간 급여명세서 직원 선택', exact: true }).selectOption(archiveId);
+  await payrollDownload(admin, admin.page.getByRole('button', { name: '연간 급여명세서 PDF', exact: true }), year);
+
+  expect((await probe(admin, `${payrollFirestoreUrl(approved.id)}/revisions/r000001`, { method: 'DELETE' })).status).toBe(403);
+  const foreign = await actorFor(browser, testInfo); await login(foreign, fixtures.accounts.adminB);
+  for (const payload of [{ action: 'getDraft', id: pending.id }, { action: 'listDraftVersions', id: pending.id },
+    { action: 'sourceDownload', draftId: pending.id }, { action: 'sourceDownload', recordId: approved.id, revision: 1 },
+    { action: 'monthlyPdf', id: approved.id, revision: 1 }, { action: 'listRevisions', id: approved.id },
+    { action: 'approveDraft', id: pending.id, expectedDraftVersion: 2 }]) {
+    // Hide whether another company's financial document exists.
+    expect((await payrollProbe(foreign, payload)).status).toBe(404);
+  }
+  expect((await payrollProbe(foreign, { action: 'importSource', year, month, reason: '회사 ID 변조 거부', companyId: fixtures.companyA,
+    source: { name: filename, mimeType: 'text/csv', base64: sourceBytes.toString('base64') } })).status).toBe(400);
 });
 
 test('suspended, resigned, disabled and revoked test accounts cannot retain attachment access', async ({ browser }, testInfo) => {

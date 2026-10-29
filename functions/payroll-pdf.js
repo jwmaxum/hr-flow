@@ -4,7 +4,7 @@ const { PAYROLL_MONEY_FIELDS, normalizePayrollIdentity, normalizePayrollRow, sum
 
 const COLUMNS = Object.freeze([
   { key: 'identity', label: '성명 / 사번', width: 112 },
-  { key: 'basePay', label: '기본급', width: 62 },
+  { key: 'basePay', label: '기본급·과세수당', width: 68 },
   { key: 'nonTaxable', label: '비과세액', width: 56 },
   { key: 'monthlyGross', label: '지급합계', width: 64 },
   { key: 'pension', label: '국민연금', width: 50 },
@@ -13,6 +13,7 @@ const COLUMNS = Object.freeze([
   { key: 'longTerm', label: '장기요양', width: 48 },
   { key: 'incomeTax', label: '소득세', width: 50 },
   { key: 'localTax', label: '지방소득세', width: 45 },
+  { key: 'otherDeductions', label: '기타공제', width: 48 },
   { key: 'totalDeductions', label: '공제합계', width: 60 },
   { key: 'netPay', label: '차인지급액', width: 66 },
   { key: 'signature', label: '영수인', width: 36 },
@@ -108,9 +109,9 @@ function helpers(pdf) {
   };
   const tableHeader = (y, annual = false) => {
     const groups = annual ? [
-      ['월 / 자료 상태', [0]], ['기본급 및 지급액', [1, 2, 3]], ['공제 및 차인지급액', [4, 5, 6, 7, 8, 9, 10, 11]], ['비고', [12]],
+      ['월 / 자료 상태', [0]], ['기본급 및 지급액', [1, 2, 3]], ['공제 및 차인지급액', [4, 5, 6, 7, 8, 9, 10, 11, 12]], ['비고', [13]],
     ] : [
-      ['인적 사항', [0]], ['기본급 및 지급액', [1, 2, 3]], ['공제 및 차인지급액', [4, 5, 6, 7, 8, 9, 10, 11]], ['영수인', [12]],
+      ['인적 사항', [0]], ['기본급 및 지급액', [1, 2, 3]], ['공제 및 차인지급액', [4, 5, 6, 7, 8, 9, 10, 11, 12]], ['영수인', [13]],
     ];
     let x = left;
     for (const [label, indices] of groups) {
@@ -119,7 +120,7 @@ function helpers(pdf) {
     }
     x = left;
     columns.forEach((column, index) => {
-      const label = annual && index === 0 ? '귀속 월' : annual && index === 12 ? '상태' : column.label;
+      const label = annual && index === 0 ? '귀속 월' : annual && index === 13 ? '상태' : column.label;
       cell(label, x, y + 18, column.width, 28, { align: 'center', fill: '#F5F5F7', bold: true, size: 7.7 }); x += column.width;
     });
     return y + 46;
@@ -127,14 +128,14 @@ function helpers(pdf) {
   const moneyRow = (amounts, identity, y, height, note = '', bold = false, fill) => {
     let x = left;
     columns.forEach((column, index) => {
-      const value = index === 0 ? identity : index === 12 ? note : amounts ? formatMoney(amounts[column.key]) : '-';
-      cell(value, x, y, column.width, height, { align: index === 0 ? 'left' : index === 12 ? 'center' : 'right', size: index === 0 ? 7.7 : 7.9, bold, fill }); x += column.width;
+      const value = index === 0 ? identity : index === 13 ? note : amounts ? formatMoney(amounts[column.key] ?? (column.key === 'otherDeductions' ? 0 : undefined)) : '-';
+      cell(value, x, y, column.width, height, { align: index === 0 ? 'left' : index === 13 ? 'center' : 'right', size: index === 0 ? 7.7 : 7.9, bold, fill }); x += column.width;
     });
     return y + height;
   };
   const rowHeight = (amounts, identity, minimum, bold = false) => Math.max(minimum, ...columns.map((column, index) => {
     if (index === 0) return measure(identity, column.width - 8, 7.7, bold) + 10;
-    if (index === 12) return 0;
+    if (index === 13) return 0;
     return measure(amounts ? formatMoney(amounts[column.key]) : '-', column.width - 8, 7.9, bold) + 10;
   }));
   return { left, width, bottom, columns, measure, write, header, tableHeader, moneyRow, rowHeight };
@@ -170,7 +171,8 @@ async function renderMonthlyPayrollPdf(value, brandingValue) {
     const sourceLabel = record.taxTable.source === 'uploaded' ? '관리자 등록 세액표'
       : record.taxTable.source.startsWith('official') ? '공식 기본 세액표' : record.taxTable.source;
     const taxLabel = [sourceLabel, record.taxTable.version, record.taxTable.fileName].filter(Boolean).join(' / ');
-    if (taxLabel) h.write(`적용 세액표: ${taxLabel}`, h.left, y + 23, h.width, 7.2, false, { height: 12, ellipsis: true });
+    const provenance = record.origin === 'IMPORT' ? `과거 원본 저장금액 · ${record.source?.name || ''}` : record.origin === 'CORRECTION' ? `정정 승인 · ${record.reason || ''}` : `적용 세액표: ${taxLabel}`;
+    if (provenance) h.write(provenance, h.left, y + 23, h.width, 7.2, false, { height: 12, ellipsis: true });
   });
 }
 
@@ -190,7 +192,7 @@ function validatedAnnualReport(report) {
   });
   const approved = months.filter(item => item.status === 'APPROVED');
   const sums = sumPayrollRows(approved.map(item => item.row));
-  if (report.availableMonths !== approved.length || PAYROLL_MONEY_FIELDS.some(field => sums[field] !== report.sums?.[field])) throw new Error('Annual payroll totals do not reconcile.');
+  if (report.availableMonths !== approved.length || PAYROLL_MONEY_FIELDS.some(field => sums[field] !== (field === 'otherDeductions' ? report.sums?.[field] ?? 0 : report.sums?.[field]))) throw new Error('Annual payroll totals do not reconcile.');
   return { ...report, employee, months, sums };
 }
 

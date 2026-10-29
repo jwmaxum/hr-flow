@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { collection, doc, onSnapshot, query, runTransaction, where } from 'firebase/firestore';
 import { Banknote, Calculator, Download, History, Loader2, Minus, Plus, Save, Search, Trash2, X } from 'lucide-react';
 import { Button, Input, PageTitle, Panel, Select } from '../components/ui';
+import { PayrollHistoryManager } from '../components/payroll/PayrollHistoryManager';
 import { db } from '../firebase';
 import { useAuthStore } from '../store/authStore';
 import type { UserData } from '../store/authStore';
@@ -27,7 +28,7 @@ const settingsOf = (employee: UserData): PayrollSettings => ({ annualSalary: emp
   nonTaxable: employee.nonTaxable ?? MEAL_ALLOWANCE_DEFAULT });
 const won = (value: number) => `${value.toLocaleString('ko-KR')}원`;
 const now = new Date();
-const years = Array.from({ length: 7 }, (_, index) => now.getFullYear() - 4 + index);
+const years = Array.from({ length: now.getFullYear() - 1997 }, (_, index) => 2000 + index);
 const monthIndex = (year: number, month: number) => year * 12 + month;
 const failureMessage = (failure: unknown) => failure instanceof Error ? failure.message : '처리하지 못했습니다. 다시 시도해 주세요.';
 
@@ -73,6 +74,8 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
   const [annualEmployeeId, setAnnualEmployeeId] = useState('');
   const [listLoading, setListLoading] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
+  const [showHistoryManager, setShowHistoryManager] = useState(false);
+  const [approvedHistoryRefresh, setApprovedHistoryRefresh] = useState(0);
   const [historyRecords, setHistoryRecords] = useState<PayrollRecordSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyStart, setHistoryStart] = useState(`${now.getFullYear()}-01`);
@@ -114,7 +117,7 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
       setYearRecords(result.records); setAnnualEmployees(result.employees); setListLoading(false);
     }).catch(failure => { if (active && isCurrent()) { setError(failureMessage(failure)); setListLoading(false); } });
     return () => { active = false; };
-  }, [selectedYear, isCurrent]);
+  }, [selectedYear, isCurrent, approvedHistoryRefresh]);
 
   const period = { year: selectedYear, month: selectedMonth };
   const taxStatus = getTaxTableStatus(taxTable);
@@ -182,7 +185,7 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
       const preview = await payrollService.preview(selectedYear, selectedMonth);
       if (!isCurrent()) return;
       const taxName = preview.taxTable.source === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표';
-      if (!window.confirm(`${selectedYear}년 ${selectedMonth}월 회사 전체 ${preview.employeeCount}명의 급여를 확정합니다.\n\n총 지급액: ${won(preview.totalGross)}\n총 공제액: ${won(preview.totalDeductions)}\n실지급액: ${won(preview.totalNet)}\n급여 0원: ${preview.zeroCount}명\n계산 기준: ${taxName}\n\n검색·본부·팀 필터와 관계없이 저장된 전체 직원 설정으로 확정되며 승인 후 수정·삭제할 수 없습니다. 계속하시겠습니까?`)) return;
+      if (!window.confirm(`${selectedYear}년 ${selectedMonth}월 회사 전체 ${preview.employeeCount}명의 급여를 확정합니다.\n\n총 지급액: ${won(preview.totalGross)}\n총 공제액: ${won(preview.totalDeductions)}\n실지급액: ${won(preview.totalNet)}\n급여 0원: ${preview.zeroCount}명\n계산 기준: ${taxName}\n\n검색·본부·팀 필터와 관계없이 저장된 전체 직원 설정으로 확정되며 승인 후에는 정정·재승인 절차로만 변경할 수 있습니다. 계속하시겠습니까?`)) return;
       const result = await payrollService.approve(selectedYear, selectedMonth, preview.fingerprint);
       if (!isCurrent()) return;
       setYearRecords(previous => [result.record, ...previous.filter(record => record.id !== result.record.id)]);
@@ -258,7 +261,8 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
 
   if (loading) return <div className="pyre-screen pyre-loading" role="status"><Loader2 size={22} className="animate-spin" />급여 정보를 불러오는 중입니다.</div>;
   return <div className="salary-screen pyre-screen"><div className="pyre-workspace">
-    <header className="pyre-heading"><div><PageTitle>급여관리</PageTitle><p>월별 급여대장과 직원별 연간 급여명세서를 PDF로 보관합니다.</p></div><Button onClick={() => { setShowHistory(true); void fetchHistory(); }}><History size={17} />과거 승인 내역</Button></header>
+    {showHistoryManager && <PayrollHistoryManager scope={scope} onClose={() => setShowHistoryManager(false)} onApproved={(year, month) => { setListLoading(true); setYearRecords([]); setAnnualEmployees([]); setAnnualEmployeeId(''); setSelectedYear(year); setSelectedMonth(month); setApprovedHistoryRefresh(value => value + 1); }} />}
+    <header className="pyre-heading"><div><PageTitle>급여관리</PageTitle><p>월별 급여대장과 직원별 연간 급여명세서를 PDF로 보관합니다.</p></div><div className="pyre-heading-actions"><Button disabled={busy} onClick={() => setShowHistoryManager(true)}><History size={17} />과거 급여 등록·정정</Button><Button onClick={() => { setShowHistory(true); void fetchHistory(); }}><History size={17} />과거 승인 내역</Button></div></header>
     {error && <p className="pyre-alert pyre-error" role="alert">{error}</p>}{message && <p className="pyre-alert pyre-success" role="status">{message}</p>}
     <Panel className="pyre-tax"><div><strong>적용 세액표</strong><span>{taxLoading ? '확인 중' : taxStatus.source === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표'}</span></div>
       {taxStatus.fileName && <p>등록 파일: {taxStatus.fileName}{taxStatus.updateDate ? ` · 등록일 ${taxStatus.updateDate.slice(0, 10)}` : ''}</p>}
@@ -277,7 +281,7 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
     <div className="pyre-list-heading"><h2>급여 설정 <span>{filteredEmployees.length}명</span></h2><p>저장된 연봉을 12개월로 나누어 계산합니다. 설정 변경은 확정된 문서에 영향을 주지 않습니다.</p></div>
     <div className="pyre-employees">{filteredEmployees.map(employeeEditor)}</div>{!filteredEmployees.length && <Panel className="pyre-empty">선택한 조건의 직원이 없습니다. 검색어와 본부·팀 필터를 확인하세요.</Panel>}
     {detailsEmployee && details && <PayrollDialog title={`${detailsEmployee.name}님 예상 급여 산출 내역`} error={error} onClose={() => setDetailsId(null)}><p className="pyre-dialog-note">{selectedYear}년 {selectedMonth}월 현재 입력한 설정의 예상 계산입니다. 확정 급여명세서는 승인 이력으로 생성한 PDF를 사용하세요.</p><div className="pyre-detail-summary"><div><span>월 지급액</span><strong>{won(details.monthlyGross)}</strong></div><div><span>예상 실수령액</span><strong>{won(details.netPay)}</strong></div></div><dl className="pyre-detail-rows">{detailItems(details).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{won(value)}</dd></div>)}</dl><p className="pyre-dialog-note">공제대상 가족 {details.dependents}명 · 8~20세 자녀 {details.children}명 · {details.metadata.tableSource === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표'}<br />{pensionAgeNote(details)} · 건강보험 3.595% · 장기요양 건강보험료의 13.14% · 고용보험 0.9%. 실제 지급액은 회사의 수당·보험 가입 조건에 따라 달라질 수 있습니다.</p><Button disabled={!!downloading} onClick={() => void download('annual', detailsEmployee.uid)}><Download size={17} />{selectedYear}년 확정 급여명세서 PDF</Button></PayrollDialog>}
-    {showHistory && <PayrollDialog title="급여 지출 승인 이력" error={error} onClose={() => { historyRequest.current += 1; setShowHistory(false); setHistoryLoading(false); }}><div className="pyre-history-filters"><label>시작월<Input type="month" aria-label="급여 이력 시작월" value={historyStart} onChange={event => setHistoryStart(event.target.value)} /></label><label>종료월<Input type="month" aria-label="급여 이력 종료월" value={historyEnd} onChange={event => setHistoryEnd(event.target.value)} /></label><Button disabled={historyLoading} onClick={() => void fetchHistory()}>조회</Button></div><p className="pyre-dialog-note">새로 확정한 상세 급여대장은 수정·삭제할 수 없습니다. 이전 집계 기록은 직원별 상세자료가 없어 PDF를 생성할 수 없습니다.</p>{historyLoading ? <p role="status">승인 이력을 불러오는 중입니다.</p> : <div className="pyre-history-scroll"><table><thead><tr><th>승인 기간</th><th>인원</th><th>총 지급액</th><th>실지급액</th><th>승인 정보</th><th>문서·관리</th></tr></thead><tbody>{historyRecords.map(record => <tr key={record.id}><td>{record.year}년 {record.month}월<br /><small>{record.legacy ? '이전 집계' : '회사 전체 확정'}</small></td><td>{record.employeeCount}명</td><td>{won(record.totalGross)}</td><td>{won(record.totalNet)}</td><td>{record.approvedAtIso.slice(0, 10)}<br /><small>{record.approvedByName}</small></td><td>{record.legacy ? <div className="pyre-history-actions"><span>상세내역 없음</span><Button aria-label={`${record.year}년 ${record.month}월 이전 집계 삭제`} onClick={() => void deleteLegacy(record)}><Trash2 size={16} /></Button></div> : <Button disabled={!!downloading} onClick={() => void download('monthly', record.id)}><Download size={16} />PDF</Button>}</td></tr>)}</tbody></table>{!historyRecords.length && <p className="pyre-empty">조회 기간의 승인 내역이 없습니다.</p>}</div>}</PayrollDialog>}
+    {showHistory && <PayrollDialog title="급여 지출 승인 이력" error={error} onClose={() => { historyRequest.current += 1; setShowHistory(false); setHistoryLoading(false); }}><div className="pyre-history-filters"><label>시작월<Input type="month" aria-label="급여 이력 시작월" value={historyStart} onChange={event => setHistoryStart(event.target.value)} /></label><label>종료월<Input type="month" aria-label="급여 이력 종료월" value={historyEnd} onChange={event => setHistoryEnd(event.target.value)} /></label><Button disabled={historyLoading} onClick={() => void fetchHistory()}>조회</Button></div><p className="pyre-dialog-note">발행된 승인본과 수정 이력은 보관됩니다. 금액 변경은 과거 급여 등록·정정 메뉴에서 정정·재승인 절차로 진행하세요. 이전 집계 기록은 직원별 상세자료가 없어 PDF를 생성할 수 없습니다.</p>{historyLoading ? <p role="status">승인 이력을 불러오는 중입니다.</p> : <div className="pyre-history-scroll"><table><thead><tr><th>승인 기간</th><th>인원</th><th>총 지급액</th><th>실지급액</th><th>승인 정보</th><th>문서·관리</th></tr></thead><tbody>{historyRecords.map(record => <tr key={record.id}><td>{record.year}년 {record.month}월<br /><small>{record.legacy ? '이전 집계' : '회사 전체 확정'}</small></td><td>{record.employeeCount}명</td><td>{won(record.totalGross)}</td><td>{won(record.totalNet)}</td><td>{record.approvedAtIso.slice(0, 10)}<br /><small>{record.approvedByName}</small></td><td>{record.legacy ? <div className="pyre-history-actions"><span>상세내역 없음</span><Button aria-label={`${record.year}년 ${record.month}월 이전 집계 삭제`} onClick={() => void deleteLegacy(record)}><Trash2 size={16} /></Button></div> : <Button disabled={!!downloading} onClick={() => void download('monthly', record.id)}><Download size={16} />PDF</Button>}</td></tr>)}</tbody></table>{!historyRecords.length && <p className="pyre-empty">조회 기간의 승인 내역이 없습니다.</p>}</div>}</PayrollDialog>}
   </div></div>;
 }
 

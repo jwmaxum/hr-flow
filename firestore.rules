@@ -235,6 +235,34 @@ service cloud.firestore {
       allow update: if (superAdmin() || companyAdmin(resource.data.companyId)) &&
         legacyPayroll(resource.data) && legacyPayroll(request.resource.data) && unchanged(['companyId', 'tenantId', 'userId', 'approvedBy', 'createdAt']);
       allow delete: if (superAdmin() || companyAdmin(resource.data.companyId)) && legacyPayroll(resource.data);
+      match /revisions/{revision} {
+        allow read: if exists(/databases/$(database)/documents/payroll_records/$(id)) &&
+          resource.data.recordId == id && resource.data.companyId == get(/databases/$(database)/documents/payroll_records/$(id)).data.companyId &&
+          (superAdmin() || companyAdmin(resource.data.companyId));
+        allow write: if false;
+      }
+      match /legacySources/{source} {
+        allow read: if exists(/databases/$(database)/documents/payroll_records/$(id)) &&
+          resource.data.recordId == id && resource.data.companyId == get(/databases/$(database)/documents/payroll_records/$(id)).data.companyId &&
+          (superAdmin() || companyAdmin(resource.data.companyId));
+        allow write: if false;
+      }
+    }
+    match /payroll_drafts/{id} {
+      allow read: if superAdmin() || companyAdmin(resource.data.companyId);
+      allow write: if false;
+      match /versions/{version} {
+        allow read: if exists(/databases/$(database)/documents/payroll_drafts/$(id)) &&
+          resource.data.draftId == id && resource.data.companyId == get(/databases/$(database)/documents/payroll_drafts/$(id)).data.companyId &&
+          (superAdmin() || companyAdmin(resource.data.companyId));
+        allow write: if false;
+      }
+      match /baseline/{version} {
+        allow read: if exists(/databases/$(database)/documents/payroll_drafts/$(id)) &&
+          resource.data.draftId == id && resource.data.companyId == get(/databases/$(database)/documents/payroll_drafts/$(id)).data.companyId &&
+          (superAdmin() || companyAdmin(resource.data.companyId));
+        allow write: if false;
+      }
     }
     match /payment_claims/{id} {
       allow read: if superAdmin() || companyAdmin(resource.data.companyId);

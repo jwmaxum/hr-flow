@@ -20,6 +20,34 @@ const request = (uid, action, data = {}) => ({ ...(uid ? { auth: { uid, token: {
   rawRequest: { headers: { authorization: `Bearer test-${uid}` } }, data: { action, ...data } });
 const denied = (promise, code) => assert.rejects(promise, error => error.code === code);
 const fakePdf = Buffer.from('%PDF-test');
+const { createHash } = require('node:crypto');
+const { HEADER_FIELDS } = require('../payroll-import-schema.mjs');
+const sourceFile = (rows, name = '과거급여.csv') => ({ name, mimeType: 'text/csv', base64: Buffer.from('\uFEFF' + HEADER_FIELDS.map(field => field.header).join(',') + '\r\n' + rows.map(row => HEADER_FIELDS.map(field => {
+  const value = row[field.key] ?? row.amounts?.[field.key] ?? '';
+  return '"' + String(value).replaceAll('"', '""') + '"';
+}).join(',')).join('\r\n')).toString('base64') });
+const historic = (extra = {}) => ({ employeeLoginId: 'MEMBER@A.TEST', name: '과거 이름', amounts: {
+  monthlyGross: 2500000, nonTaxable: 200000, pension: 100000, health: 80000, longTerm: 10000, employment: 20000,
+  incomeTax: -30000, localTax: -3000, otherDeductions: 17000 }, ...extra });
+function privateBucket(faults) {
+  const objects = new Map(); let generation = 0;
+  const missing = () => Object.assign(new Error('Synthetic missing private source'), { code: 404 });
+  return { objects, file(path, options = {}) { return {
+    async save(bytes, config) {
+      assert.equal(config.preconditionOpts.ifGenerationMatch, 0); assert.equal(objects.has(path), false);
+      const metadata = { ...structuredClone(config.metadata), generation: String(++generation), size: String(bytes.length) };
+      objects.set(path, { bytes: Buffer.from(bytes), metadata });
+      if (faults.onSourceSave) await faults.onSourceSave(path, objects.get(path));
+    },
+    async getMetadata() { const entry = objects.get(path); if (!entry || options.generation && entry.metadata.generation !== options.generation) throw missing(); return [structuredClone(entry.metadata)]; },
+    async download() { const entry = objects.get(path); if (!entry || options.generation && entry.metadata.generation !== options.generation) throw missing();
+      if (faults.onSourceDownload) await faults.onSourceDownload(path, entry); return [Buffer.from(entry.bytes)]; },
+    async delete(config) { const entry = objects.get(path); if (!entry && config.ignoreNotFound) return;
+      if (!entry || options.generation && entry.metadata.generation !== options.generation || config.ifGenerationMatch && entry.metadata.generation !== config.ifGenerationMatch) throw missing();
+      objects.delete(path);
+    },
+  }; }, async deleteFiles({ prefix }) { for (const path of objects.keys()) if (path.startsWith(prefix)) objects.delete(path); } };
+}
 
 async function fixture() {
   for (const collection of await db.listCollections()) await db.recursiveDelete(collection);
@@ -55,7 +83,8 @@ async function fixture() {
     if (faults.revoked || faults.rejectVerificationAt === authCalls.length || !token.startsWith('test-')) throw new Error('synthetic authentication failure');
     return { uid: token.slice(5) };
   } };
-  const manage = createPayrollService({ db, auth, now,
+  const bucket = privateBucket(faults);
+  const manage = createPayrollService({ db, auth, now, bucket,
     renderMonthlyPdf: async (record, branding) => { monthly.push({ record, branding }); if (faults.onMonthly) await faults.onMonthly(); return faults.pdf; },
     renderAnnualPdf: async (report, branding) => { annual.push({ report, branding }); if (faults.onAnnual) await faults.onAnnual(); return faults.pdf; },
   });
@@ -65,7 +94,8 @@ async function fixture() {
     const value = await preview(month, uid);
     return call(uid, 'approve', { year: 2026, month, expectedFingerprint: value.fingerprint });
   };
-  return { call, manage, preview, approve, faults, authCalls, monthly, annual, profile };
+  const importDraft = (month = 1, rows = [historic()], uid = 'admin') => call(uid, 'importSource', { year: 2020, month, reason: '과거 원자료 검토\n담당 확인', source: sourceFile(rows) });
+  return { call, manage, preview, approve, faults, authCalls, monthly, annual, profile, bucket, importDraft };
 }
 
 function uploadedTable(tax = 12340) {
@@ -363,6 +393,184 @@ test('server-approved payroll, PDF privacy, tenant separation and immutable fina
       await denied(f.call('admin', 'monthlyPdf', { id: record.id }), 'internal');
       f.faults.pdf = Buffer.alloc(MAX_PDF_BYTES + 1, 0); fakePdf.copy(f.faults.pdf);
       await denied(f.call('admin', 'monthlyPdf', { id: record.id }), 'resource-exhausted');
+    });
+    await t.test('historical imports use exact saved values, scoped login mapping and namespaced former employees', async () => {
+      const f = await fixture();
+      await db.doc('UserProfile/member').update({ joinDate: '2025-01-01', rrn: '600101-1******' });
+      const archive = historic({ employeeLoginId: '', archiveCode: 'Former-001', name: '퇴사 원본 이름' });
+      const { draft } = await f.importDraft(1, [historic(), archive]);
+      assert.equal(draft.companyId, 'a'); assert.equal(draft.status, 'PENDING'); assert.equal(draft.draftVersion, 1);
+      assert.equal(draft.rows[0].userId, 'member'); assert.equal(draft.rows[0].name, '과거 이름');
+      for (const field of ['joinDate', 'divisionName', 'teamName', 'position']) assert.equal(draft.rows[0][field], '');
+      assert.deepEqual(draft.rows[0].calculation, { mode: 'IMPORTED', tableSource: 'imported-source' });
+      assert.equal(draft.rows[0].amounts.incomeTax, -30000); assert.equal(draft.rows[0].amounts.otherDeductions, 17000);
+      assert.equal(draft.rows[0].amounts.totalDeductions, 194000); assert.equal(draft.rows[0].amounts.netPay, 2306000);
+      const expected = 'archive_' + createHash('sha256').update(JSON.stringify(['a', 'former-001'])).digest('hex');
+      assert.equal(draft.rows[1].userId, expected); assert.equal((await db.collection('payroll_records').get()).size, 0);
+      assert.equal((await db.doc('UserProfile/' + expected).get()).exists, false);
+      assert.equal(draft.source.storagePath, undefined); assert.equal(draft.source.generation, undefined);
+      const b = await f.importDraft(1, [archive], 'foreignAdmin'); assert.notEqual(b.draft.rows[0].userId, expected);
+      const lists = await f.call('admin', 'listDrafts', { year: 2020 }); assert.equal(lists.drafts.length, 1);
+      assert.equal(lists.drafts[0].rows, undefined); assert.equal(lists.drafts[0].companyId, 'a');
+      const encoded = JSON.stringify(draft); for (const value of ['rrn', '600101', 'personalInfo', 'storagePath']) assert.equal(encoded.includes(value), false);
+    });
+    await t.test('import validation rejects foreign or ambiguous logins, PII, chronology and future periods without retaining source blobs', async () => {
+      const f = await fixture();
+      for (const row of [historic({ employeeLoginId: 'foreign@b.test' }), historic({ employeeLoginId: '', archiveCode: '660101-1234567' }),
+        historic({ joinDate: '2020-02-01' }), historic({ joinDate: '2019-01-01', resignDate: '2018-01-01' })]) {
+        await denied(f.importDraft(1, [row]), 'invalid-argument'); assert.equal(f.bucket.objects.size, 0);
+      }
+      await db.doc('UserProfile/duplicate').set(f.profile('중복 로그인', 'MEMBER', 'a', { email: 'MEMBER@A.TEST' }));
+      await denied(f.importDraft(), 'invalid-argument'); assert.equal(f.bucket.objects.size, 0);
+      await denied(f.call('admin', 'importSource', { year: 2026, month: 11, reason: '미래 자료', source: sourceFile([historic()]) }), 'invalid-argument');
+      for (const reason of ['x', '  ', '사유\u0000주입']) await denied(f.call('admin', 'importSource', { year: 2020, month: 1, reason, source: sourceFile([historic()]) }), 'invalid-argument');
+      assert.equal((await db.collection('payroll_drafts').get()).size, 0);
+    });
+    await t.test('draft mutations retain every saved version and only accept the same verified roster', async () => {
+      const f = await fixture(); const { draft } = await f.importDraft();
+      const rows = draft.rows.map(row => ({ userId: row.userId, amounts: { ...row.amounts, incomeTax: -40000, totalDeductions: 184000, netPay: 2316000 } }));
+      const changed = await f.call('admin', 'updateDraft', { id: draft.id, expectedDraftVersion: 1, reason: '환급 정정\n재확인', rows });
+      assert.equal(changed.draft.draftVersion, 2); assert.equal(changed.draft.rows[0].calculation.mode, 'ADJUSTED');
+      await denied(f.call('admin', 'updateDraft', { id: draft.id, expectedDraftVersion: 1, reason: '오래된 저장', rows }), 'aborted');
+      await denied(f.call('admin', 'updateDraft', { id: draft.id, expectedDraftVersion: 2, reason: '타사 주입', rows: [{ ...rows[0], userId: 'foreignMember' }] }), 'invalid-argument');
+      const versions = await f.call('admin', 'listDraftVersions', { id: draft.id });
+      assert.deepEqual(versions.versions.map(value => value.draftVersion), [2, 1]); assert(versions.versions.every(value => value.companyId === 'a'));
+      const original = await f.call('admin', 'getDraftVersion', { id: draft.id, draftVersion: 1 });
+      assert.equal(original.draft.readonly, true); assert.equal(original.draft.rows[0].amounts.incomeTax, -30000);
+      assert.equal(original.draft.rows[0].calculation.mode, 'IMPORTED');
+      const cancelled = await f.call('admin', 'cancelDraft', { id: draft.id, expectedDraftVersion: 2, reason: '검토 취소 사유' });
+      assert.equal(cancelled.draft.status, 'CANCELLED'); assert.equal(cancelled.draft.draftVersion, 3);
+      await denied(f.call('admin', 'approveDraft', { id: draft.id, expectedDraftVersion: 3 }), 'aborted');
+      assert.equal((await db.collection('payroll_records').get()).size, 0);
+    });
+    await t.test('first approval is atomic, idempotent and records private source provenance without recalculation', async () => {
+      const f = await fixture(); const { draft } = await f.importDraft();
+      const result = await f.call('admin', 'approveDraft', { id: draft.id, expectedDraftVersion: 1 });
+      assert.equal(result.revision, 1); assert.equal(result.record.origin, 'IMPORT');
+      const id = payrollRecordId('a', 2020, 1), root = (await db.doc('payroll_records/' + id).get()).data();
+      const archive = (await db.doc(`payroll_records/${id}/revisions/r000001`).get()).data();
+      assert.deepEqual(archive.snapshot, root); assert.equal(archive.recordId, id); assert.equal(root.rows[0].amounts.incomeTax, -30000);
+      assert.equal(root.totalGross, root.sums.monthlyGross); assert.equal(root.divisionId, 'ALL');
+      const again = await f.call('admin', 'approveDraft', { id: draft.id, expectedDraftVersion: 1 });
+      assert.equal(again.idempotent, true); assert.equal(again.revision, 1);
+      assert.equal((await db.doc('payroll_records/' + id).collection('revisions').get()).size, 1);
+      await f.call('admin', 'monthlyPdf', { id, revision: 1 }); await f.call('admin', 'annualPdf', { year: 2020, employeeId: 'member' });
+      assert.equal(f.monthly[0].record.rows[0].amounts.incomeTax, -30000); assert.equal(f.annual[0].report.sums.incomeTax, -30000);
+      const source = await f.call('admin', 'sourceDownload', { recordId: id, revision: 1 });
+      assert.equal(createHash('sha256').update(Buffer.from(source.base64, 'base64')).digest('hex'), draft.source.sha256);
+      assert.equal(source.filename, '과거급여.csv'); assert.equal(source.mimeType, 'text/csv');
+    });
+    await t.test('correction retains exact original live approval, isolates pending work and uses only active amounts in annual reports', async () => {
+      const f = await fixture(); const { record } = await f.approve(); const reference = db.doc('payroll_records/' + record.id);
+      const original = (await reference.get()).data();
+      const { draft } = await f.call('admin', 'startCorrection', { recordId: record.id, reason: '기존 급여 정정' });
+      const rows = draft.rows.map(row => ({ userId: row.userId, amounts: row.userId === 'member' ?
+        { ...row.amounts, incomeTax: -30000, totalDeductions: row.amounts.totalDeductions - row.amounts.incomeTax - 30000, netPay: row.amounts.netPay + row.amounts.incomeTax + 30000 } : row.amounts }));
+      const changed = await f.call('admin', 'updateDraft', { id: draft.id, expectedDraftVersion: 1, reason: '원천세 환급 정정', rows });
+      assert.deepEqual((await reference.get()).data(), original); assert.equal(changed.draft.diff.changed.length, 1);
+      const field = changed.draft.diff.changed[0].fields.find(value => value.field === 'incomeTax');
+      assert.deepEqual(field, { field: 'incomeTax', before: 29160, after: -30000 });
+      const result = await f.call('admin', 'approveDraft', { id: draft.id, expectedDraftVersion: 2 }); assert.equal(result.revision, 2);
+      const old = (await reference.collection('revisions').doc('r000001').get()).data(); assert.deepEqual(old.snapshot, original);
+      await f.call('admin', 'monthlyPdf', { id: record.id, revision: 1 }); await f.call('admin', 'monthlyPdf', { id: record.id, revision: 2 });
+      assert.equal(f.monthly[0].record.rows.find(row => row.userId === 'member').amounts.incomeTax, 29160);
+      assert.equal(f.monthly[1].record.rows.find(row => row.userId === 'member').amounts.incomeTax, -30000);
+      await f.call('admin', 'annualPdf', { year: 2026, employeeId: 'member' }); assert.equal(f.annual[0].report.sums.incomeTax, -30000);
+      const versions = await f.call('admin', 'listRevisions', { id: record.id });
+      assert.deepEqual(versions.revisions.map(row => [row.revision, row.active]), [[2, true], [1, false]]);
+      assert(versions.revisions.every(row => row.companyId === 'a' && row.pdfAvailable));
+    });
+    await t.test('competing drafts cannot overwrite a newer approval and stale state is explicit', async () => {
+      const f = await fixture(); const a = await f.importDraft(), b = await f.importDraft();
+      const results = await Promise.allSettled([a.draft, b.draft].map(draft => f.call('admin', 'approveDraft', { id: draft.id, expectedDraftVersion: 1 })));
+      assert.equal(results.filter(row => row.status === 'fulfilled').length, 1); assert.equal(results.find(row => row.status === 'rejected').reason.code, 'aborted');
+      const loser = results[0].status === 'rejected' ? a.draft : b.draft;
+      const stale = await f.call('admin', 'getDraft', { id: loser.id }); assert.equal(stale.draft.stale, true);
+      const id = payrollRecordId('a', 2020, 1); assert.equal((await db.doc(`payroll_records/${id}/revisions/r000001`).get()).exists, true);
+      assert.equal((await db.doc('payroll_records/' + id).collection('revisions').get()).size, 1);
+    });
+    await t.test('legacy backups survive old-site deletion and replacement imports never resurrect removed employee amounts', async () => {
+      const f = await fixture(); await legacy(9);
+      const { draft } = await f.call('admin', 'importSource', { year: 2026, month: 9, reason: '옛 집계 상세 보완', source: sourceFile([historic()]) });
+      assert.deepEqual(draft.diff.totals.before, { monthlyGross: 1000000, netPay: 900000 });
+      const { record } = await f.call('admin', 'approveDraft', { id: draft.id, expectedDraftVersion: 1 });
+      await db.doc('payroll_records/legacy-9').delete();
+      const revisions = await f.call('admin', 'listRevisions', { id: record.id });
+      const backedUp = revisions.revisions.find(row => row.kind === 'LEGACY'); assert.equal(backedUp.legacyRecordId, 'legacy-9'); assert.equal(backedUp.pdfAvailable, false);
+      const replacement = await f.call('admin', 'importSource', { year: 2026, month: 9, reason: '대상자 원본 교체', source: sourceFile([historic({ employeeLoginId: '', archiveCode: 'another-worker', name: '다른 직원' })]) });
+      assert.equal(replacement.draft.diff.removed[0].userId, 'member');
+      await f.call('admin', 'approveDraft', { id: replacement.draft.id, expectedDraftVersion: 1 });
+      await f.call('admin', 'annualPdf', { year: 2026, employeeId: 'member' });
+      assert.equal(f.annual[0].report.sums.monthlyGross, 0); assert.equal(f.annual[0].report.availableMonths, 0);
+      await f.call('admin', 'monthlyPdf', { id: record.id, revision: 1 }); assert.equal(f.monthly[0].record.rows[0].userId, 'member');
+    });
+    await t.test('all draft, history and source APIs enforce organization ownership and active admin sessions', async () => {
+      const f = await fixture(); const { draft } = await f.importDraft();
+      const { record } = await f.call('admin', 'approveDraft', { id: draft.id, expectedDraftVersion: 1 });
+      for (const [action, input] of [['getDraft', { id: draft.id }], ['listDraftVersions', { id: draft.id }],
+        ['getDraftVersion', { id: draft.id, draftVersion: 1 }], ['updateDraft', { id: draft.id, expectedDraftVersion: 2, reason: '타사 수정', rows: [] }],
+        ['approveDraft', { id: draft.id, expectedDraftVersion: 1 }], ['cancelDraft', { id: draft.id, expectedDraftVersion: 2, reason: '타사 취소' }],
+        ['startCorrection', { recordId: record.id, reason: '타사 정정' }], ['listRevisions', { id: record.id }],
+        ['getRevision', { id: record.id, revision: 1 }], ['monthlyPdf', { id: record.id, revision: 1 }],
+        ['sourceDownload', { draftId: draft.id }], ['sourceDownload', { recordId: record.id, revision: 1 }]]) {
+        await denied(f.call('foreignAdmin', action, input), 'not-found');
+        for (const uid of ['member', 'sub', 'platform', 'retired', 'suspendedEmployee']) await denied(f.call(uid, action, input), 'permission-denied');
+      }
+      assert.equal((await f.call('foreignAdmin', 'listDrafts', { year: 2020 })).drafts.length, 0);
+      f.faults.revoked = true; await denied(f.call('admin', 'getDraft', { id: draft.id }), 'unauthenticated');
+    });
+    await t.test('source bytes, generations, post-read authorization and immutable manifests fail closed', async () => {
+      const f = await fixture(); const { draft } = await f.importDraft(); const [path, entry] = [...f.bucket.objects.entries()][0];
+      const bytes = Buffer.from(entry.bytes); entry.bytes[0] ^= 1;
+      await denied(f.call('admin', 'sourceDownload', { draftId: draft.id }), 'failed-precondition'); entry.bytes = bytes;
+      entry.metadata.metadata.companyId = 'b'; await denied(f.call('admin', 'sourceDownload', { draftId: draft.id }), 'failed-precondition'); entry.metadata.metadata.companyId = 'a';
+      f.faults.onSourceDownload = () => db.doc('UserProfile/admin').update({ companyId: 'b' });
+      await denied(f.call('admin', 'sourceDownload', { draftId: draft.id }), 'permission-denied');
+      await db.doc('UserProfile/admin').update({ companyId: 'a' }); f.faults.onSourceDownload = null;
+      await db.doc('payroll_drafts/' + draft.id).update({ 'source.storagePath': path.replace('companies/a/', 'companies/b/') });
+      await denied(f.call('admin', 'sourceDownload', { draftId: draft.id }), 'failed-precondition');
+    });
+    await t.test('source writes are cleaned up on failed transactions and retained after committed drafts', async () => {
+      const f = await fixture(); f.faults.onSourceSave = () => db.doc('UserProfile/admin').update({ companyId: 'b' });
+      await denied(f.importDraft(), 'permission-denied'); assert.equal(f.bucket.objects.size, 0); assert.equal((await db.collection('payroll_drafts').get()).size, 0);
+      const g = await fixture(); const id = payrollRecordId('a', 2020, 1);
+      await db.doc('payroll_records/' + id).set({ companyId: 'b', year: 2020, month: 1 });
+      await denied(g.importDraft(), 'failed-precondition'); assert.equal(g.bucket.objects.size, 0);
+      assert.equal((await db.doc('payroll_records/' + id).get()).data().companyId, 'b');
+      const h = await fixture(); h.faults.rejectVerificationAt = 4;
+      await denied(h.importDraft(), 'unauthenticated');
+      const committed = await db.collection('payroll_drafts').get();
+      assert.equal(committed.size, 1); assert.equal(h.bucket.objects.size, 1, 'a committed draft must retain its referenced source despite a late authentication failure');
+    });
+    await t.test('explicit old PDF remains stable while promotion changes the current approved projection', async () => {
+      const f = await fixture(); const { record } = await f.approve();
+      const { draft } = await f.call('admin', 'startCorrection', { recordId: record.id, reason: '동시 발급 정정' });
+      f.faults.onMonthly = async () => { f.faults.onMonthly = null; await f.call('admin', 'approveDraft', { id: draft.id, expectedDraftVersion: 1 }); };
+      await f.call('admin', 'monthlyPdf', { id: record.id, revision: 1 });
+      assert.equal(f.monthly[0].record.revision, 1);
+      const next = await f.call('admin', 'startCorrection', { recordId: record.id, reason: '현행 발급 정정' });
+      f.faults.onMonthly = async () => { f.faults.onMonthly = null; await f.call('admin', 'approveDraft', { id: next.draft.id, expectedDraftVersion: 1 }); };
+      await denied(f.call('admin', 'monthlyPdf', { id: record.id }), 'aborted');
+    });
+    await t.test('existing company deletion removes all payroll drafts, revisions and source bytes while preserving another company', async () => {
+      const f = await fixture(); const a = await f.importDraft(), b = await f.importDraft(1, [historic({ employeeLoginId: '', archiveCode: 'former-b' })], 'foreignAdmin');
+      const { record } = await f.call('admin', 'approveDraft', { id: a.draft.id, expectedDraftVersion: 1 });
+      const correction = await f.call('admin', 'startCorrection', { recordId: record.id, reason: '삭제 회귀용 정정' });
+      await f.call('admin', 'approveDraft', { id: correction.draft.id, expectedDraftVersion: 1 });
+      const { createAdminSecurityService } = require('../admin-security-service');
+      const admin = createAdminSecurityService({ db, now, bucket: f.bucket, auth: { async updateUser() {}, async revokeRefreshTokens() {}, async deleteUsers() { return { failureCount: 0 }; } } });
+      await admin.deleteCompany(request('platform', 'deleteCompany', { companyId: 'a' }));
+      assert.equal((await db.doc('payroll_records/' + record.id).get()).exists, false);
+      assert.equal((await db.doc(`payroll_records/${record.id}/revisions/r000001`).get()).exists, false);
+      assert.equal((await db.doc(`payroll_records/${record.id}/revisions/r000002`).get()).exists, false);
+      for (const id of [a.draft.id, correction.draft.id]) {
+        assert.equal((await db.doc('payroll_drafts/' + id).get()).exists, false);
+        assert.equal((await db.doc(`payroll_drafts/${id}/versions/v000001`).get()).exists, false);
+        assert.equal((await db.doc(`payroll_drafts/${id}/baseline/original`).get()).exists, false);
+      }
+      assert.equal((await db.doc('payroll_drafts/' + b.draft.id).get()).exists, true);
+      assert.equal(f.bucket.objects.size, 1); assert([...f.bucket.objects.keys()].every(path => path.startsWith('companies/b/')));
+      assert.equal((await db.doc('companies/a').get()).data().status, 'DELETED');
     });
     await t.test('large company snapshot exceeds storage budget without writing partial payroll history', async () => {
       const f = await fixture(); const long = '실측 검증용 한글 이름'.repeat(12);

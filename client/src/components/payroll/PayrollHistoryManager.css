@@ -1,0 +1,107 @@
+.workflow-theme .pymi-dialog { position: fixed; width: min(1100px,calc(100vw - 40px)); max-width: none; max-height: calc(100dvh - 40px); margin: auto; padding: 0; border: 1px solid var(--wf-border); border-radius: 12px; background: var(--wf-panel,#fff); color: var(--wf-text,#292b2b); font-family: inherit; box-shadow: 0 16px 56px #0002; overflow: hidden; }
+.pymi-dialog[open] { display: flex; flex-direction: column; }
+.pymi-dialog::backdrop { background: var(--wf-overlay,rgba(0,0,0,.5)); }
+.pymi-head { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--wf-border); }
+.pymi-head h2 { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.5; }
+.pymi-head p { margin: 5px 0 0; font-size: 12px; color: var(--wf-muted); }
+.pymi-head > .wf-btn { flex: 0 0 auto; }
+.pymi-tabs { display: flex; flex: 0 0 auto; gap: 8px; padding: 12px 24px; border-bottom: 1px solid var(--wf-border); background: var(--wf-subtle); }
+.pymi-tabs .wf-btn { border-color: transparent; background: transparent; }
+.pymi-tabs .wf-btn[aria-pressed="true"] { background: var(--wf-primary-50); color: var(--wf-primary-800); border-color: var(--wf-primary-100); }
+.pymi-body { flex: 1 1 auto; min-height: 0; max-height: calc(100dvh - 221px); overflow: auto; padding: 24px; display: grid; gap: 18px; overscroll-behavior: contain; }
+.pymi-body :is(section,article,header,div,label) { min-width: 0; }
+.pymi-body > section, .pymi-review, .pymi-import { display: grid; gap: 16px; }
+.pymi-body h3 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.6; }
+.pymi-body p, .pymi-body li { font-size: 12px; line-height: 1.75; overflow-wrap: anywhere; }
+.pymi-body label { display: grid; gap: 7px; font-size: 12px; color: var(--wf-muted); }
+.pymi-body :is(input,select,textarea) { width: 100%; box-sizing: border-box; font-variant-numeric: tabular-nums; }
+.pymi-body textarea { min-height: 86px; resize: vertical; }
+.pymi-body .wf-btn, .pymi-head .wf-btn, .pymi-tabs .wf-btn { display: inline-flex; justify-content: center; align-items: center; gap: 7px; min-height: 38px; font-size: 12px; }
+.pymi-body .wf-btn svg { flex: 0 0 auto; }
+.pymi-note { margin: 0; color: var(--wf-muted); }
+.pymi-alert { margin: 0; padding: 12px 15px; border-radius: 8px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.pymi-error { color: #9c1b1b; background: var(--color-error-bg,#ffe4e4); }
+.pymi-success { color: #176320; background: var(--color-success-bg,#e0f7e2); }
+.pymi-warning { color: #8a3b15; }
+.pymi-alert.pymi-warning { background: var(--color-warning-bg,#ffede7); }
+.pymi-busy { display: flex; align-items: center; gap: 9px; color: var(--wf-muted); margin: 0; }
+.pymi-section-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.pymi-section-heading p { margin: 6px 0 0; color: var(--wf-muted); }
+.pymi-instructions { padding: 14px 18px; border-radius: 8px; background: var(--wf-subtle); color: var(--wf-muted); }
+.pymi-instructions ol { margin: 0; padding-left: 20px; list-style: decimal; }
+.pymi-instructions li + li { margin-top: 7px; }
+.pymi-instructions > p { margin-bottom: 0; color: var(--wf-text); }
+.pymi-import-fields { display: grid; grid-template-columns: minmax(160px,.65fr) minmax(0,1.5fr); gap: 16px; }
+.pymi-full { grid-column: 1 / -1; }
+.pymi-import > .wf-btn { justify-self: start; }
+.pymi-year-filter, .pymi-version-filter { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.pymi-year-filter > label { width: 160px; }
+.pymi-year-filter > span { align-self: center; font-size: 12px; color: var(--wf-muted); }
+.pymi-version-filter > label { flex: 1 1 260px; }
+.pymi-source { display: grid; gap: 7px; max-width: 320px; }
+.pymi-source > span { color: var(--wf-muted); font-size: 11px; overflow-wrap: anywhere; }
+.pymi-list { display: grid; gap: 10px; }
+.pymi-list > article { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px; border: 1px solid var(--wf-border); border-radius: 8px; }
+.pymi-list strong { font-size: 13px; font-weight: 600; }
+.pymi-list p { margin: 6px 0 0; color: var(--wf-muted); }
+.pymi-list .pymi-warning { color: #8a3b15; }
+.pymi-list-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; flex: 0 0 auto; }
+.pymi-empty { padding: 22px; text-align: center; color: var(--wf-muted); }
+.pymi-totals { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; padding: 16px; background: var(--wf-subtle); border-radius: 8px; }
+.pymi-totals > div { display: grid; gap: 8px; }
+.pymi-totals span, .pymi-derived span { color: var(--wf-muted); font-size: 11px; }
+.pymi-totals strong { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pymi-totals > div:last-child strong { color: var(--wf-primary-800); }
+.pymi-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.pymi-pagination > span { margin-right: auto; font-size: 12px; color: var(--wf-muted); }
+.pymi-roster { display: grid; gap: 10px; }
+.pymi-roster > article { padding: 16px; border: 1px solid var(--wf-border); border-radius: 8px; }
+.pymi-roster header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.pymi-roster header strong { font-size: 14px; font-weight: 600; }
+.pymi-roster header p { margin: 5px 0 0; color: var(--wf-muted); }
+.pymi-row-fields { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; padding-top: 18px; margin-top: 16px; border-top: 1px solid var(--wf-border); }
+.pymi-derived { display: grid; gap: 8px; padding: 10px; background: var(--wf-subtle); border-radius: 6px; }
+.pymi-derived output { font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pymi-diff { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--wf-border); border-radius: 8px; }
+.pymi-diff > p { margin: 0; color: var(--wf-muted); }
+.pymi-diff details summary { cursor: pointer; padding: 8px 0; font-size: 12px; color: var(--wf-primary-800); }
+.pymi-diff details > p { max-height: 160px; overflow: auto; }
+.pymi-changes { display: grid; gap: 12px; }
+.pymi-changes > div { padding: 12px; background: var(--wf-subtle); border-radius: 6px; }
+.pymi-changes strong { font-size: 12px; }
+.pymi-changes dl { display: grid; gap: 6px; margin: 10px 0 0; }
+.pymi-changes dl > div, .pymi-diff-totals > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12px; }
+.pymi-changes dd, .pymi-diff-totals dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+.pymi-diff-totals { display: grid; gap: 10px; padding-top: 12px; margin: 0; border-top: 1px solid var(--wf-border); }
+.pymi-diff-totals dt { color: var(--wf-muted); }
+.pymi-footer-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid var(--wf-border); }
+.pymi-correction, .pymi-revisions { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--wf-border); border-radius: 8px; }
+.pymi-correction > p { margin: 0; color: var(--wf-muted); }
+.pymi-correction > .wf-btn { justify-self: start; }
+.pyre-heading-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 767px) {
+  .workflow-theme .pymi-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
+  .pymi-head { padding: 16px; }
+  .pymi-head h2 { font-size: 17px; }
+  .pymi-tabs { padding: 10px; gap: 4px; }
+  .pymi-tabs .wf-btn { flex: 1 1 0; min-width: 0; padding: 8px 4px; font-size: 11px; }
+  .pymi-body { padding: 16px; max-height: calc(100dvh - 201px); }
+  .pymi-body :is(input,select,textarea) { font-size: 16px; }
+  .pymi-body .wf-btn, .pymi-head .wf-btn, .pymi-tabs .wf-btn { min-height: 44px; }
+  .pymi-import-fields { grid-template-columns: minmax(0,1fr); }
+  .pymi-list > article { align-items: stretch; flex-direction: column; gap: 12px; }
+  .pymi-list-actions { justify-content: flex-start; }
+  .pymi-list-actions > .wf-btn { flex: 1 1 auto; }
+  .pymi-totals { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .pymi-totals strong { font-size: 17px; }
+  .pymi-row-fields { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+  .pymi-roster > article, .pymi-diff { padding: 12px; }
+  .pymi-roster header { align-items: flex-start; }
+  .pymi-roster header .wf-btn { flex: 0 0 auto; }
+  .pymi-diff-totals > div { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .pymi-diff-totals dd { text-align: left; }
+  .pymi-footer-actions > .wf-btn { flex: 1 1 auto; }
+  .pyre-heading-actions { width: 100%; }
+  .pyre-heading-actions > .wf-btn { flex: 1 1 180px; }
+}
+@media (max-width: 359px) { .pymi-row-fields { grid-template-columns: minmax(0,1fr); } .pymi-pagination { flex-wrap: wrap; } .pymi-pagination > span { width: 100%; } }

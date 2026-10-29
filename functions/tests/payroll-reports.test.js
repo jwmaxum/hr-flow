@@ -4,6 +4,7 @@ const {
   normalizePayrollIdentity, normalizePayrollRow, sumPayrollRows, validatePayrollRecord, buildAnnualPayrollReport,
 } = require('../payroll-report-model');
 const { renderMonthlyPayrollPdf, renderAnnualPayrollPdf } = require('../payroll-pdf');
+const { editableAmounts } = require('../payroll-workflow');
 
 function row(id = 'employee-a', patch = {}) {
   return {
@@ -48,6 +49,47 @@ test('snapshot amounts and totals must reconcile exactly as safe integers', () =
   const high = row('high', { amounts: { monthlyGross: 2e12, basePay: 2e12, nonTaxable: 0, pension: 0, health: 0, longTerm: 0, employment: 0,
     incomeTax: 0, localTax: 0, totalInsurance: 0, totalDeductions: 0, netPay: 2e12 } });
   assert.equal(normalizePayrollRow(high, 'company-a').amounts.netPay, 2e12);
+});
+
+test('imported and manually adjusted saved amounts permit refunds and other deductions without invented family counts', () => {
+  const amounts = editableAmounts({ monthlyGross: 2500000, nonTaxable: 200000, pension: 100000, health: 80000, longTerm: 10000,
+    employment: 20000, incomeTax: -30000, localTax: -3000, otherDeductions: 17000 });
+  assert.equal(amounts.totalInsurance, 210000); assert.equal(amounts.totalDeductions, 194000); assert.equal(amounts.netPay, 2306000);
+  for (const mode of ['IMPORTED', 'ADJUSTED']) {
+    const calculation = { mode, tableSource: mode === 'IMPORTED' ? 'imported-source' : 'manual-correction', dependents: 999, children: 999 };
+    const saved = normalizePayrollRow(row('historical', { amounts, calculation }), 'company-a');
+    assert.equal(saved.amounts.incomeTax, -30000); assert.equal(saved.calculation.dependents, undefined); assert.equal(saved.calculation.children, undefined);
+    assert.equal(validatePayrollRecord(record(1, [saved], { year: 2020 }), 'company-a').year, 2020);
+  }
+  assert.throws(() => normalizePayrollRow(row('calculated', { amounts }), 'company-a'));
+  assert.throws(() => normalizePayrollRow(row('forged', { amounts, calculation: { mode: 'IMPORTED', tableSource: 'uploaded' } }), 'company-a'));
+});
+
+test('signed saved-value reconciliation uses exact integers even when intermediate numbers would lose precision', () => {
+  const maximum = Number.MAX_SAFE_INTEGER;
+  const values = { monthlyGross: 100, nonTaxable: 0, pension: maximum, health: 2, longTerm: -maximum, employment: 0,
+    incomeTax: 0, localTax: 0, otherDeductions: 0 };
+  const amounts = editableAmounts(values); assert.equal(amounts.totalInsurance, 2); assert.equal(amounts.netPay, 98);
+  const saved = row('exact', { amounts, calculation: { mode: 'ADJUSTED', tableSource: 'manual-correction' } });
+  assert.equal(normalizePayrollRow(saved, 'company-a').amounts.totalInsurance, 2);
+  assert.throws(() => normalizePayrollRow({ ...saved, amounts: { ...amounts, totalInsurance: 1, totalDeductions: 1, netPay: 99 } }, 'company-a'));
+  assert.throws(() => editableAmounts({ ...values, totalDeductions: 1, netPay: 99 }));
+  assert.throws(() => editableAmounts({ ...values, pension: maximum, health: maximum, longTerm: 0 }));
+  const old = record(); delete old.rows[0].amounts.otherDeductions; delete old.sums.otherDeductions;
+  assert.equal(validatePayrollRecord(old, 'company-a').sums.otherDeductions, 0);
+});
+
+test('saved historical source metadata excludes private object paths and PDF accepts refunds and other deductions', async () => {
+  const amounts = editableAmounts({ monthlyGross: 2500000, nonTaxable: 200000, pension: 0, health: 0, longTerm: 0, employment: 0,
+    incomeTax: -30000, localTax: -3000, otherDeductions: 17000 });
+  const saved = row('former', { amounts, calculation: { mode: 'IMPORTED', tableSource: 'imported-source' } });
+  const input = record(1, [saved], { year: 2020, origin: 'IMPORT', reason: '과거 원본\n검토 완료', source: { name: '2020원본.csv',
+    mimeType: 'text/csv', size: 1234, sha256: 'a'.repeat(64), storagePath: 'private-source-path', generation: '123' } });
+  const checked = validatePayrollRecord(input, 'company-a'); assert.equal(checked.source.storagePath, undefined);
+  assert.equal(checked.source.generation, undefined); assert.equal(checked.rows[0].amounts.netPay, 2516000);
+  const monthly = await renderMonthlyPayrollPdf(checked, branding); assert.equal(monthly.subarray(0, 8).toString(), '%PDF-1.7');
+  const annual = await renderAnnualPayrollPdf(buildAnnualPayrollReport([input], 'company-a', 2020, 'former'), branding);
+  assert.equal(annual.subarray(0, 8).toString(), '%PDF-1.7');
 });
 
 test('monthly snapshots retain zero optional identity fields but reject malformed dates and incomplete details', () => {

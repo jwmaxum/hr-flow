@@ -1,6 +1,6 @@
 const PAYROLL_MONEY_FIELDS = Object.freeze([
   'monthlyGross', 'basePay', 'nonTaxable', 'pension', 'health', 'longTerm',
-  'employment', 'incomeTax', 'localTax', 'totalInsurance', 'totalDeductions', 'netPay',
+  'employment', 'incomeTax', 'localTax', 'otherDeductions', 'totalInsurance', 'totalDeductions', 'netPay',
 ]);
 
 function fail(message) { throw new Error(message); }
@@ -36,17 +36,19 @@ function approvedTime(record) {
   if (timestamp && Number.isFinite(timestamp.seconds)) return timestamp.seconds * 1000 + Math.floor((timestamp.nanoseconds || 0) / 1e6);
   return 0;
 }
-function money(value, field) {
-  if (!Number.isSafeInteger(value) || (field !== 'netPay' && value < 0)) fail(`Invalid payroll amount: ${field}.`);
+function money(value, field, saved = false) {
+  const signed = saved && ['pension', 'health', 'longTerm', 'employment', 'incomeTax', 'localTax', 'otherDeductions', 'totalInsurance', 'totalDeductions'].includes(field);
+  if (!Number.isSafeInteger(value) || (field !== 'netPay' && !signed && value < 0)) fail(`Invalid payroll amount: ${field}.`);
   return value;
 }
-function normalizeAmounts(value) {
+function normalizeAmounts(value, mode) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('Payroll amounts are required.');
-  const amounts = Object.fromEntries(PAYROLL_MONEY_FIELDS.map(field => [field, money(value[field], field)]));
-  if (amounts.basePay + amounts.nonTaxable !== amounts.monthlyGross ||
-      amounts.pension + amounts.health + amounts.longTerm + amounts.employment !== amounts.totalInsurance ||
-      amounts.totalInsurance + amounts.incomeTax + amounts.localTax !== amounts.totalDeductions ||
-      amounts.monthlyGross - amounts.totalDeductions !== amounts.netPay) fail('Payroll amounts do not reconcile.');
+  const saved = ['IMPORTED', 'ADJUSTED'].includes(mode);
+  const amounts = Object.fromEntries(PAYROLL_MONEY_FIELDS.map(field => [field, money(field === 'otherDeductions' ? value[field] ?? 0 : value[field], field, saved)]));
+  if (BigInt(amounts.basePay) + BigInt(amounts.nonTaxable) !== BigInt(amounts.monthlyGross) ||
+      ['pension', 'health', 'longTerm', 'employment'].reduce((sum, field) => sum + BigInt(amounts[field]), 0n) !== BigInt(amounts.totalInsurance) ||
+      ['totalInsurance', 'incomeTax', 'localTax', 'otherDeductions'].reduce((sum, field) => sum + BigInt(amounts[field]), 0n) !== BigInt(amounts.totalDeductions) ||
+      BigInt(amounts.monthlyGross) - BigInt(amounts.totalDeductions) !== BigInt(amounts.netPay)) fail('Payroll amounts do not reconcile.');
   return amounts;
 }
 
@@ -67,6 +69,12 @@ function normalizePayrollIdentity(value, companyId) {
 function normalizePayrollRow(value, companyId) {
   const identity = normalizePayrollIdentity(value, companyId);
   const calculation = value.calculation;
+  if (calculation && ['IMPORTED', 'ADJUSTED'].includes(calculation.mode)) {
+    const source = calculation.mode === 'IMPORTED' ? 'imported-source' : 'manual-correction';
+    if (calculation.tableSource !== source) fail('Invalid saved payroll source.');
+    return { ...identity, amounts: normalizeAmounts(value.amounts, calculation.mode), calculation: { mode: calculation.mode, tableSource: source } };
+  }
+  if (calculation?.mode !== undefined && calculation.mode !== 'CALCULATED') fail('Invalid payroll calculation mode.');
   if (!calculation || !Number.isSafeInteger(calculation.dependents) || calculation.dependents < 1 ||
       !Number.isSafeInteger(calculation.children) || calculation.children < 0 || calculation.children >= calculation.dependents) fail('Invalid payroll deduction counts.');
   const tableSource = text(calculation.tableSource, 80);
@@ -74,21 +82,22 @@ function normalizePayrollRow(value, companyId) {
   return {
     ...identity,
     amounts: normalizeAmounts(value.amounts),
-    calculation: { dependents: calculation.dependents, children: calculation.children, tableSource },
+    calculation: { dependents: calculation.dependents, children: calculation.children, tableSource, ...(calculation.mode ? { mode: calculation.mode } : {}) },
   };
 }
 
 function sumPayrollRows(rows) {
   if (!Array.isArray(rows)) fail('Payroll rows are required.');
-  const sums = Object.fromEntries(PAYROLL_MONEY_FIELDS.map(field => [field, 0]));
+  const sums = Object.fromEntries(PAYROLL_MONEY_FIELDS.map(field => [field, 0n]));
   for (const row of rows) {
-    const amounts = normalizeAmounts(row.amounts);
+    const amounts = normalizeAmounts(row.amounts, row.calculation?.mode);
     for (const field of PAYROLL_MONEY_FIELDS) {
-      sums[field] += amounts[field];
-      if (!Number.isSafeInteger(sums[field])) fail('Payroll totals exceed the supported range.');
+      sums[field] += BigInt(amounts[field]);
     }
   }
-  return sums;
+  const result = Object.fromEntries(PAYROLL_MONEY_FIELDS.map(field => [field, Number(sums[field])]));
+  if (PAYROLL_MONEY_FIELDS.some(field => !Number.isSafeInteger(result[field]))) fail('Payroll totals exceed the supported range.');
+  return result;
 }
 
 function validatePayrollRecord(value, companyId) {
@@ -99,7 +108,7 @@ function validatePayrollRecord(value, companyId) {
   const rows = value.rows.map(row => normalizePayrollRow(row, companyId));
   if (new Set(rows.map(row => row.userId)).size !== rows.length) fail('A payroll snapshot contains duplicate employees.');
   const sums = sumPayrollRows(rows);
-  if (!value.sums || PAYROLL_MONEY_FIELDS.some(field => value.sums[field] !== sums[field])) fail('Payroll snapshot totals do not match its rows.');
+  if (!value.sums || PAYROLL_MONEY_FIELDS.some(field => (field === 'otherDeductions' ? value.sums[field] ?? 0 : value.sums[field]) !== sums[field])) fail('Payroll snapshot totals do not match its rows.');
   const time = approvedTime(value);
   if (!Number.isFinite(time) || time <= 0) fail('Payroll approval date is required.');
   const revision = value.revision === undefined ? 1 : value.revision;
@@ -110,6 +119,13 @@ function validatePayrollRecord(value, companyId) {
     schemaVersion: 2, scope: 'COMPANY', companyId, year: value.year, month: value.month, rows, sums,
     approvedAtIso: new Date(time).toISOString(), approvedByName: text(value.approvedByName, 100), revision,
     taxTable: { source: text(taxTable.source, 80), version: text(taxTable.version, 100), fileName: text(taxTable.fileName, 240) },
+    ...(value.origin && ['CALCULATED', 'IMPORT', 'CORRECTION'].includes(value.origin) ? { origin: value.origin } : {}),
+    ...(value.reason ? { reason: text(value.reason, 1000) } : {}),
+    ...(value.dataHash && /^[a-f0-9]{64}$/.test(value.dataHash) ? { dataHash: value.dataHash } : {}),
+    ...(value.previousHash && /^[a-f0-9]{64}$/.test(value.previousHash) ? { previousHash: value.previousHash } : {}),
+    ...(value.sourceDraftId ? { sourceDraftId: identifier(value.sourceDraftId, 'source draft ID') } : {}),
+    ...(value.source ? { source: { name: text(value.source.name, 240), mimeType: text(value.source.mimeType, 100),
+      size: money(value.source.size, 'source size'), sha256: /^[a-f0-9]{64}$/.test(value.source.sha256) ? value.source.sha256 : fail('Invalid payroll source hash.') } } : {}),
   };
 }
 
