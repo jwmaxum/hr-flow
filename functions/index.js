@@ -9,6 +9,8 @@ const { createMemberService } = require('./member-service');
 const { createAccountSecurityService } = require('./account-security-service');
 const { createAdminSecurityService } = require('./admin-security-service');
 const { createAttachmentService } = require('./attachment-service');
+const { createPayrollService } = require('./payroll-service');
+const { renderMonthlyPayrollPdf, renderAnnualPayrollPdf } = require('./payroll-pdf');
 const { authorizeContext } = require('./security-context');
 
 initializeApp();
@@ -35,6 +37,8 @@ exports.manageOfficialLetters = callable((request, dep) => createOfficialLetterS
   renderPdf: renderOfficialLetterPdf })(request), { memory: '512MiB' });
 exports.adminCreateMember = callable((request, dep) => createMemberService(dep)(request));
 exports.accountSecurity = callable((request, dep) => createAccountSecurityService(dep)(request));
+exports.managePayroll = callable((request, dep) => createPayrollService({ ...dep,
+  renderMonthlyPdf: renderMonthlyPayrollPdf, renderAnnualPdf: renderAnnualPayrollPdf })(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.checkDomainAvailability = callable((request, dep) => createAdminSecurityService(dep).checkDomain(request));
 exports.adminResetPassword = callable((request, dep) => createAdminSecurityService(dep).resetPassword(request));
 exports.adminSyncCompanyDomain = callable((request, dep) => createAdminSecurityService(dep).syncDomain(request), { timeoutSeconds: 300, memory: '512MiB' });

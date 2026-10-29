@@ -85,6 +85,11 @@ async function seedLifecycle(objects, orphanInbox = false) {
       batch.set(db.doc(`${collection}/${companyId}-record`), { companyId, marker: `${companyId}-private` });
       batch.set(db.doc(`${collection}/${companyId}-record/history/version1`), { marker: `${companyId}-nested-without-company-field` });
     }
+    // Detailed financial snapshots are immutable to browser clients, but a
+    // platform-authorized whole-company deletion must still remove them.
+    batch.set(db.doc(`payroll_records/${companyId}-detailed-payroll`), { companyId, schemaVersion: 2, scope: 'COMPANY',
+      year: 2026, month: 10, rows: [{ companyId, userId: companyId === 'a' ? 'member' : 'foreign-member', name: `${companyId}-employee` }],
+      sums: { monthlyGross: 100 }, marker: `${companyId}-private` });
     batch.set(db.doc(`officialLetters/${companyId}-letter`), { companyId, creatorId: companyId === 'a' ? 'member' : 'foreign-member', status: 'ISSUED', revision: 2 });
     batch.set(db.doc(`officialLetters/${companyId}-letter/history/000001`), { content: `${companyId}-old-content` });
     batch.set(db.doc(`officialLetterNumbers/${companyId}_001-261024`), { companyId, number: '001-261024' });

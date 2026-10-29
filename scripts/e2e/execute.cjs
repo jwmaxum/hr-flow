@@ -18,7 +18,16 @@ const { assertE2EEnvironment } = require('./safety.cjs');
     for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => child.kill(signal));
   });
   if (rulesCode !== 0) { process.exitCode = rulesCode; return; }
-  console.log('Security rules passed. Starting the isolated browser test server.');
+  const payrollCode = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--test', '--experimental-test-coverage',
+      '--test-coverage-include=functions/payroll-service.js', '--test-coverage-include=functions/payroll-report-model.js',
+      '--test-coverage-include=functions/payroll-pdf.js', 'functions/tests/payroll-service.test.js', 'functions/tests/payroll-reports.test.js'],
+    { cwd: root, env: process.env, stdio: 'inherit' });
+    child.once('error', reject); child.once('exit', code => resolve(code ?? 1));
+    for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => child.kill(signal));
+  });
+  if (payrollCode !== 0) { process.exitCode = payrollCode; return; }
+  console.log('Security rules and payroll regressions passed. Starting the isolated browser test server.');
   const vitePath = require.resolve('vite', { paths: [path.join(root, 'client')] });
   const { createServer } = await import(pathToFileURL(vitePath).href);
   const server = await createServer({ root: path.join(root, 'client'), mode: 'e2e',

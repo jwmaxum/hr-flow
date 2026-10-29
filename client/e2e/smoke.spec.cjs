@@ -1,7 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { test, expect } = require('@playwright/test');
 const { PROJECT_ID, WEB_ORIGIN, HOSTS, assertE2EEnvironment } = require('../../scripts/e2e/safety.cjs');
-const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile } = require('../../scripts/e2e/fixtures.cjs');
+const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord } = require('../../scripts/e2e/fixtures.cjs');
 
 assertE2EEnvironment();
 
@@ -59,10 +59,16 @@ async function actorFor(browser, testInfo) {
     hasTouch: Boolean(settings.hasTouch), locale: 'ko-KR', timezoneId: 'Asia/Seoul',
     reducedMotion: 'reduce', acceptDownloads: true, serviceWorkers: 'block',
   });
-  const actor = { context, page: await context.newPage(), violations: [], pageErrors: 0, dialogs: 0, token: '', passwordChangeAlert: false, passwordChangeNotices: 0 };
+  const actor = { context, page: await context.newPage(), violations: [], pageErrors: 0, dialogs: 0, token: '', passwordChangeAlert: false, passwordChangeNotices: 0,
+    expectedPayrollConfirmation: null, payrollConfirmations: 0, payrollRequests: [] };
   actors.push(actor);
   actor.page.on('pageerror', () => { actor.pageErrors += 1; });
   actor.page.on('dialog', async dialog => {
+    if (actor.expectedPayrollConfirmation && dialog.type() === 'confirm' &&
+        dialog.message() === actor.expectedPayrollConfirmation && actor.page.url() === `${WEB_ORIGIN}/#/admin/salary`) {
+      actor.expectedPayrollConfirmation = null; actor.payrollConfirmations += 1;
+      await dialog.accept(); return;
+    }
     if (actor.passwordChangeAlert && dialog.type() === 'alert' && dialog.message() === '비밀번호를 변경했습니다. 1초 후 새 비밀번호로 다시 로그인해 주세요.') {
       actor.passwordChangeAlert = false; actor.passwordChangeNotices += 1;
     } else actor.dialogs += 1;
@@ -70,6 +76,14 @@ async function actorFor(browser, testInfo) {
   });
   actor.page.on('request', async request => {
     const url = new URL(request.url());
+    if (url.protocol === 'http:' && url.host === HOSTS.functions &&
+        url.pathname === `/${PROJECT_ID}/us-central1/managePayroll` && request.method() === 'POST') {
+      try {
+        const input = request.postDataJSON()?.data;
+        if (input && typeof input.action === 'string') actor.payrollRequests.push({ action: input.action,
+          year: input.year, month: input.month, expectedFingerprint: input.expectedFingerprint });
+      } catch { actor.violations.push('local-payroll-request-shape'); }
+    }
     if (url.protocol === 'http:' && url.host === HOSTS.functions &&
         url.pathname === `/${PROJECT_ID}/us-central1/accountSecurity` && request.method() === 'POST') {
       try {
@@ -217,6 +231,34 @@ async function probe(actor, url, { method = 'GET', body, anonymous = false } = {
   } catch {
     throw new Error('The isolated authenticated HTTP probe did not complete.');
   }
+}
+
+const payrollEndpoint = `http://${HOSTS.functions}/${PROJECT_ID}/us-central1/managePayroll`;
+const payrollProbe = (actor, data) => probe(actor, payrollEndpoint, { method: 'POST', body: { data } });
+function callableResult(response) {
+  if (response.status !== 200) throw new Error('The guarded E2E payroll callable did not succeed.');
+  const body = JSON.parse(Buffer.from(response.bytes).toString('utf8'));
+  if (!body.result || typeof body.result !== 'object') throw new Error('The E2E payroll result is missing.');
+  return body.result;
+}
+function payrollFirestoreUrl(id) {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id)) throw new Error('A synthetic payroll document ID is required.');
+  return `http://${HOSTS.firestore}/v1/projects/${PROJECT_ID}/databases/(default)/documents/payroll_records/${id}`;
+}
+async function payrollDownload(actor, button) {
+  const downloadPromise = actor.page.waitForEvent('download', { timeout: 65000 });
+  await button.click();
+  const downloaded = await downloadPromise;
+  expect(downloaded.suggestedFilename()).toMatch(/2026.*\.pdf$/);
+  const stream = await downloaded.createReadStream();
+  if (!stream) throw new Error('The real approved payroll PDF did not download.');
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  const bytes = Buffer.concat(chunks);
+  expect(bytes.subarray(0, 5).toString()).toBe('%PDF-');
+  expect(bytes.length).toBeGreaterThan(1000);
+  expect(bytes.subarray(-100).toString()).toMatch(/%%EOF\s*$/);
+  return bytes;
 }
 
 function forgedExpense(account, overrides = {}) {
@@ -393,6 +435,107 @@ test('company, document and path tampering cannot cross tenant or division bound
   await login(wrongDivision, fixtures.accounts.otherManagerA);
   expect((await probe(wrongDivision, attachmentUrl(ownRecord.id))).status).toBe(403);
   expect((await probe(wrongDivision, firestoreUrl(ownRecord.id))).status).toBe(403);
+});
+
+test('real payroll UI confirms full-company saved wages and downloads immutable monthly and annual PDFs with tenant isolation', async ({ browser }, testInfo) => {
+  test.setTimeout(240000);
+  const admin = await actorFor(browser, testInfo);
+  await login(admin, fixtures.accounts.adminA);
+  await admin.page.goto('/#/admin/salary');
+  await expect(admin.page.getByRole('heading', { name: '급여관리', exact: true })).toBeVisible();
+  const year = 2026, month = testInfo.project.use.isMobile ? 11 : 10;
+  const yearSelector = admin.page.getByRole('combobox', { name: '급여 대상 연도', exact: true });
+  if (await yearSelector.inputValue() !== String(year)) await yearSelector.selectOption(String(year));
+  await admin.page.getByRole('combobox', { name: '급여 대상 월', exact: true }).selectOption(String(month));
+  await expect(admin.page.locator('.pyre-screen')).toHaveCSS('font-family', /SUIT Variable/);
+  await expect(admin.page.getByRole('button', { name: '포함', exact: true })).toHaveCount(0);
+  await expect(admin.page.getByRole('button', { name: '별도', exact: true })).toHaveCount(0);
+  await expect(admin.page.getByRole('button', { name: /메일.*발송/ })).toHaveCount(0);
+  const eligible = Object.values(fixtures.accounts).filter(account => account.companyId === fixtures.companyA && account.status !== 'RESIGNED');
+  await expect(admin.page.locator('.pyre-employee')).toHaveCount(eligible.length);
+  await admin.page.getByRole('searchbox', { name: '급여 대상 직원 검색', exact: true }).fill(fixtures.accounts.adminA.name);
+  await expect(admin.page.locator('.pyre-employee')).toHaveCount(1);
+  await expect(admin.page.locator('.pyre-summary h2')).toContainText('1명');
+
+  // Exercise the real profile transaction before approving: unsaved input may
+  // affect the visible estimate but cannot silently enter an approved snapshot.
+  const card = admin.page.locator('.pyre-employee');
+  await card.getByRole('textbox', { name: `${fixtures.accounts.adminA.name} 연봉`, exact: true }).fill('25,200,000');
+  await expect(admin.page.getByRole('button', { name: '회사 전체 급여 확정', exact: true })).toBeDisabled();
+  await card.getByRole('button', { name: '설정 저장', exact: true }).click();
+  await expect.poll(async () => (await readProfile(fixtures.accounts.adminA)).annualSalary).toBe(25200000);
+  await expect.poll(async () => (await readProfile(fixtures.accounts.adminA)).isSeveranceIncluded).toBe(false);
+  await expect(card.getByRole('button', { name: '설정 저장', exact: true })).toBeDisabled();
+  await expect(admin.page.locator('.pyre-summary')).toContainText('2,100,000원');
+  await expect(admin.page.locator('.pyre-report-actions')).toContainText(`회사 전체 직원 ${eligible.length}명`);
+
+  const preview = callableResult(await payrollProbe(admin, { action: 'preview', year, month }));
+  expect(preview.employeeCount).toBe(eligible.length);
+  expect(preview.totalGross).toBe(eligible.length * 2000000 + 100000);
+  expect(preview.zeroCount).toBe(0);
+  expect(preview.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  const won = value => `${value.toLocaleString('ko-KR')}원`;
+  const taxName = preview.taxTable.source === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표';
+  admin.expectedPayrollConfirmation = `${year}년 ${month}월 회사 전체 ${preview.employeeCount}명의 급여를 확정합니다.\n\n총 지급액: ${won(preview.totalGross)}\n총 공제액: ${won(preview.totalDeductions)}\n실지급액: ${won(preview.totalNet)}\n급여 0원: ${preview.zeroCount}명\n계산 기준: ${taxName}\n\n검색·본부·팀 필터와 관계없이 저장된 전체 직원 설정으로 확정되며 승인 후 수정·삭제할 수 없습니다. 계속하시겠습니까?`;
+  admin.payrollRequests = [];
+  await admin.page.getByRole('button', { name: '회사 전체 급여 확정', exact: true }).click();
+  await expect(admin.page.getByRole('button', { name: '확정 완료', exact: true })).toBeDisabled({ timeout: 65000 });
+  expect(admin.payrollConfirmations).toBe(1);
+  expect(admin.expectedPayrollConfirmation).toBe(null);
+  const approvalCalls = admin.payrollRequests.filter(input => input.action === 'approve');
+  expect(admin.payrollRequests.some(input => input.action === 'preview' && input.year === year && input.month === month)).toBe(true);
+  expect(approvalCalls).toEqual([{ action: 'approve', year, month, expectedFingerprint: preview.fingerprint }]);
+  const record = await readPayrollRecord(fixtures.companyA, year, month);
+  expect(record.schemaVersion).toBe(2);
+  expect(record.rows.length).toBe(eligible.length);
+  expect(record.sums.monthlyGross).toBe(preview.totalGross);
+  expect(record.sums.netPay).toBe(preview.totalNet);
+  expect(record.rows.every(row => row.companyId === fixtures.companyA)).toBe(true);
+
+  const monthly = await payrollDownload(admin, admin.page.getByRole('button', { name: '월별 급여대장 PDF', exact: true }));
+  await admin.page.getByRole('combobox', { name: '연간 급여명세서 직원 선택', exact: true }).selectOption(fixtures.accounts.adminA.uid);
+  const annual = await payrollDownload(admin, admin.page.getByRole('button', { name: '연간 급여명세서 PDF', exact: true }));
+  expect(monthly.equals(annual)).toBe(false);
+  expect(admin.payrollRequests.some(input => input.action === 'monthlyPdf')).toBe(true);
+  expect(admin.payrollRequests.some(input => input.action === 'annualPdf')).toBe(true);
+  await admin.page.evaluate(() => document.fonts.ready);
+  expect(await admin.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await admin.page.screenshot({ path: testInfo.outputPath(`payroll-${testInfo.project.use.viewport.width}px.png`), fullPage: true });
+
+  await admin.page.getByRole('button', { name: '과거 승인 내역', exact: true }).click();
+  const history = admin.page.getByRole('dialog', { name: '급여 지출 승인 이력', exact: true });
+  await expect(history).toBeVisible();
+  await history.getByLabel('급여 이력 시작월', { exact: true }).fill('2026-01');
+  await history.getByLabel('급여 이력 종료월', { exact: true }).fill('2026-12');
+  await expect(history.getByRole('button', { name: '조회', exact: true })).toBeEnabled();
+  await history.getByRole('button', { name: '조회', exact: true }).click();
+  await expect(history.getByRole('row').filter({ hasText: `${year}년 ${month}월` })).toContainText('회사 전체 확정');
+  await expect(history.getByRole('button', { name: /삭제/ })).toHaveCount(0);
+  expect(await admin.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await history.getByRole('button', { name: '급여 지출 승인 이력 닫기', exact: true }).click();
+
+  const snapshotUrl = payrollFirestoreUrl(record.id);
+  expect((await probe(admin, snapshotUrl, { method: 'DELETE' })).status).toBe(403);
+  expect((await probe(admin, `${snapshotUrl}?updateMask.fieldPaths=totalGross`, {
+    method: 'PATCH', body: { fields: { totalGross: { integerValue: '1' } } },
+  })).status).toBe(403);
+  expect((await payrollProbe(admin, { action: 'monthlyPdf', id: fixtures.foreignPayrollId })).status).toBe(403);
+  expect((await payrollProbe(admin, { action: 'list', year, companyId: fixtures.companyB })).status).toBe(400);
+  // Every export is authenticated as a live company ADMIN. A member of another
+  // company, a first approver, and the platform operator cannot export payroll.
+  for (const key of ['memberB', 'managerA', 'platform']) {
+    const denied = await actorFor(browser, testInfo);
+    await login(denied, fixtures.accounts[key]);
+    for (const data of [{ action: 'list', year }, { action: 'preview', year, month },
+      { action: 'approve', year, month, expectedFingerprint: preview.fingerprint },
+      { action: 'monthlyPdf', id: record.id }, { action: 'annualPdf', year, employeeId: fixtures.accounts.adminA.uid }]) {
+      expect((await payrollProbe(denied, data)).status).toBe(403);
+    }
+    expect((await payrollProbe(denied, { action: 'list', year, companyId: fixtures.companyA })).status).toBe(403);
+    await denied.page.goto('/#/admin/salary');
+    await expect(denied.page.getByRole('heading', { name: '급여관리', exact: true })).toHaveCount(0);
+    denied.token = ''; await denied.context.close();
+  }
 });
 
 test('suspended, resigned, disabled and revoked test accounts cannot retain attachment access', async ({ browser }, testInfo) => {

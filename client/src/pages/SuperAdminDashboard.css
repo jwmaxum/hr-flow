@@ -31,6 +31,8 @@
 .platform-admin-screen .platform-tax-file svg { flex: 0 0 auto; width: 13px; height: 13px; }
 .platform-admin-screen .platform-tax-copy p { margin: 9px 0 0; font-size: 12px; }
 .platform-admin-screen .platform-tax-upload { position: relative; flex: 0 0 auto; overflow: hidden; }
+.platform-admin-screen .platform-tax-tools { display:flex; flex:0 0 auto; flex-direction:column; gap:10px; min-width:220px; }
+.platform-admin-screen .platform-tax-copy .platform-tax-validation { background:var(--wf-warning-bg); color:var(--wf-text); border-radius:8px; padding:10px 12px; line-height:1.8; overflow-wrap:anywhere; }
 .platform-admin-screen .platform-tax-upload:focus-within { outline: 2px solid var(--border-focus); outline-offset: 3px; }
 .platform-admin-screen .platform-file-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .platform-admin-screen .platform-upload-busy { opacity: .5; cursor: not-allowed; }

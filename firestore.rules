@@ -62,6 +62,12 @@ service cloud.firestore {
       return (request.resource.data.get('attachmentUrl', '') == '' || unchanged(['attachmentUrl'])) &&
         (validAttachmentPath(request.resource.data, category) || unchanged(['attachmentPath']));
     }
+    function legacyPayroll(data) {
+      // New detailed approvals are created only by the authenticated server.
+      // Keep the old deployed client's aggregate-only history operations.
+      return data.get('schemaVersion', 1) == 1 &&
+        !data.keys().hasAny(['rows', 'sums', 'scope', 'taxTable', 'approvedAtIso', 'revision']);
+    }
     function validOptionalSubject(data) {
       return !('userId' in data) || (data.userId is string && data.userId != '' &&
         exists(profilePath(data.userId)) && get(profilePath(data.userId)).data.companyId == data.companyId);
@@ -225,10 +231,10 @@ service cloud.firestore {
     match /payroll_records/{id} {
       allow read: if superAdmin() || companyAdmin(resource.data.companyId);
       allow create: if companyAdmin(request.resource.data.companyId) && request.resource.data.approvedBy == request.auth.uid &&
-        validTenant(request.resource.data) && validOptionalSubject(request.resource.data);
+        validTenant(request.resource.data) && validOptionalSubject(request.resource.data) && legacyPayroll(request.resource.data);
       allow update: if (superAdmin() || companyAdmin(resource.data.companyId)) &&
-        unchanged(['companyId', 'tenantId', 'userId', 'approvedBy', 'createdAt']);
-      allow delete: if superAdmin() || companyAdmin(resource.data.companyId);
+        legacyPayroll(resource.data) && legacyPayroll(request.resource.data) && unchanged(['companyId', 'tenantId', 'userId', 'approvedBy', 'createdAt']);
+      allow delete: if (superAdmin() || companyAdmin(resource.data.companyId)) && legacyPayroll(resource.data);
     }
     match /payment_claims/{id} {
       allow read: if superAdmin() || companyAdmin(resource.data.companyId);

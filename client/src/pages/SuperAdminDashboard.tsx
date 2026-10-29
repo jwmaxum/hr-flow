@@ -4,7 +4,7 @@ import { db } from '../firebase';
 import { useAuthStore } from '../store/authStore';
 import { getRoleDisplayName } from '../utils/roleDisplay';
 import { getErrorCode, getErrorMessage } from '../utils/errors';
-import type { TaxTable } from '../utils/payroll';
+import { getTaxTableStatus, parseTaxTableWorkbook } from '../utils/payrollTaxTable';
 import type { CompanyData, UserData } from '../store/authStore';
 import { 
   Shield, Building2, Users, Globe, Search, 
@@ -34,7 +34,6 @@ interface PaymentClaim extends Pick<PaymentRecord, 'companyName' | 'adminName' |
   id: string;
   orderId: string;
 }
-type TaxBracket = NonNullable<NonNullable<TaxTable>['brackets']>[number];
 
 export const SuperAdminDashboard: React.FC = () => {
   const { userData } = useAuthStore();
@@ -57,7 +56,8 @@ export const SuperAdminDashboard: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(null);
   const [isUploadingTaxTable, setIsUploadingTaxTable] = useState(false);
-  const [taxTableInfo, setTaxTableInfo] = useState<{ updateDate: string; count: number; fileName?: string } | null>(null);
+  const [taxEffectiveFrom, setTaxEffectiveFrom] = useState('2026-03-01');
+  const [taxTableInfo, setTaxTableInfo] = useState<{ updateDate: string; count: number; fileName?: string; valid: boolean; reason: string | null; highIncomeSource: string } | null>(null);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [paymentClaims, setPaymentClaims] = useState<PaymentClaim[]>([]);
 
@@ -110,7 +110,10 @@ export const SuperAdminDashboard: React.FC = () => {
         setTaxTableInfo({ 
           updateDate: data.updateDate, 
           count: data.brackets?.length || 0,
-          fileName: data.fileName
+          fileName: data.fileName,
+          valid: getTaxTableStatus(data).valid,
+          reason: getTaxTableStatus(data).reason,
+          highIncomeSource: getTaxTableStatus(data).highIncomeSource,
         });
       }
     });
@@ -243,26 +246,32 @@ export const SuperAdminDashboard: React.FC = () => {
   const handleTaxTableUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const uploadUid = userData?.uid;
+    const effectiveFrom = taxEffectiveFrom;
+    const stillAuthorized = () => {
+      const state = useAuthStore.getState();
+      return auth.currentUser?.uid === uploadUid && state.userData?.uid === uploadUid &&
+        state.userData?.role === 'SUPER_ADMIN' && state.userData.companyId === 'PLATFORM' &&
+        (!state.userData.status || state.userData.status === 'ACTIVE') && !state.userData.mustChangePassword;
+    };
+    if (!stillAuthorized()) { alert('플랫폼 관리자 로그인 상태를 확인해 주세요.'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom) || !Number.isFinite(Date.parse(effectiveFrom + 'T00:00:00Z')) || new Date(effectiveFrom + 'T00:00:00Z').toISOString().slice(0, 10) !== effectiveFrom) {
+      alert('국세청 원문의 세액표 적용 기준일을 확인해 주세요.'); e.target.value = ''; return;
+    }
+    if (!/\.xlsx$/i.test(file.name)) { alert('국세청 전체 세액표의 .xlsx 파일을 선택해 주세요.'); e.target.value = ''; return; }
     if (file.size > 5 * 1024 * 1024) {
       alert('세액표 파일은 5MB 이하여야 합니다.');
       e.target.value = '';
       return;
     }
 
-    if (!window.confirm(`'${file.name}' 파일로 세액표를 업데이트하시겠습니까?\n이 작업은 즉시 모든 직원의 급여산출에 반영됩니다.`)) {
+    if (!window.confirm(`'${file.name}' 파일로 세액표를 업데이트하시겠습니까?\n적용 기준일: ${effectiveFrom}\n검증된 표는 모든 회사의 급여산출에 반영됩니다.`)) {
       e.target.value = '';
       return;
     }
 
     setIsUploadingTaxTable(true);
     
-    // 헬퍼 함수: 값 파싱
-    const parseValue = (val: unknown): number => {
-      if (val === '-' || val === null || val === undefined) return 0;
-      if (typeof val === 'string') return parseInt(val.replace(/,/g, ''), 10) || 0;
-      return typeof val === 'number' ? val : 0;
-    };
-
     try {
       const reader = new FileReader();
       reader.onload = async (event) => {
@@ -271,53 +280,19 @@ export const SuperAdminDashboard: React.FC = () => {
             throw new Error('엑셀 도구를 불러오지 못했습니다. 연결을 확인하고 화면을 새로고침한 뒤 다시 시도해 주세요.');
           });
           const workbook = await readExcelFile(event.target?.result as ArrayBuffer);
-          const allBrackets: TaxBracket[] = [];
-
-          // 처음 2개 시트 처리 (요청 사항: 엑셀 파일 내 sheet 2개 분석)
-          for (let i = 0; i < Math.min(2, workbook.length); i++) {
-            const rows = workbook[i].data;
-            
-            for (const row of rows) {
-              const min = parseValue(row[0]);
-              const max = parseValue(row[1]);
-              
-              if (typeof min === 'number' && min >= 770) {
-                const numericCells = [row[1], ...row.slice(2, 13)];
-                if (numericCells.some(value => value !== null && value !== undefined &&
-                  typeof value !== 'number' && typeof value !== 'string')) {
-                  throw new Error('세액표 구간의 상한과 세액에는 숫자, 숫자 문자열 또는 빈 셀만 사용할 수 있습니다.');
-                }
-              }
-
-              // 숫자인 유효한 구간 데이터만 추출 (770원 이상)
-              if (typeof min === 'number' && min >= 770 && (max > min || max === 0)) {
-                const taxes = [];
-                for (let j = 2; j <= 12; j++) {
-                  taxes.push(parseValue(row[j]));
-                }
-                allBrackets.push({ min, max: max || null, taxes });
-              }
-            }
-          }
-
-          // 중복 제거 및 정렬 (소득 구간별)
-          const sortedBrackets = allBrackets
-            .filter((v, i, a) => a.findIndex(t => t.min === v.min) === i)
-            .sort((a, b) => a.min - b.min);
-
-          if (sortedBrackets.length < 500) { // 국세청 표준은 보통 600개 이상의 구간이 있음
-            throw new Error(`추출된 데이터가 너무 적습니다 (${sortedBrackets.length}개). 엑셀 파일의 형식이 국세청 표준과 맞는지 확인하세요.`);
-          }
+          const validated = parseTaxTableWorkbook(workbook);
+          if (!stillAuthorized()) throw new Error('로그인 정보가 변경되었습니다. 다시 로그인한 후 업로드해 주세요.');
 
           // Firestore 업데이트
           await setDoc(doc(db, 'system_config', 'tax_table'), {
+            ...validated,
             updateDate: new Date().toISOString().split('T')[0],
             fileName: file.name,
-            brackets: sortedBrackets,
+            effectiveFrom,
             lastUpdatedBy: userData?.email || 'unknown'
           });
 
-          alert(`[업로드 성공]\n파일명: ${file.name}\n반영된 구간: ${sortedBrackets.length}개\n\n이제 모든 사용자의 급여 산출에 최신 세액표가 실시간 적용됩니다.`);
+          alert(`[업로드 성공]\n파일명: ${file.name}\n검증된 구간: ${validated.brackets.length}개 + 1,000만원 기준세액\n\n급여 산출에는 업로드 표의 전체 구간과 고소득 기준세액이 적용됩니다.`);
         } catch (innerErr) {
           alert('데이터 처리 오류: ' + getErrorMessage(innerErr));
         } finally {
@@ -411,13 +386,18 @@ export const SuperAdminDashboard: React.FC = () => {
                     {taxTableInfo?.fileName && <span className="platform-tax-file"><Briefcase aria-hidden="true" />적용 파일: {taxTableInfo.fileName}</span>}
                   </div>
                   <p className="wf-muted">국세청 제공 엑셀 서식(.xlsx)을 업로드하세요.</p>
+                  {taxTableInfo && !taxTableInfo.valid && <p role="alert" className="platform-tax-validation">업로드 표 검증 오류: {taxTableInfo.reason} 급여 계산은 전체 공식표로 대체합니다. 올바른 전체 원본을 다시 등록해 주세요.</p>}
+                  {taxTableInfo?.valid && <p className="wf-muted">전체 구간 검증 완료 · 1,000만원 이상 기준: {taxTableInfo.highIncomeSource === 'uploaded' ? '업로드 기준세액' : '공식 기준세액 대체'}</p>}
                 </div>
               </div>
+              <div className="platform-tax-tools">
+                <label className="wf-field" htmlFor="platform-tax-effective">세액표 적용 기준일<Input id="platform-tax-effective" type="date" value={taxEffectiveFrom} onChange={event => setTaxEffectiveFrom(event.target.value)} disabled={isUploadingTaxTable} /></label>
               <label className={`wf-btn wf-btn-primary platform-tax-upload ${isUploadingTaxTable ? 'platform-upload-busy' : ''}`}>
                 {isUploadingTaxTable ? <Loader2 className="platform-spinner" aria-hidden="true" /> : <Globe aria-hidden="true" />}
                 {isUploadingTaxTable ? '세액표 처리 중...' : '최신 세액표 엑셀 업로드'}
                 <input type="file" accept=".xlsx" onChange={handleTaxTableUpload} disabled={isUploadingTaxTable} className="platform-file-input" aria-label="최신 세액표 엑셀 업로드" />
               </label>
+              </div>
             </Panel>
 
             <Panel as="section" className="platform-companies" aria-labelledby="platform-companies-title">

@@ -64,7 +64,8 @@ async function seedFixtures() {
     password: key === 'requiredA' ? `!${randomBytes(4).toString('base64url')}` : `E2E!${randomBytes(24).toString('base64url')}`, name: `자동점검 ${label}`,
     role, companyId, divisionId, teamId, status,
   }]));
-  const fixtures = { accounts, companyA, companyB, divisionA, divisionOtherA, divisionB, teamA, otherTeamA, teamB, runId };
+  const foreignPayrollId = id('foreign-payroll');
+  const fixtures = { accounts, companyA, companyB, divisionA, divisionOtherA, divisionB, teamA, otherTeamA, teamB, foreignPayrollId, runId };
   state = { app, deleteApp, db, auth, bucket, fixtures, createdUsers: [], documentPaths: [] };
   const createdAt = new Date().toISOString();
   const accessUntil = Timestamp.fromMillis(Date.now() + 30 * 86400000);
@@ -107,6 +108,12 @@ async function seedFixtures() {
       [otherTeamA, companyA, divisionOtherA, '다른 A팀', accounts.otherManagerA.uid],
       [teamB, companyB, divisionB, 'B팀', ''],
     ]) set('teams', teamId, { companyId, divisionId, name: `자동점검 ${label}`, leaderId });
+    // A synthetic foreign-company aggregate is sufficient to exercise the
+    // authorization check before any monthly PDF document data is disclosed.
+    set('payroll_records', foreignPayrollId, { companyId: companyB, schemaVersion: 1,
+      year: 2026, month: 10, employeeCount: 1, totalGross: 2000000, totalNet: 1800000,
+      approvedBy: accounts.memberB.uid, approvedByName: accounts.memberB.name,
+      approvedAt: Timestamp.fromMillis(Date.UTC(2026, 9, 25)), divisionName: '자동점검 B 본부' });
     await batch.commit();
     return fixtures;
   } catch {
@@ -160,6 +167,22 @@ async function readProfile(value) {
   return snapshot.data();
 }
 
+async function readPayrollRecord(companyId, year, month) {
+  const current = runtime();
+  if (![current.fixtures.companyA, current.fixtures.companyB].includes(companyId) ||
+      year !== 2026 || ![10, 11].includes(month)) throw new Error('Only a generated E2E payroll period may be inspected.');
+  const snapshot = await current.db.collection('payroll_records').where('companyId', '==', companyId)
+    .where('year', '==', year).where('month', '==', month).get();
+  const records = snapshot.docs.filter(item => item.data().schemaVersion === 2);
+  if (records.length !== 1) throw new Error('Expected exactly one generated approved E2E payroll snapshot.');
+  const record = records[0].data();
+  if (!Array.isArray(record.rows) || record.rows.some(row => row.companyId !== companyId ||
+      !Object.values(current.fixtures.accounts).some(account => account.uid === row.userId && account.companyId === companyId))) {
+    throw new Error('Refusing to inspect payroll rows outside this generated E2E company.');
+  }
+  return { id: records[0].id, ...record };
+}
+
 async function clearFixtures() {
   assertE2EEnvironment();
   if (!state) return;
@@ -171,7 +194,7 @@ async function clearFixtures() {
   // Only this run's company IDs and exact UIDs may be removed. No project-wide
   // clear/reset endpoint is used, even though this is an ephemeral demo project.
   for (const companyId of [current.fixtures.companyA, current.fixtures.companyB]) {
-    for (const collection of ['expenses', 'leaves', 'attendance', 'notices', 'audit_logs', 'salary_history']) {
+    for (const collection of ['expenses', 'leaves', 'attendance', 'notices', 'audit_logs', 'salary_history', 'payroll_records']) {
       await attempt(async () => {
         const records = await current.db.collection(collection).where('companyId', '==', companyId).get();
         for (const record of records.docs) await attempt(() => record.ref.delete());
@@ -186,4 +209,4 @@ async function clearFixtures() {
   if (failures.length) throw new Error('Could not completely remove isolated E2E fixtures.');
 }
 
-module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile };
+module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord };

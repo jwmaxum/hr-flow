@@ -1,957 +1,296 @@
-import { Button, Input, PageTitle, Panel } from '../components/ui';
-import React, { useState, useEffect } from 'react';
-import { 
-  Plus, Minus, Printer, X, Users, MoreVertical, Banknote, AlertCircle, Info, Calculator, Loader2, Search, Building, Filter, PieChart, Trash2
-} from 'lucide-react';
-import { 
-  collection, query, onSnapshot, doc, updateDoc, where, addDoc, getDocs, serverTimestamp, deleteDoc 
-} from 'firebase/firestore';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { collection, doc, onSnapshot, query, runTransaction, where } from 'firebase/firestore';
+import { Banknote, Calculator, Download, History, Loader2, Minus, Plus, Save, Search, Trash2, X } from 'lucide-react';
+import { Button, Input, PageTitle, Panel, Select } from '../components/ui';
 import { db } from '../firebase';
 import { useAuthStore } from '../store/authStore';
-import { getRoleDisplayName } from '../utils/roleDisplay';
 import type { UserData } from '../store/authStore';
+import { getRoleDisplayName } from '../utils/roleDisplay';
 import { calculateNetPay, getDeductionCounts, MEAL_ALLOWANCE_DEFAULT } from '../utils/payroll';
-import type { TaxTable } from '../utils/payroll';
-import type { Timestamp } from 'firebase/firestore';
+import type { PayrollResult, TaxTable } from '../utils/payroll';
+import { getTaxTableStatus } from '../utils/payrollTaxTable';
+import { assertPayrollSession, downloadPayrollPdf, payrollService, payrollSessionKey } from '../services/payrollService';
+import type { PayrollIdentity, PayrollRecordSummary } from '../utils/payrollStatements';
 import './SalaryManagement.css';
+import './PayrollReports.css';
 
-interface Division {
-  id: string;
-  name: string;
-}
-
-interface Team extends Division {
-  divisionId: string;
-}
-
-interface PayrollRecord {
-  id: string;
-  year: number;
-  month: number;
-  divisionName: string;
-  employeeCount: number;
-  totalGross: number;
-  totalNet: number;
-  approvedAt?: Timestamp;
-  approvedByName?: string;
-}
-
+interface Division { id: string; name: string }
+interface Team extends Division { divisionId: string }
 type PayrollSettings = Required<Pick<UserData, 'annualSalary' | 'salaryType' | 'isSeveranceIncluded' | 'dependents' | 'childrenUnder20' | 'nonTaxable'>>;
-type PayrollFieldUpdate = { [Field in keyof PayrollSettings]: [field: Field, value: PayrollSettings[Field]] }[keyof PayrollSettings];
+interface Draft { values: PayrollSettings; baseline: string }
+const financialFields = ['annualSalary', 'salaryType', 'isSeveranceIncluded', 'dependents', 'childrenUnder20', 'nonTaxable'] as const;
+const baselineOf = (value: Partial<UserData>) => JSON.stringify(financialFields.map(field => value[field] ?? null));
+const settingsOf = (employee: UserData): PayrollSettings => ({ annualSalary: employee.annualSalary ?? 0,
+  salaryType: employee.salaryType ?? 'ANNUAL', isSeveranceIncluded: false,
+  dependents: getDeductionCounts(employee).dependents, childrenUnder20: getDeductionCounts(employee).children,
+  nonTaxable: employee.nonTaxable ?? MEAL_ALLOWANCE_DEFAULT });
+const won = (value: number) => `${value.toLocaleString('ko-KR')}원`;
+const now = new Date();
+const years = Array.from({ length: 7 }, (_, index) => now.getFullYear() - 4 + index);
+const monthIndex = (year: number, month: number) => year * 12 + month;
+const failureMessage = (failure: unknown) => failure instanceof Error ? failure.message : '처리하지 못했습니다. 다시 시도해 주세요.';
 
-export const SalaryManagement: React.FC = () => {
-  const { userData, companyData } = useAuthStore();
-  const isAdminOrMaster = userData?.role === 'SUPER_ADMIN' || userData?.role === 'ADMIN';
+function PayrollDialog({ title, children, onClose, error }: { title: string; children: ReactNode; onClose: () => void; error?: string }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  return <dialog ref={dialog} className="pyre-dialog" aria-label={title} onCancel={event => { event.preventDefault(); onClose(); }}>
+    <header className="pyre-dialog-head"><h2>{title}</h2><Button aria-label={`${title} 닫기`} onClick={onClose}><X size={18} /></Button></header>
+    <div className="pyre-dialog-body">{error && <p className="pyre-alert pyre-error" role="alert">{error}</p>}{children}</div>
+  </dialog>;
+}
+
+function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: string }) {
+  const { companyData } = useAuthStore();
+  const mounted = useRef(true);
+  const historyRequest = useRef(0);
+  const isCurrent = useCallback(() => mounted.current && payrollSessionKey() === scope, [scope]);
   const [employees, setEmployees] = useState<UserData[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
   const [taxTable, setTaxTable] = useState<TaxTable>(null);
-  
-  // Filters
-  const [selectedDivision, setSelectedDivision] = useState<string>('ALL');
-  const [selectedTeam, setSelectedTeam] = useState<string>('ALL');
+  const [taxLoading, setTaxLoading] = useState(true);
+  const [taxReadError, setTaxReadError] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  const [selectedDivision, setSelectedDivision] = useState('ALL');
+  const [selectedTeam, setSelectedTeam] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // Period Filters
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
-  
-  // States for individual edits
-  const [editingData, setEditingData] = useState<Record<string, Partial<PayrollSettings>>>({});
-  const [isSaving, setIsSaving] = useState<string | null>(null);
-  const [isApproving, setIsApproving] = useState(false);
-  const [selectedDetails, setSelectedDetails] = useState<UserData | null>(null);
-  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
-  const [historyRecords, setHistoryRecords] = useState<PayrollRecord[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [approving, setApproving] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [detailsId, setDetailsId] = useState<string | null>(null);
+  const [yearRecords, setYearRecords] = useState<PayrollRecordSummary[]>([]);
+  const [annualEmployees, setAnnualEmployees] = useState<PayrollIdentity[]>([]);
+  const [annualEmployeeId, setAnnualEmployeeId] = useState('');
+  const [listLoading, setListLoading] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
+  const [historyRecords, setHistoryRecords] = useState<PayrollRecordSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyStart, setHistoryStart] = useState(`${now.getFullYear()}-01`);
+  const [historyEnd, setHistoryEnd] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
 
-  // History Range Filters
-  const [historyStartYear, setHistoryStartYear] = useState<number>(new Date().getFullYear());
-  const [historyStartMonth, setHistoryStartMonth] = useState<number>(1);
-  const [historyEndYear, setHistoryEndYear] = useState<number>(new Date().getFullYear());
-  const [historyEndMonth, setHistoryEndMonth] = useState<number>(new Date().getMonth() + 1);
-
-  // Close menu when clicking outside
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
-    const handleGlobalClick = () => setActiveMenuId(null);
-    window.addEventListener('click', handleGlobalClick);
-    return () => window.removeEventListener('click', handleGlobalClick);
-  }, []);
-
-  useEffect(() => {
-    if (!userData?.companyId) return;
-    const companyId = userData.companyId;
-
-    const unsubDivs = onSnapshot(query(collection(db, 'divisions'), where('companyId', '==', companyId)), (snap) => {
-      setDivisions(snap.docs.map(d => ({ id: d.id, ...d.data() } as Division)));
-    });
-    const unsubTeams = onSnapshot(query(collection(db, 'teams'), where('companyId', '==', companyId)), (snap) => {
-      setTeams(snap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
-    });
-
-    const q = query(collection(db, 'UserProfile'), where('companyId', '==', companyId));
-    const unsubEmployees = onSnapshot(q, (snap) => {
-      const data = snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserData));
-      setEmployees(data.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
-      
-      setEditingData(prev => {
-        const next = { ...prev };
-        data.forEach(emp => {
-          if (!next[emp.uid]) {
-            next[emp.uid] = {
-               annualSalary: emp.annualSalary || 0,
-               salaryType: emp.salaryType || 'ANNUAL',
-               isSeveranceIncluded: emp.isSeveranceIncluded || false,
-               dependents: getDeductionCounts(emp).dependents,
-               childrenUnder20: emp.childrenUnder20 || 0,
-               nonTaxable: emp.nonTaxable !== undefined ? emp.nonTaxable : MEAL_ALLOWANCE_DEFAULT
-            };
-          }
-        });
-        return next;
-      });
+    if (!isCurrent()) return;
+    try { assertPayrollSession(scope); }
+    catch (failure) { setError(failureMessage(failure)); setLoading(false); return; }
+    const fail = (failure: unknown) => { if (isCurrent()) { setError(failureMessage(failure)); setLoading(false); } };
+    const unsubEmployees = onSnapshot(query(collection(db, 'UserProfile'), where('companyId', '==', companyId)), snapshot => {
+      if (!isCurrent()) return;
+      setEmployees(snapshot.docs.map(item => ({ ...item.data(), uid: item.id } as UserData))
+        .filter(employee => employee.companyId === companyId && ['ADMIN', 'SUB_ADMIN', 'MEMBER'].includes(employee.role))
+        .sort((left, right) => (left.name || '').localeCompare(right.name || '', 'ko')));
       setLoading(false);
+    }, fail);
+    const unsubDivisions = onSnapshot(query(collection(db, 'divisions'), where('companyId', '==', companyId)), snapshot => {
+      if (isCurrent()) setDivisions(snapshot.docs.filter(item => item.data().companyId === companyId).map(item => ({ ...item.data(), id: item.id } as Division)));
+    }, fail);
+    const unsubTeams = onSnapshot(query(collection(db, 'teams'), where('companyId', '==', companyId)), snapshot => {
+      if (isCurrent()) setTeams(snapshot.docs.filter(item => item.data().companyId === companyId).map(item => ({ ...item.data(), id: item.id } as Team)));
+    }, fail);
+    const unsubTax = onSnapshot(doc(db, 'system_config', 'tax_table'), snapshot => {
+      if (!isCurrent()) return;
+      setTaxTable(snapshot.exists() ? snapshot.data() as TaxTable : null); setTaxReadError(''); setTaxLoading(false);
+    }, () => {
+      if (!isCurrent()) return;
+      setTaxTable(null); setTaxReadError('등록 세액표를 불러오지 못했습니다. 공식 기본표로 예상 계산하며 확정 전 서버에서 다시 확인합니다.'); setTaxLoading(false);
     });
+    return () => { unsubEmployees(); unsubDivisions(); unsubTeams(); unsubTax(); };
+  }, [companyId, scope, isCurrent]);
 
-    return () => { unsubDivs(); unsubTeams(); unsubEmployees(); };
-  }, [userData?.companyId]);
-
-  // 전역 시스템 설정(세액표)은 회사 정보와 무관하게 로드
   useEffect(() => {
-    const unsubTax = onSnapshot(doc(db, 'system_config', 'tax_table'), (doc) => {
-      setTaxTable(doc.exists() ? doc.data() as TaxTable : null);
-    }, () => setTaxTable(null));
+    let active = true;
+    void payrollService.list(selectedYear).then(result => {
+      if (!active || !isCurrent()) return;
+      setYearRecords(result.records); setAnnualEmployees(result.employees); setListLoading(false);
+    }).catch(failure => { if (active && isCurrent()) { setError(failureMessage(failure)); setListLoading(false); } });
+    return () => { active = false; };
+  }, [selectedYear, isCurrent]);
 
-    return () => unsubTax();
-  }, []);
+  const period = { year: selectedYear, month: selectedMonth };
+  const taxStatus = getTaxTableStatus(taxTable);
+  const policySupported = calculateNetPay({ annualSalary: 12, nonTaxable: 0 }, taxTable, period)?.metadata.policyPeriodSupported === true;
+  const monthEnd = new Date(Date.UTC(selectedYear, selectedMonth, 0)).toISOString().slice(0, 10);
+  const activeEmployees = employees.filter(employee => employee.status !== 'RESIGNED' && (!employee.joinDate || employee.joinDate <= monthEnd));
+  const filteredEmployees = activeEmployees.filter(employee => (selectedDivision === 'ALL' || employee.divisionId === selectedDivision) &&
+    (selectedTeam === 'ALL' || employee.teamId === selectedTeam) && (employee.name || '').toLocaleLowerCase().includes(searchTerm.toLocaleLowerCase()));
+  const edited = activeEmployees.filter(employee => drafts[employee.uid] || employee.isSeveranceIncluded === true);
+  const legacyCount = activeEmployees.filter(employee => employee.isSeveranceIncluded === true).length;
+  const calculate = (employee: UserData) => calculateNetPay({ ...employee, ...(drafts[employee.uid]?.values ?? settingsOf(employee)) }, taxTable, period);
+  const totals = filteredEmployees.reduce((sum, employee) => {
+    const result = calculate(employee);
+    return { gross: sum.gross + (result?.monthlyGross ?? 0), net: sum.net + (result?.netPay ?? 0), deductions: sum.deductions + (result?.totalDeductions ?? 0) };
+  }, { gross: 0, net: 0, deductions: 0 });
+  const approved = yearRecords.find(record => record.year === selectedYear && record.month === selectedMonth && !record.legacy && record.schemaVersion === 2);
+  const detailsEmployee = employees.find(employee => employee.uid === detailsId);
+  const details = detailsEmployee ? calculate(detailsEmployee) : null;
+  const busy = approving || saving !== null;
 
-  const handleUpdateField = (uid: string, ...[field, value]: PayrollFieldUpdate) => {
-    setEditingData(prev => ({
-      ...prev,
-      [uid]: {
-        ...prev[uid],
-        [field]: field === 'dependents'
-          ? Math.max(value, (prev[uid]?.childrenUnder20 || 0) + 1)
-          : value,
-        ...(field === 'childrenUnder20' ? {
-          dependents: Math.max(prev[uid]?.dependents || 1, value + 1)
-        } : {})
-      }
-    }));
-  };
-
-
-
-  const handleSalaryAdd = (uid: string, amount: number) => {
-    const currentData = editingData[uid] || {};
-    const factor = (currentData.salaryType === 'MONTHLY') ? (currentData.isSeveranceIncluded ? 13 : 12) : 1;
-    
-    // 현재 표시된 금액(월급 또는 연봉)에 amount를 더함
-    const currentDisplayedValue = currentData.salaryType === 'MONTHLY' 
-      ? Math.floor((currentData.annualSalary || 0) / factor)
-      : (currentData.annualSalary || 0);
-      
-    // 다시 연봉으로 환산하여 저장
-    handleUpdateField(uid, 'annualSalary', (currentDisplayedValue + amount) * factor);
-  };
-
-  const handleSave = async (uid: string) => {
-    const data = editingData[uid];
-    if (!data) return;
-
-    if (!isAdminOrMaster) {
-      alert('회사 관리자(SUPER_ADMIN 또는 ADMIN)만 수정 가능합니다.');
-      return;
-    }
-    setIsSaving(uid);
-    try {
-      await updateDoc(doc(db, 'UserProfile', uid), data);
-    } catch (e) {
-      alert('저장 실패: ' + (e as Error).message);
-    } finally {
-      setIsSaving(null);
-    }
-  };
-
-  const filteredEmployees = employees
-    .filter(emp => {
-      if (emp.status === 'RESIGNED') return false;
-      return (selectedDivision === 'ALL' || emp.divisionId === selectedDivision) &&
-             (selectedTeam === 'ALL' || emp.teamId === selectedTeam) &&
-             (emp.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  function updateField<Key extends keyof PayrollSettings>(employee: UserData, field: Key, value: PayrollSettings[Key]) {
+    if (busy) return;
+    setDrafts(previous => {
+      const current = previous[employee.uid] ?? { values: settingsOf(employee), baseline: baselineOf(employee) };
+      const values = { ...current.values, [field]: value, isSeveranceIncluded: false };
+      if (field === 'dependents' || field === 'childrenUnder20') values.dependents = Math.max(1, values.dependents, values.childrenUnder20 + 1);
+      return { ...previous, [employee.uid]: { ...current, values } };
     });
-
-  // Calculate totals for the filtered list
-  const totals = filteredEmployees.reduce((acc, emp) => {
-    const data = editingData[emp.uid] || {};
-    const res = calculateNetPay({ ...emp, currentVal: data.annualSalary, ...data }, taxTable);
-    if (res) {
-      acc.gross += res.monthlyGross;
-      acc.net += res.netPay;
-      acc.deductions += res.totalDeductions;
-      acc.tax += (res.incomeTax + res.localTax);
-      acc.insurance += res.totalInsurance;
+  }
+  function setSalary(employee: UserData, displayed: number) {
+    const settings = drafts[employee.uid]?.values ?? settingsOf(employee);
+    updateField(employee, 'annualSalary', displayed * (settings.salaryType === 'MONTHLY' ? 12 : 1));
+  }
+  async function saveSettings(employee: UserData) {
+    const scopeAtStart = scope;
+    const draft = drafts[employee.uid] ?? { values: settingsOf(employee), baseline: baselineOf(employee) };
+    const values = draft.values;
+    if (![values.annualSalary, values.nonTaxable, values.dependents, values.childrenUnder20].every(Number.isSafeInteger) ||
+      values.annualSalary < 0 || values.nonTaxable < 0 || values.dependents < 1 || values.dependents > 100 || values.childrenUnder20 < 0 || values.childrenUnder20 > 99) {
+      setError('급여·비과세액은 0 이상의 정수, 부양가족은 1~100명, 자녀는 0~99명으로 입력해 주세요.'); return;
     }
-    return acc;
-  }, { gross: 0, net: 0, deductions: 0, tax: 0, insurance: 0 });
-
-  const handleApprovePayroll = async () => {
-    if (!isAdminOrMaster) return;
-    if (filteredEmployees.length === 0) {
-      alert('승인할 데이터가 없습니다.');
-      return;
-    }
-
-    const confirmMsg = `${selectedYear}년 ${selectedMonth}월 [${selectedDivision === 'ALL' ? '전체 본부' : divisions.find(d => d.id === selectedDivision)?.name}]의 
-총 급여 지출액 ${totals.gross.toLocaleString()}원을 승인하고 저장하시겠습니까?`;
-
-    if (!window.confirm(confirmMsg)) return;
-
-    setIsApproving(true);
+    if (employee.isSeveranceIncluded && !window.confirm(`${employee.name}님의 기존 급여 금액을 확인하셨습니까? 저장된 연봉 ${won(values.annualSalary)}을 12개월로 나눠 계산합니다. 금액을 검토한 뒤 저장해 주세요.`)) return;
+    setSaving(employee.uid); setError(''); setMessage('');
     try {
-      await addDoc(collection(db, 'payroll_records'), {
-        companyId: userData?.companyId,
-        year: selectedYear,
-        month: selectedMonth,
-        divisionId: selectedDivision,
-        divisionName: selectedDivision === 'ALL' ? '전체 본부' : (divisions.find(d => d.id === selectedDivision)?.name || '알 수 없음'),
-        employeeCount: filteredEmployees.length,
-        totalGross: totals.gross,
-        totalNet: totals.net,
-        totalDeductions: totals.deductions,
-        totalTax: totals.tax,
-        totalInsurance: totals.insurance,
-        approvedAt: serverTimestamp(),
-        approvedBy: userData?.uid,
-        approvedByName: userData?.name
+      assertPayrollSession(scopeAtStart);
+      await runTransaction(db, async transaction => {
+        const reference = doc(db, 'UserProfile', employee.uid);
+        const snapshot = await transaction.get(reference);
+        assertPayrollSession(scopeAtStart);
+        if (!snapshot.exists() || snapshot.data().companyId !== companyId) throw new Error('해당 회사의 직원 정보를 확인할 수 없습니다.');
+        if (baselineOf(snapshot.data()) !== draft.baseline) throw new Error('급여 설정이 다른 곳에서 변경되었습니다. 새로고침 후 최신 금액을 확인해 주세요. 입력 내용은 현재 화면에 유지됩니다.');
+        transaction.update(reference, { ...values, isSeveranceIncluded: false });
       });
-      alert('급여 지출 승인이 완료되었습니다.');
-      if (userData?.companyId) {
-        fetchHistory(userData.companyId, historyStartYear, historyStartMonth, historyEndYear, historyEndMonth);
-      }
-    } catch (e) {
-      alert('승인 실패: ' + (e as Error).message);
-    } finally {
-      setIsApproving(false);
-    }
-  };
-
-  const fetchHistory = async (
-    companyId: string,
-    startYear: number, startMonth: number,
-    endYear: number, endMonth: number
-  ) => {
+      if (!isCurrent()) return;
+      setDrafts(previous => { const next = { ...previous }; delete next[employee.uid]; return next; });
+      setMessage(`${employee.name}님의 급여 설정을 저장했습니다.`);
+    } catch (failure) { if (isCurrent()) setError(failureMessage(failure)); }
+    finally { if (isCurrent()) setSaving(null); }
+  }
+  async function approvePayroll() {
+    if (edited.length || busy || !policySupported || approved || listLoading) return;
+    setApproving(true); setError(''); setMessage('');
     try {
-      const q = query(
-        collection(db, 'payroll_records'),
-        where('companyId', '==', companyId)
-      );
-      const snap = await getDocs(q);
-      const allRecords = snap.docs.map(d => ({ id: d.id, ...d.data() } as PayrollRecord));
-
-      const startValue = startYear * 12 + startMonth;
-      const endValue = endYear * 12 + endMonth;
-
-      const filteredRecords = allRecords
-        .filter(r => {
-          const recordValue = r.year * 12 + r.month;
-          return recordValue >= startValue && recordValue <= endValue;
-        })
-        .sort((a, b) => (b.year * 12 + b.month) - (a.year * 12 + a.month));
-
-      console.log(`[SalaryHistory] total=${allRecords.length}, filtered=${filteredRecords.length}`);
-      setHistoryRecords(filteredRecords);
-    } catch (e) {
-      console.error('[SalaryHistory] fetch error:', e);
-    }
-  };
-
-  const handleDeleteRecord = async (recordId: string) => {
-    if (!window.confirm('해당 급여 지출 승인 내역을 삭제하시겠습니까?')) return;
+      assertPayrollSession(scope);
+      const preview = await payrollService.preview(selectedYear, selectedMonth);
+      if (!isCurrent()) return;
+      const taxName = preview.taxTable.source === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표';
+      if (!window.confirm(`${selectedYear}년 ${selectedMonth}월 회사 전체 ${preview.employeeCount}명의 급여를 확정합니다.\n\n총 지급액: ${won(preview.totalGross)}\n총 공제액: ${won(preview.totalDeductions)}\n실지급액: ${won(preview.totalNet)}\n급여 0원: ${preview.zeroCount}명\n계산 기준: ${taxName}\n\n검색·본부·팀 필터와 관계없이 저장된 전체 직원 설정으로 확정되며 승인 후 수정·삭제할 수 없습니다. 계속하시겠습니까?`)) return;
+      const result = await payrollService.approve(selectedYear, selectedMonth, preview.fingerprint);
+      if (!isCurrent()) return;
+      setYearRecords(previous => [result.record, ...previous.filter(record => record.id !== result.record.id)]);
+      setMessage('회사 전체 급여를 확정했습니다. 월별 급여대장과 직원별 연간 급여명세서 PDF를 다운로드할 수 있습니다.');
+      const refreshed = await payrollService.list(selectedYear);
+      if (isCurrent()) { setYearRecords(refreshed.records); setAnnualEmployees(refreshed.employees); }
+    } catch (failure) { if (isCurrent()) setError(failureMessage(failure)); }
+    finally { if (isCurrent()) setApproving(false); }
+  }
+  async function download(kind: 'monthly' | 'annual', identifier: string) {
+    if (downloading) return;
+    setDownloading(`${kind}:${identifier}`); setError('');
     try {
-      await deleteDoc(doc(db, 'payroll_records', recordId));
-      alert('승인 내역이 삭제되었습니다.');
-      if (userData?.companyId) {
-        fetchHistory(userData.companyId, historyStartYear, historyStartMonth, historyEndYear, historyEndMonth);
+      assertPayrollSession(scope);
+      const file = kind === 'monthly' ? await payrollService.monthlyPdf(identifier) : await payrollService.annualPdf(selectedYear, identifier);
+      if (isCurrent()) downloadPayrollPdf(file, scope);
+    } catch (failure) { if (isCurrent()) setError(failureMessage(failure)); }
+    finally { if (isCurrent()) setDownloading(null); }
+  }
+  async function fetchHistory() {
+    const requestId = ++historyRequest.current;
+    if (!/^\d{4}-\d{2}$/.test(historyStart) || !/^\d{4}-\d{2}$/.test(historyEnd) || historyStart > historyEnd) { setError('조회 시작월과 종료월을 확인해 주세요.'); return; }
+    const [startYear, startMonth] = historyStart.split('-').map(Number), [endYear, endMonth] = historyEnd.split('-').map(Number);
+    if (endYear - startYear > 5) { setError('승인 이력은 한 번에 최대 6개 연도를 조회할 수 있습니다.'); return; }
+    setHistoryLoading(true); setError('');
+    try {
+      const results = await Promise.all(Array.from({ length: endYear - startYear + 1 }, (_, index) => payrollService.list(startYear + index)));
+      if (!isCurrent() || requestId !== historyRequest.current) return;
+      setHistoryRecords(results.flatMap(result => result.records).filter(record => monthIndex(record.year, record.month) >= monthIndex(startYear, startMonth) &&
+        monthIndex(record.year, record.month) <= monthIndex(endYear, endMonth)).sort((a, b) => monthIndex(b.year, b.month) - monthIndex(a.year, a.month) || b.approvedAtIso.localeCompare(a.approvedAtIso)));
+    } catch (failure) { if (isCurrent() && requestId === historyRequest.current) setError(failureMessage(failure)); }
+    finally { if (isCurrent() && requestId === historyRequest.current) setHistoryLoading(false); }
+  }
+  async function deleteLegacy(record: PayrollRecordSummary) {
+    if (!record.legacy || !window.confirm('이전 집계 승인 이력을 삭제하시겠습니까? 직원별 상세자료가 없는 이전 기록만 삭제할 수 있습니다.')) return;
+    setError('');
+    try {
+      assertPayrollSession(scope);
+      await runTransaction(db, async transaction => {
+        const reference = doc(db, 'payroll_records', record.id), snapshot = await transaction.get(reference);
+        assertPayrollSession(scope);
+        const value = snapshot.data();
+        if (!snapshot.exists() || value?.companyId !== companyId || (value.schemaVersion ?? 1) !== 1 ||
+          ['rows', 'sums', 'scope', 'taxTable', 'approvedAtIso', 'revision'].some(key => key in value)) throw new Error('삭제 가능한 이전 회사 집계 기록이 아닙니다.');
+        transaction.delete(reference);
+      });
+      if (isCurrent()) {
+        setHistoryRecords(previous => previous.filter(item => item.id !== record.id));
+        setYearRecords(previous => previous.filter(item => item.id !== record.id)); setMessage('이전 집계 이력을 삭제했습니다.');
       }
-    } catch (e) {
-      alert('삭제 실패: ' + (e as Error).message);
-    }
-  };
+    } catch (failure) { if (isCurrent()) setError(failureMessage(failure)); }
+  }
 
-  useEffect(() => {
-    if (!userData?.companyId) return;
-    fetchHistory(userData.companyId, historyStartYear, historyStartMonth, historyEndYear, historyEndMonth);
-  }, [userData?.companyId, historyStartYear, historyStartMonth, historyEndYear, historyEndMonth]);
-
-  const handlePrint = () => {
-    window.print();
-  };
-
-  if (loading) return <div className="salary-screen salary-loading" role="status"><Loader2 size={22} className="animate-spin" />급여 정보를 불러오는 중입니다.</div>;
-
-  return (
-    <div className="salary-screen flex-1 p-4 md:p-8 bg-slate-50 min-h-screen font-sans print:p-0 print:bg-white overflow-hidden">
-      <div className="salary-workspace max-w-7xl mx-auto space-y-6 print:hidden">
-        
-        {/* Header */}
-        <div className="salary-page-head">
-            <div>
-              <PageTitle className="wf-title">급여관리</PageTitle>
-              <p className="salary-page-description">
-                2026년 근로소득 간이세액표 적용 · 자녀 공제는 공제대상인 8~20세 자녀만 입력하세요. 기존 저장값도 확인이 필요합니다.
-              </p>
-            </div>
-
-          <div className="salary-head-actions">
-            <Button
-              onClick={() => setShowHistory(true)}
-              className="wf-btn"
-            >
-              <Info className="w-4 h-4 text-indigo-500" />
-              과거 승인 내역
-            </Button>
-            <div className="salary-search relative group">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
-              <Input
-                type="search" placeholder="직원 이름 검색" aria-label="급여 대상 직원 검색"
-                value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                className="wf-input"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Period & Summary Section */}
-        <div className="salary-summary-grid">
-           {/* Period Selector */}
-           <Panel className="salary-period wf-panel">
-              <div className="flex items-center gap-2 text-indigo-600 mb-2">
-                 <Filter className="w-4 h-4" />
-                 <span className="text-[10px] font-black uppercase tracking-widest">지출 대상 기간 선택</span>
-              </div>
-              <div className="flex gap-3">
-                 <select aria-label="급여 대상 연도"
-                   value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}
-                   className="flex-1 bg-slate-50 border-none rounded-xl px-4 py-3 font-black text-slate-700 outline-none focus:ring-2 focus:ring-indigo-100 transition-all"
-                 >
-                    {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}년</option>)}
-                 </select>
-                 <select aria-label="급여 대상 월"
-                   value={selectedMonth} onChange={(e) => setSelectedMonth(Number(e.target.value))}
-                   className="flex-1 bg-slate-50 border-none rounded-xl px-4 py-3 font-black text-slate-700 outline-none focus:ring-2 focus:ring-indigo-100 transition-all"
-                 >
-                    {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}월</option>)}
-                 </select>
-              </div>
-              <p className="text-[10px] font-bold text-slate-400">지출액 저장 시 해당 연도/월로 기록됩니다.</p>
-           </Panel>
-
-           {/* Summary Stats */}
-           <Panel className="salary-totals wf-panel">
-              
-              <div className="salary-total-values">
-                 <div className="space-y-1">
-                    <p className="text-[9px] font-black text-indigo-200 uppercase tracking-widest">총 지급액 (Gross)</p>
-                    <p className="text-xl font-black">{totals.gross.toLocaleString()}<span className="text-xs ml-1 opacity-60">원</span></p>
-                 </div>
-                 <div className="space-y-1 border-l border-white/10 pl-6">
-                    <p className="text-[9px] font-black text-indigo-200 uppercase tracking-widest">총 공제액 (Deduction)</p>
-                    <p className="text-xl font-black">{totals.deductions.toLocaleString()}<span className="text-xs ml-1 opacity-60">원</span></p>
-                 </div>
-                 <div className="space-y-1 border-l border-white/10 pl-6">
-                    <p className="text-[9px] font-black text-indigo-200 uppercase tracking-widest">총 실지급액 (Net)</p>
-                    <p className="text-xl font-black text-emerald-300">{totals.net.toLocaleString()}<span className="text-xs ml-1 opacity-60">원</span></p>
-                 </div>
-              </div>
-
-              <div className="relative z-10 w-full md:w-auto">
-                 <Button
-                   onClick={handleApprovePayroll}
-                   disabled={isApproving}
-                   className="wf-btn wf-btn-primary salary-approve"
-                 >
-                    {isApproving ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Banknote className="w-5 h-5" /> 지출 승인 및 저장</>}
-                 </Button>
-              </div>
-           </Panel>
-        </div>
-
-        {/* Filters */}
-        <Panel className="salary-filters wf-panel">
-           <div className="salary-organization-filter">
-              <Building className="w-5 h-5 text-indigo-400" />
-              <select aria-label="급여 조회 본부"
-                value={selectedDivision} onChange={(e) => {setSelectedDivision(e.target.value); setSelectedTeam('ALL');}}
-                className="flex-1 bg-transparent border-none outline-none font-black text-slate-700 text-xs appearance-none cursor-pointer"
-              >
-                 <option value="ALL">전체 본부</option>
-                  {divisions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-           </div>
-           <div className="salary-organization-filter">
-              <Filter className="w-5 h-5 text-emerald-400" />
-              <select aria-label="급여 조회 팀"
-                value={selectedTeam} onChange={(e) => setSelectedTeam(e.target.value)}
-                disabled={selectedDivision === 'ALL'}
-                className="flex-1 bg-transparent border-none outline-none font-black text-slate-700 text-xs appearance-none disabled:opacity-30 cursor-pointer"
-              >
-                 <option value="ALL">팀 검색</option>
-                  {teams.filter(t => t.divisionId === selectedDivision).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-           </div>
-           <div className="salary-standard-note">
-              <div className="relative z-10 flex flex-col">
-                <span className="text-[9px] font-black uppercase tracking-widest text-indigo-400">산출 기준</span>
-                <span className="text-sm font-black">2026.03 개정 세법 및 4.75% 연금율 적용</span>
-              </div>
-           </div>
-        </Panel>
-
-        {/* List Section */}
-        <div className="space-y-4">
-           
-           {/* Desktop Table View */}
-           <div className="salary-table-panel hidden lg:block premium-card overflow-hidden">
-              <div className="overflow-x-auto">
-                 <table className="w-full min-w-[1200px]">
-                    <thead>
-                       <tr className="bg-slate-50 border-b border-slate-100">
-                          <th className="px-8 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">직원 정보</th>
-                          <th className="px-8 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">급여 기본 설정</th>
-                          <th className="px-8 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">선택입력 (공제관련)</th>
-                          <th className="px-8 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">실수령 산출결과</th>
-                          <th className="px-8 py-5 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">관리</th>
-                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {filteredEmployees.map(emp => {
-                          const data = editingData[emp.uid] || {};
-                          const res = calculateNetPay({ ...emp, currentVal: data.annualSalary, ...data }, taxTable);
-                          const isChanged = JSON.stringify(data) !== JSON.stringify({
-                             annualSalary: emp.annualSalary || 0,
-                             salaryType: emp.salaryType || 'ANNUAL',
-                             isSeveranceIncluded: emp.isSeveranceIncluded || false,
-                             dependents: emp.dependents || 1,
-                             childrenUnder20: emp.childrenUnder20 || 0,
-                             nonTaxable: emp.nonTaxable !== undefined ? emp.nonTaxable : MEAL_ALLOWANCE_DEFAULT
-                          });
-
-                          return (
-                             <tr key={emp.uid} className="hover:bg-slate-50/50 transition-all group">
-                                <td className="px-8 py-6">
-                                   <div className="flex items-center gap-3">
-                                      <div 
-                                        onClick={() => setSelectedDetails(emp)}
-                                        className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-black shadow-sm hover:rotate-6 hover:scale-110 hover:shadow-indigo-100 active:scale-95 transition-all cursor-pointer"
-                                      >
-                                        {emp.name[0]}
-                                      </div>
-                                      <div>
-                                         <div onClick={() => setSelectedDetails(emp)} className="text-md font-black text-slate-800 cursor-pointer hover:text-indigo-600 transition-colors uppercase">{emp.name}</div>
-                                         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{getRoleDisplayName(emp, companyData ?? undefined)}</div>
-                                      </div>
-                                   </div>
-                                </td>
-                                
-                                <td className="px-8 py-6">
-                                   <div className="space-y-4">
-                                      <div className="flex gap-2">
-                                         <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-                                            <button 
-                                              onClick={() => handleUpdateField(emp.uid, 'salaryType', 'ANNUAL')}
-                                              aria-pressed={data.salaryType === 'ANNUAL'}
-                                              className={`px-4 py-1.5 text-[9px] font-black rounded-lg transition-all ${data.salaryType === 'ANNUAL' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'text-slate-400 hover:text-slate-600'}`}
-                                            >연봉</button>
-                                            <button 
-                                              onClick={() => handleUpdateField(emp.uid, 'salaryType', 'MONTHLY')}
-                                              aria-pressed={data.salaryType === 'MONTHLY'}
-                                              className={`px-4 py-1.5 text-[9px] font-black rounded-lg transition-all ${data.salaryType === 'MONTHLY' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'text-slate-400 hover:text-slate-600'}`}
-                                            >월급</button>
-                                         </div>
-                                         <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-                                            <button 
-                                              onClick={() => handleUpdateField(emp.uid, 'isSeveranceIncluded', false)}
-                                              aria-pressed={!data.isSeveranceIncluded}
-                                              title={data.salaryType === 'MONTHLY'
-                                                ? '퇴직급여 별도: 입력한 월급을 12배하여 연 환산액을 계산합니다.'
-                                                : '퇴직급여 별도: 입력한 연봉을 12개월로 나누어 월 지급액을 계산합니다.'}
-                                              className={`px-4 py-1.5 text-[9px] font-black rounded-lg transition-all ${!data.isSeveranceIncluded ? 'bg-slate-800 text-white shadow-lg shadow-slate-200' : 'text-slate-400 hover:text-slate-600'}`}
-                                            >별도</button>
-                                            <button 
-                                              onClick={() => handleUpdateField(emp.uid, 'isSeveranceIncluded', true)}
-                                              aria-pressed={data.isSeveranceIncluded}
-                                              title={data.salaryType === 'MONTHLY'
-                                                ? '퇴직급여 포함: 입력한 월급을 13배하여 연 환산액을 계산합니다.'
-                                                : '퇴직급여 포함: 입력한 연봉을 13등분하여 월 지급액을 계산합니다.'}
-                                              className={`px-4 py-1.5 text-[9px] font-black rounded-lg transition-all ${data.isSeveranceIncluded ? 'bg-slate-800 text-white shadow-lg shadow-slate-200' : 'text-slate-400 hover:text-slate-600'}`}
-                                            >포함</button>
-                                         </div>
-                                      </div>
-                                      
-                                      <div className="space-y-2">
-                                         <div className="relative group/input">
-                                            <input 
-                                              type="text" 
-                                              aria-label={`${emp.name} 급여 금액`}
-                                              value={(data.salaryType === 'MONTHLY' 
-                                                ? Math.floor((data.annualSalary || 0) / (data.isSeveranceIncluded ? 13 : 12))
-                                                : (data.annualSalary || 0)
-                                              ).toLocaleString()} 
-                                              onChange={(e) => {
-                                                const val = parseInt(e.target.value.replace(/,/g, '')) || 0;
-                                                const factor = (data.salaryType === 'MONTHLY' ? (data.isSeveranceIncluded ? 13 : 12) : 1);
-                                                handleUpdateField(emp.uid, 'annualSalary', val * factor);
-                                              }}
-                                              className="w-full pl-5 pr-10 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-800 outline-none group-hover/input:border-slate-100 focus:border-indigo-500 focus:bg-white transition-all shadow-inner"
-                                            />
-                                            <span className="absolute right-5 top-1/2 -translate-y-1/2 text-xs font-black text-slate-300 group-focus-within/input:text-indigo-400">원</span>
-                                         </div>
-                                         
-                                         <div className="px-2 py-2 flex justify-between items-center text-[10px] font-bold text-slate-400">
-                                            <span>
-                                               {data.salaryType === 'ANNUAL' ? '월 환산: ' : '연 환산: '}
-                                               <span className="text-indigo-500 font-extrabold ml-1">
-                                                  {(data.salaryType === 'ANNUAL' 
-                                                    ? Math.floor((data.annualSalary || 0) / (data.isSeveranceIncluded ? 13 : 12))
-                                                    : (data.annualSalary || 0)
-                                                  ).toLocaleString()}원
-                                               </span>
-                                            </span>
-                                            <div className="flex gap-1">
-                                              <button onClick={() => handleSalaryAdd(emp.uid, 5000000)} className="px-1.5 py-0.5 bg-slate-100 rounded text-[8px] hover:bg-slate-200">+500</button>
-                                              <button onClick={() => handleSalaryAdd(emp.uid, 1000000)} className="px-1.5 py-0.5 bg-slate-100 rounded text-[8px] hover:bg-slate-200">+100</button>
-                                            </div>
-                                         </div>
-                                      </div>
-                                   </div>
-                                </td>
-   
-                                <td className="px-8 py-6">
-                                   <div className="space-y-4">
-                                      <div className="flex items-center gap-6">
-                                         <div className="flex-1 space-y-2">
-                                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1" title="본인과 공제 요건을 충족하는 가족을 포함합니다.">공제대상 가족 (본인 포함) <Info className="w-3 h-3 text-slate-200" /></div>
-                                            <div className="flex items-center bg-slate-50 rounded-xl p-1 border border-transparent hover:border-slate-100 transition-all">
-                                               <button aria-label={`${emp.name} 공제대상 가족 감소`} onClick={() => handleUpdateField(emp.uid, 'dependents', Math.max((data.childrenUnder20 || 0) + 1, (data.dependents || 1) - 1))} className="p-2 hover:bg-white rounded-lg shadow-sm"><Minus className="w-3 h-3 text-slate-400" /></button>
-                                               <span className="flex-1 text-center text-xs font-black text-slate-700">{data.dependents || 1}</span>
-                                               <button aria-label={`${emp.name} 공제대상 가족 증가`} onClick={() => handleUpdateField(emp.uid, 'dependents', (data.dependents || 1) + 1)} className="p-2 hover:bg-white rounded-lg shadow-sm"><Plus className="w-3 h-3 text-slate-400" /></button>
-                                            </div>
-                                         </div>
-                                         <div className="flex-1 space-y-2">
-                                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest" title="공제대상 가족에 포함된 8세 이상 20세 이하 자녀만 입력합니다.">8~20세 자녀 수</div>
-                                            <div className="flex items-center bg-slate-50 rounded-xl p-1 border border-transparent hover:border-slate-100 transition-all">
-                                               <button aria-label={`${emp.name} 공제대상 자녀 감소`} onClick={() => handleUpdateField(emp.uid, 'childrenUnder20', Math.max(0, (data.childrenUnder20 || 0) - 1))} className="p-2 hover:bg-white rounded-lg shadow-sm"><Minus className="w-3 h-3 text-slate-400" /></button>
-                                               <span className="flex-1 text-center text-xs font-black text-slate-700">{data.childrenUnder20 || 0}</span>
-                                               <button aria-label={`${emp.name} 공제대상 자녀 증가`} onClick={() => handleUpdateField(emp.uid, 'childrenUnder20', (data.childrenUnder20 || 0) + 1)} className="p-2 hover:bg-white rounded-lg shadow-sm"><Plus className="w-3 h-3 text-slate-400" /></button>
-                                            </div>
-                                         </div>
-                                      </div>
-                                      <div className="space-y-2">
-                                         <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">비과세액 (월)</div>
-                                         <input 
-                                           aria-label={`${emp.name} 비과세액`}
-                                           type="text" value={(data.nonTaxable !== undefined ? data.nonTaxable : MEAL_ALLOWANCE_DEFAULT).toLocaleString()}
-                                           onChange={(e) => {
-                                             const val = parseInt(e.target.value.replace(/,/g, '')) || 0;
-                                             handleUpdateField(emp.uid, 'nonTaxable', val);
-                                           }}
-                                           className="w-full px-4 py-2.5 bg-slate-50 border border-transparent rounded-xl text-xs font-black text-slate-600 outline-none focus:border-indigo-400 focus:bg-white transition-all shadow-inner"
-                                         />
-                                      </div>
-                                   </div>
-                                </td>
-   
-                                <td className="px-8 py-6">
-                                   {res ? (
-                                      <div className="space-y-1 py-2">
-                                         <div className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1">Monthly Net Pay</div>
-                                         <div className="text-3xl font-black text-slate-900 tracking-tighter flex items-center gap-2">
-                                            {res.netPay.toLocaleString()}
-                                            <span className="text-sm font-bold text-slate-400">원</span>
-                                         </div>
-                                         <div className="text-[10px] font-bold text-slate-400 mt-2 flex items-center gap-1.5">
-                                            <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></div>
-                                            지급액: {res.monthlyGross.toLocaleString()}원
-                                         </div>
-                                      </div>
-                                   ) : (
-                                      <div className="h-20 flex items-center justify-center opacity-20 border-2 border-dashed border-slate-100 rounded-2xl"><Users className="w-6 h-6" /></div>
-                                   )}
-                                </td>
-   
-                                <td className="px-8 py-6 relative">
-                                   <div className="flex items-center justify-end gap-3">
-                                      <button 
-                                        onClick={() => handleSave(emp.uid)}
-                                        disabled={!isChanged || isSaving === emp.uid}
-                                        className={`px-5 py-3 rounded-2xl text-[11px] font-black transition-all ${isChanged ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-100 hover:bg-indigo-700' : 'bg-slate-50 text-slate-300 pointer-events-none'}`}
-                                      >
-                                         {isSaving === emp.uid ? <Loader2 className="w-4 h-4 animate-spin" /> : '설정 저장'}
-                                      </button>
-                                      
-                                      <button 
-                                        onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === emp.uid ? null : emp.uid); }}
-                                        aria-label={`${emp.name} 급여 관리 메뉴`}
-                                        aria-expanded={activeMenuId === emp.uid}
-                                        className={`p-3 rounded-2xl transition-all ${activeMenuId === emp.uid ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
-                                      >
-                                         <MoreVertical className="w-4 h-4" />
-                                      </button>
-
-                                      {/* Dropdown Menu */}
-                                      {activeMenuId === emp.uid && (
-                                        <div className="absolute right-8 top-16 w-52 bg-white rounded-[1.5rem] shadow-2xl border border-slate-100 z-50 p-2 animate-in fade-in zoom-in-95 duration-200">
-                                          <button 
-                                            onClick={() => setSelectedDetails(emp)}
-                                            disabled={!res}
-                                            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 text-slate-700 text-[11px] font-black rounded-xl transition-all"
-                                          >
-                                            <Calculator className="w-4 h-4 text-indigo-500" /> 상세 내역 및 인쇄
-                                          </button>
-                                          <button 
-                                            onClick={() => alert('기능 준비 중입니다.')}
-                                            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 text-slate-400 text-[11px] font-black rounded-xl transition-all"
-                                          >
-                                            <Printer className="w-4 h-4" /> 급여명세서 메일 발송
-                                          </button>
-                                        </div>
-                                      )}
-                                   </div>
-                                </td>
-                             </tr>
-                          );
-                       })}
-                    </tbody>
-                 </table>
-              </div>
-           </div>
-
-           {/* Mobile Card View */}
-           <div className="salary-mobile-list lg:hidden grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredEmployees.map(emp => {
-                  const data = editingData[emp.uid] || {};
-                  const res = calculateNetPay({ ...emp, currentVal: data.annualSalary, ...data }, taxTable);
-                  const isChanged = JSON.stringify(data) !== JSON.stringify({
-                     annualSalary: emp.annualSalary || 0,
-                     salaryType: emp.salaryType || 'ANNUAL',
-                     isSeveranceIncluded: emp.isSeveranceIncluded || false,
-                     dependents: emp.dependents || 1,
-                     childrenUnder20: emp.childrenUnder20 || 0,
-                     nonTaxable: emp.nonTaxable !== undefined ? emp.nonTaxable : MEAL_ALLOWANCE_DEFAULT
-                  });
-
-                  return (
-                     <div key={emp.uid} className="salary-mobile-card premium-card p-6 flex flex-col gap-6">
-                        <div className="flex items-center justify-between">
-                           <div className="flex items-center gap-3">
-                               <div 
-                                 onClick={() => setSelectedDetails(emp)}
-                                 className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-black cursor-pointer hover:scale-110 transition-transform active:scale-95"
-                               >
-                                 {emp.name[0]}
-                               </div>
-                               <div>
-                                  <h3 onClick={() => setSelectedDetails(emp)} className="text-sm font-black text-slate-900 cursor-pointer hover:text-indigo-600 uppercase">{emp.name}</h3>
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase">{getRoleDisplayName(emp, companyData ?? undefined)}</p>
-                               </div>
-                           </div>
-                           <button onClick={() => setSelectedDetails(emp)} aria-label={`${emp.name} 급여 상세 내역`} className="p-2 bg-slate-50 rounded-xl text-slate-400"><Calculator className="w-5 h-5" /></button>
-                        </div>
-
-                        <div className="space-y-4">
-                           <div className="relative">
-                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-2 block">급여 금액 (원)</label>
-                              <input 
-                                type="text"
-                                aria-label={`${emp.name} 급여 금액`}
-                                value={(data.salaryType === 'MONTHLY' 
-                                  ? Math.floor((data.annualSalary || 0) / (data.isSeveranceIncluded ? 13 : 12))
-                                  : (data.annualSalary || 0)
-                                ).toLocaleString()}
-                                onChange={(e) => {
-                                  const val = parseInt(e.target.value.replace(/,/g, '')) || 0;
-                                  const factor = (data.salaryType === 'MONTHLY' ? (data.isSeveranceIncluded ? 13 : 12) : 1);
-                                  handleUpdateField(emp.uid, 'annualSalary', val * factor);
-                                }}
-                                className="w-full px-5 py-3.5 bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-800 outline-none focus:border-indigo-500 transition-all font-mono"
-                              />
-                              <div className="flex gap-2 mt-2">
-                                 <button onClick={() => handleUpdateField(emp.uid, 'salaryType', 'ANNUAL')} aria-pressed={data.salaryType === 'ANNUAL'} className={`flex-1 py-2 rounded-xl text-[10px] font-black border transition-all ${data.salaryType === 'ANNUAL' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-400 border-slate-100'}`}>연봉</button>
-                                 <button onClick={() => handleUpdateField(emp.uid, 'salaryType', 'MONTHLY')} aria-pressed={data.salaryType === 'MONTHLY'} className={`flex-1 py-2 rounded-xl text-[10px] font-black border transition-all ${data.salaryType === 'MONTHLY' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-400 border-slate-100'}`}>월급</button>
-                              </div>
-                           </div>
-
-                           {res && (
-                              <div className="p-5 bg-indigo-600 rounded-2xl text-white shadow-xl shadow-indigo-100">
-                                 <p className="text-[9px] font-black text-indigo-200 uppercase tracking-widest mb-1">Estimated Net</p>
-                                 <p className="text-2xl font-black">{res.netPay.toLocaleString()}원</p>
-                              </div>
-                           )}
-
-                           <button 
-                             onClick={() => handleSave(emp.uid)}
-                             disabled={!isChanged || isSaving === emp.uid}
-                             className={`w-full py-4 rounded-2xl font-black text-xs transition-all ${isChanged ? 'bg-slate-900 text-white shadow-lg' : 'bg-slate-100 text-slate-300'}`}
-                           >
-                              {isSaving === emp.uid ? '저장 중...' : '급여 설정 업데이트'}
-                           </button>
-                        </div>
-                     </div>
-                  );
-               })}
-           </div>
-          {!filteredEmployees.length && <Panel as="p" role="status" className="salary-empty wf-panel">선택한 조건의 직원이 없습니다. 검색어와 본부·팀 필터를 확인하세요.</Panel>}
-        </div>
+  function employeeEditor(employee: UserData) {
+    const settings = drafts[employee.uid]?.values ?? settingsOf(employee), result = calculate(employee);
+    const changed = !!drafts[employee.uid] || employee.isSeveranceIncluded === true;
+    const displayed = settings.salaryType === 'MONTHLY' ? Math.floor(settings.annualSalary / 12) : settings.annualSalary;
+    return <article className="pyre-employee wf-panel" key={employee.uid}>
+      <div className="pyre-person"><div className="pyre-avatar" aria-hidden="true">{employee.name?.slice(0, 1)}</div><div><h3>{employee.name}</h3><p>{getRoleDisplayName(employee, companyData)}</p><p>{divisions.find(item => item.id === employee.divisionId)?.name || '본부 미배정'} · {teams.find(item => item.id === employee.teamId)?.name || '팀 미배정'}</p></div></div>
+      <div className="pyre-salary-fields"><div className="pyre-basis" role="group" aria-label={`${employee.name} 급여 입력 기준`}>
+        <Button disabled={busy} aria-pressed={settings.salaryType === 'ANNUAL'} onClick={() => updateField(employee, 'salaryType', 'ANNUAL')}>연봉</Button>
+        <Button disabled={busy} aria-pressed={settings.salaryType === 'MONTHLY'} onClick={() => updateField(employee, 'salaryType', 'MONTHLY')}>월급</Button>
+      </div><label>{settings.salaryType === 'MONTHLY' ? '월 급여' : '연봉'} (원)<Input inputMode="numeric" aria-label={`${employee.name} ${settings.salaryType === 'MONTHLY' ? '월 급여' : '연봉'}`} disabled={busy} value={displayed.toLocaleString('ko-KR')} onChange={event => setSalary(employee, Number(event.target.value.replace(/[^0-9]/g, '')))} /></label>
+        <div className="pyre-salary-hint"><span>{settings.salaryType === 'MONTHLY' ? `연 환산 ${won(settings.annualSalary)}` : `월 환산 ${won(Math.floor(settings.annualSalary / 12))}`}</span><span><Button disabled={busy} onClick={() => setSalary(employee, displayed + (settings.salaryType === 'MONTHLY' ? 500_000 : 5_000_000))}>{settings.salaryType === 'MONTHLY' ? '+50만' : '+500만'}</Button><Button disabled={busy} onClick={() => setSalary(employee, displayed + (settings.salaryType === 'MONTHLY' ? 100_000 : 1_000_000))}>{settings.salaryType === 'MONTHLY' ? '+10만' : '+100만'}</Button></span></div>
+        {employee.isSeveranceIncluded && <p className="pyre-warning">기존 급여 금액을 확인하고 설정을 저장해 주세요.</p>}
       </div>
+      <div className="pyre-deductions"><div className="pyre-count-grid">{(['dependents', 'childrenUnder20'] as const).map(field => <div className="pyre-count" key={field}><span>{field === 'dependents' ? '공제대상 가족 (본인 포함)' : '8~20세 공제대상 자녀'}</span><div><Button disabled={busy || settings[field] <= (field === 'dependents' ? settings.childrenUnder20 + 1 : 0)} aria-label={`${employee.name} ${field === 'dependents' ? '가족' : '자녀'} 감소`} onClick={() => updateField(employee, field, settings[field] - 1)}><Minus size={14} /></Button><output aria-label={`${employee.name} ${field === 'dependents' ? '가족' : '자녀'} 수`}>{settings[field]}</output><Button disabled={busy || settings[field] >= (field === 'dependents' ? 100 : 99)} aria-label={`${employee.name} ${field === 'dependents' ? '가족' : '자녀'} 증가`} onClick={() => updateField(employee, field, settings[field] + 1)}><Plus size={14} /></Button></div></div>)}</div>
+        <label>비과세액 (월, 원)<Input disabled={busy} inputMode="numeric" aria-label={`${employee.name} 월 비과세액`} value={settings.nonTaxable.toLocaleString('ko-KR')} onChange={event => updateField(employee, 'nonTaxable', Number(event.target.value.replace(/[^0-9]/g, '')))} /></label>
+      </div>
+      <div className="pyre-result"><span>예상 월 실수령액</span><strong>{won(result?.netPay ?? 0)}</strong><p>지급액 {won(result?.monthlyGross ?? 0)}</p><p>공제액 {won(result?.totalDeductions ?? 0)}</p><div className="pyre-row-actions"><Button disabled={busy || !changed} onClick={() => void saveSettings(employee)}>{saving === employee.uid ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}설정 저장</Button><Button onClick={() => setDetailsId(employee.uid)}><Calculator size={16} />산출 상세</Button><Button disabled={!!downloading || listLoading} onClick={() => void download('annual', employee.uid)}><Download size={16} />연간 PDF</Button></div></div>
+    </article>;
+  }
 
-      {/* Details & Print Modal */}
-      {selectedDetails && (
-        <div className="salary-modal-overlay fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300 print:relative print:p-0 print:bg-white" role="dialog" aria-modal="true" aria-label="급여 산출 명세서">
-          {(() => {
-            const draft = editingData[selectedDetails.uid] || {};
-            const res = calculateNetPay({ ...selectedDetails, currentVal: draft.annualSalary, ...draft }, taxTable);
-            if (!res) return null;
+  if (loading) return <div className="pyre-screen pyre-loading" role="status"><Loader2 size={22} className="animate-spin" />급여 정보를 불러오는 중입니다.</div>;
+  return <div className="salary-screen pyre-screen"><div className="pyre-workspace">
+    <header className="pyre-heading"><div><PageTitle>급여관리</PageTitle><p>월별 급여대장과 직원별 연간 급여명세서를 PDF로 보관합니다.</p></div><Button onClick={() => { setShowHistory(true); void fetchHistory(); }}><History size={17} />과거 승인 내역</Button></header>
+    {error && <p className="pyre-alert pyre-error" role="alert">{error}</p>}{message && <p className="pyre-alert pyre-success" role="status">{message}</p>}
+    <Panel className="pyre-tax"><div><strong>적용 세액표</strong><span>{taxLoading ? '확인 중' : taxStatus.source === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표'}</span></div>
+      {taxStatus.fileName && <p>등록 파일: {taxStatus.fileName}{taxStatus.updateDate ? ` · 등록일 ${taxStatus.updateDate.slice(0, 10)}` : ''}</p>}
+      <p>적용일 {taxStatus.effectiveFrom || '2026-03-01'} · {taxStatus.bracketCount}개 급여 구간 · 자녀 공제는 8~20세 대상 자녀만 입력하세요.</p>
+      {(taxStatus.reason || taxReadError) && <p className="pyre-warning" role="alert">{taxReadError || `등록 세액표 검증 오류: ${taxStatus.reason} 전체 공식 기본표로 계산합니다.`}</p>}
+      {taxStatus.source === 'uploaded' && taxStatus.highIncomeSource !== 'uploaded' && <p className="pyre-warning">1,000만원 이상 급여는 등록표의 기준 세액이 없어 공식 기본표 산식을 사용합니다.</p>}
+    </Panel>
+    <div className="pyre-summary-layout"><Panel className="pyre-period"><h2>급여 대상 기간</h2><div><Select aria-label="급여 대상 연도" disabled={busy} value={selectedYear} onChange={event => { setListLoading(true); setYearRecords([]); setAnnualEmployees([]); setAnnualEmployeeId(''); setSelectedYear(Number(event.target.value)); }}>{years.map(year => <option key={year} value={year}>{year}년</option>)}</Select><Select aria-label="급여 대상 월" disabled={busy} value={selectedMonth} onChange={event => setSelectedMonth(Number(event.target.value))}>{Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}월</option>)}</Select></div><p>설정은 현재 저장된 급여 기준입니다. 과거 확정액은 승인 이력에서 확인하세요.</p></Panel>
+      <Panel className="pyre-summary"><h2>조회 목록 예상 합계 <span>{filteredEmployees.length}명</span></h2><dl><div><dt>총 지급액</dt><dd>{won(totals.gross)}</dd></div><div><dt>총 공제액</dt><dd>{won(totals.deductions)}</dd></div><div><dt>예상 실지급액</dt><dd>{won(totals.net)}</dd></div></dl><p>본부·팀·이름으로 조회한 목록의 예상 금액입니다. 월 급여 확정은 회사 전체 저장 설정으로 진행합니다.</p></Panel></div>
+    <Panel className="pyre-report-actions"><div><h2>{selectedYear}년 {selectedMonth}월 회사 전체 급여대장</h2>{approved ? <p>확정 {approved.employeeCount}명 · 총 지급 {won(approved.totalGross)} · 실지급 {won(approved.totalNet)} · 승인일 {approved.approvedAtIso.slice(0, 10)}</p> : <p>저장된 회사 전체 직원 {activeEmployees.length}명의 급여를 서버에서 확인한 뒤 확정합니다.</p>}
+      {edited.length > 0 && <p className="pyre-warning">설정 확인·저장 필요 {edited.length}명{legacyCount ? ` (이전 급여 설정 ${legacyCount}명)` : ''}. 모두 저장한 뒤 확정할 수 있습니다.</p>}
+      {!policySupported && <p className="pyre-warning">선택 기간은 현재 세액·보험 기준으로 확정할 수 없습니다. 이미 승인된 문서는 다운로드할 수 있습니다.</p>}</div><div className="pyre-action-buttons"><Button className="wf-btn-primary" disabled={busy || !!approved || edited.length > 0 || !policySupported || taxLoading || listLoading || !activeEmployees.length} onClick={() => void approvePayroll()}>{approving ? <Loader2 size={17} className="animate-spin" /> : <Banknote size={17} />}{approved ? '확정 완료' : '회사 전체 급여 확정'}</Button><Button disabled={!approved || !!downloading || listLoading} onClick={() => approved && void download('monthly', approved.id)}><Download size={17} />월별 급여대장 PDF</Button></div></Panel>
+    <Panel className="pyre-annual"><div><h2>직원별 {selectedYear}년 급여명세서</h2><p>월별 확정 이력을 모아 생성합니다. 이력이 없는 월은 미확정으로 표시하며 퇴사자도 선택할 수 있습니다.</p></div><label>직원 선택<Select aria-label="연간 급여명세서 직원 선택" value={annualEmployeeId} disabled={listLoading || !!downloading} onChange={event => setAnnualEmployeeId(event.target.value)}><option value="">직원을 선택하세요</option>{annualEmployees.map(employee => <option key={employee.userId} value={employee.userId}>{employee.name}{employee.resignDate ? ` · 퇴사 ${employee.resignDate}` : ''}{employee.teamName ? ` · ${employee.teamName}` : ''}</option>)}</Select></label><Button disabled={!annualEmployeeId || !!downloading || listLoading} onClick={() => void download('annual', annualEmployeeId)}><Download size={17} />연간 급여명세서 PDF</Button></Panel>
+    {downloading && <p className="pyre-inline-status" role="status"><Loader2 size={17} className="animate-spin" />승인 자료로 PDF를 생성하고 있습니다.</p>}
+    <Panel className="pyre-filters"><label>본부<Select aria-label="급여 조회 본부" value={selectedDivision} onChange={event => { setSelectedDivision(event.target.value); setSelectedTeam('ALL'); }}><option value="ALL">전체 본부</option>{divisions.map(division => <option key={division.id} value={division.id}>{division.name}</option>)}</Select></label><label>팀<Select aria-label="급여 조회 팀" value={selectedTeam} onChange={event => setSelectedTeam(event.target.value)}><option value="ALL">전체 팀</option>{teams.filter(team => selectedDivision === 'ALL' || team.divisionId === selectedDivision).map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</Select></label><label className="pyre-search">직원 이름<div><Search size={17} aria-hidden="true" /><Input type="search" aria-label="급여 대상 직원 검색" placeholder="직원 이름 검색" value={searchTerm} onChange={event => setSearchTerm(event.target.value)} /></div></label></Panel>
+    <div className="pyre-list-heading"><h2>급여 설정 <span>{filteredEmployees.length}명</span></h2><p>저장된 연봉을 12개월로 나누어 계산합니다. 설정 변경은 확정된 문서에 영향을 주지 않습니다.</p></div>
+    <div className="pyre-employees">{filteredEmployees.map(employeeEditor)}</div>{!filteredEmployees.length && <Panel className="pyre-empty">선택한 조건의 직원이 없습니다. 검색어와 본부·팀 필터를 확인하세요.</Panel>}
+    {detailsEmployee && details && <PayrollDialog title={`${detailsEmployee.name}님 예상 급여 산출 내역`} error={error} onClose={() => setDetailsId(null)}><p className="pyre-dialog-note">{selectedYear}년 {selectedMonth}월 현재 입력한 설정의 예상 계산입니다. 확정 급여명세서는 승인 이력으로 생성한 PDF를 사용하세요.</p><div className="pyre-detail-summary"><div><span>월 지급액</span><strong>{won(details.monthlyGross)}</strong></div><div><span>예상 실수령액</span><strong>{won(details.netPay)}</strong></div></div><dl className="pyre-detail-rows">{detailItems(details).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{won(value)}</dd></div>)}</dl><p className="pyre-dialog-note">공제대상 가족 {details.dependents}명 · 8~20세 자녀 {details.children}명 · {details.metadata.tableSource === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표'}<br />국민연금 4.75% · 건강보험 3.595% · 장기요양 건강보험료의 13.14% · 고용보험 0.9%. 실제 지급액은 회사의 수당·보험 가입 조건에 따라 달라질 수 있습니다.</p><Button disabled={!!downloading} onClick={() => void download('annual', detailsEmployee.uid)}><Download size={17} />{selectedYear}년 확정 급여명세서 PDF</Button></PayrollDialog>}
+    {showHistory && <PayrollDialog title="급여 지출 승인 이력" error={error} onClose={() => { historyRequest.current += 1; setShowHistory(false); setHistoryLoading(false); }}><div className="pyre-history-filters"><label>시작월<Input type="month" aria-label="급여 이력 시작월" value={historyStart} onChange={event => setHistoryStart(event.target.value)} /></label><label>종료월<Input type="month" aria-label="급여 이력 종료월" value={historyEnd} onChange={event => setHistoryEnd(event.target.value)} /></label><Button disabled={historyLoading} onClick={() => void fetchHistory()}>조회</Button></div><p className="pyre-dialog-note">새로 확정한 상세 급여대장은 수정·삭제할 수 없습니다. 이전 집계 기록은 직원별 상세자료가 없어 PDF를 생성할 수 없습니다.</p>{historyLoading ? <p role="status">승인 이력을 불러오는 중입니다.</p> : <div className="pyre-history-scroll"><table><thead><tr><th>승인 기간</th><th>인원</th><th>총 지급액</th><th>실지급액</th><th>승인 정보</th><th>문서·관리</th></tr></thead><tbody>{historyRecords.map(record => <tr key={record.id}><td>{record.year}년 {record.month}월<br /><small>{record.legacy ? '이전 집계' : '회사 전체 확정'}</small></td><td>{record.employeeCount}명</td><td>{won(record.totalGross)}</td><td>{won(record.totalNet)}</td><td>{record.approvedAtIso.slice(0, 10)}<br /><small>{record.approvedByName}</small></td><td>{record.legacy ? <div className="pyre-history-actions"><span>상세내역 없음</span><Button aria-label={`${record.year}년 ${record.month}월 이전 집계 삭제`} onClick={() => void deleteLegacy(record)}><Trash2 size={16} /></Button></div> : <Button disabled={!!downloading} onClick={() => void download('monthly', record.id)}><Download size={16} />PDF</Button>}</td></tr>)}</tbody></table>{!historyRecords.length && <p className="pyre-empty">조회 기간의 승인 내역이 없습니다.</p>}</div>}</PayrollDialog>}
+  </div></div>;
+}
 
-            return (
-              <div className="salary-detail-modal bg-white rounded-[2rem] shadow-2xl w-full max-w-xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-500 print:shadow-none print:border-none print:w-full print:max-w-none print:rounded-none">
-                
-                {/* Modal Header */}
-                <div className="salary-modal-head p-8 border-b border-slate-100 flex justify-between items-center bg-slate-900 text-white print:bg-transparent print:text-black print:p-4 print:border-b-2 print:border-black">
-                  <div className="flex items-center gap-3">
-                    <Calculator className="w-6 h-6 text-indigo-400 print:hidden" />
-                    <div>
-                        <h2 className="text-xl font-black tracking-tight">{selectedDetails.name}님 급여 산출 명세서</h2>
-                        <p className="text-[10px] font-bold text-slate-400 mt-1 print:text-black print:text-[8pt] italic">
-                            2026년 근로소득 간이세액표 기준 (공제대상 가족 {res.dependents}명, 8~20세 자녀 {res.children}명, {res.metadata.tableSource === 'uploaded' ? '관리자 등록 세액표' : '공식 기본 세액표'})
-                        </p>
-                    </div>
-                  </div>
-              <div className="flex items-center gap-2 print:hidden">
-                 <button onClick={handlePrint} aria-label="급여 명세서 인쇄" className="p-3 bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-all"><Printer className="w-5 h-5" /></button>
-                 <button onClick={() => setSelectedDetails(null)} aria-label="급여 명세서 닫기" className="p-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all"><X className="w-5 h-5" /></button>
-              </div>
-            </div>
-            
-                <div className="salary-modal-body p-8 space-y-8 print:p-4 print:space-y-6">
-                  <>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100 print:border-2 print:border-slate-200">
-                        <div className="text-[10px] font-black text-slate-400 uppercase mb-2 print:text-[10pt] print:text-black">월 지급 총액 (Gross)</div>
-                        <div className="text-2xl font-black text-slate-800 print:text-[18pt]">{res.monthlyGross.toLocaleString()}원</div>
-                        <div className="text-[9px] font-bold text-slate-400 mt-2 flex items-center gap-1">
-                           <AlertCircle className="w-3 h-3" />
-                           {res.salaryBasis === 'ANNUAL' ? '연봉의 1/' + (res.isSeveranceIncluded ? '13' : '12') : '월 정기고급'} (퇴지금 {res.isSeveranceIncluded ? '포함' : '별도'})
-                        </div>
-                      </div>
-                      <div className="p-6 bg-indigo-600 text-white rounded-2xl shadow-xl ring-4 ring-indigo-50 print:bg-slate-100 print:text-black print:ring-0 print:border-2 print:border-black">
-                        <div className="text-[10px] font-black text-indigo-200 uppercase mb-2 print:text-[10pt] print:text-black">월 예상 실수령액 (Monthly Net)</div>
-                        <div className="text-3xl font-black">{res.netPay.toLocaleString()}원</div>
-                      </div>
-                    </div>
+function detailItems(result: PayrollResult): Array<[string, number]> {
+  return [['기본급', result.monthlyGross - result.nonTaxable], ['비과세액', result.nonTaxable], ['국민연금', result.pension], ['건강보험', result.health], ['장기요양보험', result.longTerm], ['고용보험', result.employment], ['근로소득세', result.incomeTax], ['지방소득세', result.localTax], ['공제 합계', result.totalDeductions]];
+}
 
-                    <div className="space-y-6">
-                      <div className="border-t-2 border-dashed border-slate-100 pt-6 print:border-t-2 print:border-black">
-                        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2 print:text-[12pt] print:text-black">
-                           <Users className="w-4 h-4 print:hidden" />
-                           기본 공제 및 비과세 정보
-                        </h3>
-                        <div className="grid grid-cols-3 gap-4 text-center">
-                           <div className="p-3 bg-slate-50/50 rounded-xl">
-                              <div className="text-9px] font-bold text-slate-400 mb-1">비과세액</div>
-                              <div className="text-sm font-black text-slate-700">{res.nonTaxable.toLocaleString()}원</div>
-                           </div>
-                           <div className="p-3 bg-slate-50/50 rounded-xl">
-                              <div className="text-9px] font-bold text-slate-400 mb-1">부양가족</div>
-                              <div className="text-sm font-black text-slate-700">{res.dependents}명</div>
-                           </div>
-                           <div className="p-3 bg-slate-50/50 rounded-xl">
-                              <div className="text-9px] font-bold text-slate-400 mb-1">8~20세 자녀</div>
-                              <div className="text-sm font-black text-slate-700">{res.children}명</div>
-                           </div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                         <div className="space-y-4">
-                            <h3 className="text-[10px] font-black text-indigo-500 uppercase tracking-widest flex items-center gap-2">
-                               <Info className="w-3.5 h-3.5" /> 4대 보험 (근로자 부담)
-                            </h3>
-                            <div className="space-y-3 bg-slate-50/50 p-4 rounded-xl text-sm font-medium border border-slate-100">
-                               <div className="flex justify-between items-center">
-                                  <span className="text-slate-500 text-xs">국민연금 (4.75%)</span>
-                                  <span className="font-bold text-slate-800">{res.pension.toLocaleString()}원</span>
-                               </div>
-                               <div className="flex justify-between items-center">
-                                  <span className="text-slate-500 text-xs">건강보험 (3.595%)</span>
-                                  <span className="font-bold text-slate-800">{res.health.toLocaleString()}원</span>
-                               </div>
-                               <div className="flex justify-between items-center">
-                                  <span className="text-slate-500 text-xs">장기요양 (13.14%)</span>
-                                  <span className="font-bold text-slate-800">{res.longTerm.toLocaleString()}원</span>
-                               </div>
-                               <div className="flex justify-between items-center border-t border-slate-100 pt-3">
-                                  <span className="text-slate-500 text-xs">고용보험 (0.9%)</span>
-                                  <span className="font-bold text-slate-800">{res.employment.toLocaleString()}원</span>
-                               </div>
-                            </div>
-                         </div>
-
-                         <div className="space-y-4">
-                            <h3 className="text-[10px] font-black text-sky-500 uppercase tracking-widest flex items-center gap-2">
-                               <Calculator className="w-3.5 h-3.5" /> 세금 (소득세/지방세)
-                            </h3>
-                            <div className="space-y-3 bg-slate-50/50 p-4 rounded-xl text-sm font-medium border border-slate-100">
-                               <div className="flex justify-between items-center">
-                                  <span className="text-slate-500 text-xs">근로소득세</span>
-                                  <span className="font-bold text-slate-800">{res.incomeTax.toLocaleString()}원</span>
-                               </div>
-                               <div className="flex justify-between items-center">
-                                  <span className="text-slate-500 text-xs">지방소득세 (10%)</span>
-                                  <span className="font-bold text-slate-800">{res.localTax.toLocaleString()}원</span>
-                               </div>
-                               <div className="mt-6 pt-4 border-t-2 border-slate-100 flex justify-between items-center">
-                                  <span className="text-[10px] font-black text-rose-500 uppercase">총 공제 합계</span>
-                                  <span className="text-lg font-black text-rose-500">-{res.totalDeductions.toLocaleString()}원</span>
-                               </div>
-                            </div>
-                         </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-900 border-l-4 border-indigo-500 p-5 rounded-2xl print:bg-white print:border-black print:mt-10">
-                       <p className="text-[9px] text-slate-400 leading-relaxed font-medium print:text-[8pt] print:text-black">
-                          본 명세서는 2026년도 대한민국 소득세법 및 각 보험 요율 기준에 따른 예상 산출 내역입니다.<br/>
-                          실제 지급액은 회사별 수당 체계, 비과세 적용 범위, 부양가족 상세 요건 등에 따라 상이할 수 있습니다.
-                       </p>
-                       <div className="mt-4 flex justify-between items-end">
-                          <div className="text-[10px] font-black text-white/50 print:text-black print:text-[8pt]">Issue Date: {new Date().toLocaleDateString()}</div>
-                          <div className="text-xs font-black text-indigo-400 italic print:text-black print:text-[10pt]">HR FLOW System Verification</div>
-                       </div>
-                    </div>
-                  </>
-                </div>
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
-      {/* History Modal */}
-      {showHistory && (
-        <div className="salary-modal-overlay fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300" role="dialog" aria-modal="true" aria-label="급여 지출 승인 이력">
-           <div className="salary-history-modal bg-white rounded-[2rem] shadow-2xl w-full max-w-4xl border border-slate-100 flex flex-col max-h-[90vh]">
-              <div className="salary-modal-head p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50 flex-shrink-0">
-                 <div className="flex items-center gap-3">
-                    <PieChart className="w-6 h-6 text-indigo-600" />
-                    <div>
-                       <h2 className="text-xl font-black text-slate-900">급여 지출 승인 이력</h2>
-                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">지정된 기간 내의 급여 지출 승인 내역을 표시합니다.</p>
-                    </div>
-                 </div>
-                 <button onClick={() => setShowHistory(false)} aria-label="급여 승인 이력 닫기" className="p-3 bg-white border border-slate-100 rounded-xl hover:bg-slate-50 transition-all shadow-sm"><X className="w-5 h-5 text-slate-400" /></button>
-              </div>
-              
-              <div className="salary-history-range p-6 border-b border-slate-100 bg-white flex flex-wrap gap-4 items-end flex-shrink-0">
-                <div>
-                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">시작 연/월</label>
-                   <div className="flex gap-2">
-                     <select className="border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 bg-slate-50" value={historyStartYear} onChange={e => setHistoryStartYear(Number(e.target.value))}>
-                       {Array.from({length: 5}).map((_, i) => {
-                         const y = new Date().getFullYear() - i;
-                         return <option key={y} value={y}>{y}년</option>;
-                       })}
-                     </select>
-                     <select className="border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 bg-slate-50" value={historyStartMonth} onChange={e => setHistoryStartMonth(Number(e.target.value))}>
-                       {Array.from({length: 12}).map((_, i) => <option key={i+1} value={i+1}>{i+1}월</option>)}
-                     </select>
-                   </div>
-                </div>
-                <div className="text-slate-400 font-bold mb-2 pb-2">~</div>
-                <div>
-                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">종료 연/월</label>
-                   <div className="flex gap-2">
-                     <select className="border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 bg-slate-50" value={historyEndYear} onChange={e => setHistoryEndYear(Number(e.target.value))}>
-                       {Array.from({length: 5}).map((_, i) => {
-                         const y = new Date().getFullYear() - i;
-                         return <option key={y} value={y}>{y}년</option>;
-                       })}
-                     </select>
-                     <select className="border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 bg-slate-50" value={historyEndMonth} onChange={e => setHistoryEndMonth(Number(e.target.value))}>
-                       {Array.from({length: 12}).map((_, i) => <option key={i+1} value={i+1}>{i+1}월</option>)}
-                     </select>
-                   </div>
-                </div>
-              </div>
-
-              <div className="salary-history-body p-8 overflow-y-auto">
-                 <div className="salary-history-table overflow-hidden border border-slate-100 rounded-2xl">
-                    <table className="w-full">
-                       <thead className="bg-slate-50">
-                          <tr>
-                             <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">승인 기간/대상</th>
-                             <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">인원</th>
-                             <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">총 지급액</th>
-                             <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">실 수령액</th>
-                             <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">승인 일시</th>
-                             <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest w-16">관리</th>
-                          </tr>
-                       </thead>
-                       <tbody className="divide-y divide-slate-100">
-                          {historyRecords.length === 0 ? (
-                             <tr>
-                                <td colSpan={6} className="px-6 py-20 text-center text-xs font-bold text-slate-300">승인 내역이 없습니다.</td>
-                             </tr>
-                          ) : (
-                             historyRecords.map(rec => (
-                                <tr key={rec.id} className="hover:bg-slate-50/50 transition-colors">
-                                   <td className="px-6 py-4">
-                                      <div className="text-xs font-black text-slate-800">{rec.year}년 {rec.month}월</div>
-                                      <div className="text-[10px] font-bold text-indigo-500">{rec.divisionName}</div>
-                                   </td>
-                                   <td className="px-6 py-4 text-right font-bold text-slate-600 text-xs">{rec.employeeCount}명</td>
-                                   <td className="px-6 py-4 text-right font-black text-slate-800 text-xs">{rec.totalGross.toLocaleString()}원</td>
-                                   <td className="px-6 py-4 text-right font-black text-emerald-600 text-xs">{rec.totalNet.toLocaleString()}원</td>
-                                   <td className="px-6 py-4 text-right">
-                                      <div className="text-[10px] font-bold text-slate-500">{rec.approvedAt?.toDate().toLocaleDateString()}</div>
-                                      <div className="text-[9px] font-medium text-slate-400">{rec.approvedByName}</div>
-                                   </td>
-                                   <td className="px-6 py-4 text-center">
-                                      <button 
-                                        onClick={() => handleDeleteRecord(rec.id)}
-                                        className="p-2 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                                        title="기록 삭제"
-                                      >
-                                        <Trash2 className="w-4 h-4 mx-auto" />
-                                      </button>
-                                   </td>
-                                </tr>
-                             ))
-                          )}
-                       </tbody>
-                    </table>
-                 </div>
-              </div>
-           </div>
-        </div>
-      )}
-      <style dangerouslySetInnerHTML={{ __html: `
-        @media print {
-          body * { visibility: hidden; }
-          .print\\:relative, .print\\:relative * { visibility: visible; }
-          .print\\:relative { 
-            position: absolute; 
-            left: 0; 
-            top: 0; 
-            width: 100%; 
-            height: auto;
-            background: white !important;
-          }
-          .print\\:hidden { display: none !important; }
-        }
-      `}} />
-    </div>
-  );
-};
-
+export function SalaryManagement() {
+  const { userData, companyData, sessionReady } = useAuthStore();
+  if (!sessionReady || !userData || userData.role !== 'ADMIN' || userData.status === 'RESIGNED' || userData.mustChangePassword ||
+    !companyData || companyData.id !== userData.companyId || companyData.status !== 'ACTIVE') return <Panel className="pyre-empty" role="status">소속 회사 관리자만 급여 정보를 이용할 수 있습니다.</Panel>;
+  const scope = payrollSessionKey();
+  try { assertPayrollSession(scope); }
+  catch { return <Panel className="pyre-empty" role="status">로그인과 소속 정보를 다시 확인해 주세요.</Panel>; }
+  return <PayrollWorkspace key={scope} companyId={userData.companyId} scope={scope} />;
+}

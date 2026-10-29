@@ -74,6 +74,12 @@ try {
       await setDoc(doc(seed, 'notices', `notice-${id}`), { companyId, authorId: companyId === 'a' ? 'alice' : 'outsider', title: 'Notice', createdAt: '2026-10-24' });
       await setDoc(doc(seed, 'payroll_records', `payroll-${id}`), { companyId, approvedBy: companyId === 'a' ? 'alice' : 'outsider', totalGross: 100, createdAt: '2026-10-24' });
     }
+    for (const [id, companyId, approvedBy] of [['modern-a', 'a', 'alice'], ['modern-b', 'b', 'outsider']]) {
+      await setDoc(doc(seed, 'payroll_records', id), { companyId, approvedBy, schemaVersion: 2, scope: 'COMPANY',
+        year: 2026, month: 10, rows: [{ companyId, userId: companyId === 'a' ? 'bob' : 'foreignMember', name: 'Stored snapshot' }],
+        sums: { monthlyGross: 100 }, totalGross: 100, totalNet: 90, employeeCount: 1,
+        approvedAtIso: '2026-10-24T00:00:00.000Z', revision: 1 });
+    }
     await setDoc(doc(seed, 'notices', 'manager-own'), { companyId: 'a', authorId: 'manager', title: 'Own notice' });
     await setDoc(doc(seed, 'expenses', 'legacy-attachment'), { ...ownRequest(), attachmentUrl: 'https://example.invalid/legacy' });
     await setDoc(doc(seed, 'expenses', 'legacy-private-path'), { ...ownRequest(), attachmentPath: 'companies/a/expenses/bob/legacy/archive.png' });
@@ -260,6 +266,32 @@ try {
   await allow('ADMIN payroll amount correction', updateDoc(document('alice', 'payroll_records', 'payroll-a'), { totalGross: 200 }));
   await allow('ADMIN payroll with same-company subject', setDoc(document('alice', 'payroll_records', 'own-subject'), { companyId: 'a', approvedBy: 'alice', userId: 'bob', totalGross: 10 }));
   for (const userId of ['outsider', 'missing-user', '']) await deny('payroll foreign or missing subject', setDoc(document('alice', 'payroll_records', 'forged-subject'), { companyId: 'a', approvedBy: 'alice', userId, totalGross: 10 }));
+  await allow('ADMIN reads own server-approved snapshot', getDoc(document('alice', 'payroll_records', 'modern-a')));
+  await allow('platform reads server-approved snapshot', getDoc(document('root', 'payroll_records', 'modern-a')));
+  for (const uid of ['outsider', 'bob', 'manager', 'retiredAdmin', 'pendingAdmin']) {
+    await deny(`${uid} cannot read another scope modern payroll`, getDoc(document(uid, 'payroll_records', 'modern-a')));
+  }
+  for (const uid of ['alice', 'root']) {
+    for (const patch of [{ totalGross: 1 }, { rows: [{ companyId: 'b', userId: 'foreignMember' }] },
+      { schemaVersion: 1 }, { companyId: 'b' }]) {
+      await deny(`${uid} cannot change immutable server snapshot`, updateDoc(document(uid, 'payroll_records', 'modern-a'), patch));
+    }
+    await deny(`${uid} cannot delete immutable server snapshot`, deleteDoc(document(uid, 'payroll_records', 'modern-a')));
+    await deny(`${uid} cannot replace server snapshot with legacy aggregate`, setDoc(document(uid, 'payroll_records', 'modern-a'), {
+      companyId: 'a', approvedBy: 'alice', totalGross: 1
+    }));
+  }
+  for (const extra of [{ schemaVersion: 2 }, { rows: [{ companyId: 'b', userId: 'foreignMember' }] }, { sums: { monthlyGross: 1 } },
+    { scope: 'COMPANY' }, { approvedAtIso: '2026-10-24T00:00:00Z' }, { taxTable: {} }, { revision: 1 }]) {
+    await deny('client cannot forge detailed or modern payroll metadata', setDoc(document('alice', 'payroll_records', 'forged-modern'), {
+      companyId: 'a', approvedBy: 'alice', totalGross: 1, ...extra
+    }));
+    await deny('client cannot upgrade legacy payroll into forged snapshot', updateDoc(document('alice', 'payroll_records', 'payroll-a'), extra));
+  }
+  await allow('legacy aggregate create remains compatible', setDoc(document('alice', 'payroll_records', 'legacy-delete'), {
+    companyId: 'a', approvedBy: 'alice', totalGross: 1
+  }));
+  await allow('legacy aggregate delete remains compatible', deleteDoc(document('alice', 'payroll_records', 'legacy-delete')));
   await deny('SUB_ADMIN edits another author notice', updateDoc(document('manager', 'notices', 'notice-a'), { title: 'Forged' }));
   await allow('SUB_ADMIN edits own notice', updateDoc(document('manager', 'notices', 'manager-own'), { title: 'Updated' }));
   await allow('ADMIN edits company notice', updateDoc(document('alice', 'notices', 'manager-own'), { title: 'Admin Updated' }));
