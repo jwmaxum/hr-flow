@@ -229,11 +229,46 @@ test.afterEach(async ({}, testInfo) => {
   }
 });
 
+test('public landing preserves guide navigation and login with the shared theme', async ({ browser }, testInfo) => {
+  const actor = await actorFor(browser, testInfo);
+  await actor.page.goto('/');
+  const preview = actor.page.getByRole('tab', { name: '기능 한눈에 보기', exact: true });
+  const manual = actor.page.getByRole('tab', { name: '기능요약 설명서', exact: true });
+  await expect(preview).toBeVisible();
+  await expect(actor.page.locator('.landing-page')).toHaveCSS('font-family', /SUIT Variable/);
+  await actor.page.evaluate(() => document.fonts.ready);
+  expect(await actor.page.evaluate(() => document.fonts.check('14px "SUIT Variable"'))).toBe(true);
+  expect(await actor.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await preview.focus();
+  await actor.page.keyboard.press('End');
+  await expect(manual).toHaveAttribute('aria-selected', 'true');
+  await expect(actor.page.locator('#guide-panel-manual')).toBeVisible();
+  await actor.page.getByRole('navigation', { name: '기능 설명서 목차', exact: true })
+    .getByRole('link', { name: /역할과 메뉴 권한/ }).click();
+  await expect(actor.page.locator('#guide-roles')).toBeFocused();
+  await manual.focus();
+  await actor.page.keyboard.press('Home');
+  await expect(preview).toHaveAttribute('aria-selected', 'true');
+  await actor.page.getByRole('button', { name: '로그인', exact: true }).click();
+  await expect(actor.page).toHaveURL(/#\/login$/);
+  await expect(actor.page.getByPlaceholder('admin@yourcompany.com')).toBeVisible();
+});
+
 test('real platform, company-owner and member logins preserve role navigation', async ({ browser }, testInfo) => {
   for (const [key, displayRole] of [['platform', 'SYSTEM_ADMIN'], ['adminA', 'SUPER_ADMIN'], ['memberA', 'MEMBER']]) {
     const actor = await actorFor(browser, testInfo);
     await login(actor, fixtures.accounts[key]);
     await expect(actor.page.locator('.sidebar-user').first()).toContainText(displayRole);
+    if (key === 'platform') {
+      await expect(actor.page.locator('.workspace-shell.workflow-theme')).toBeVisible();
+      await expect(actor.page.locator('.workspace-shell')).toHaveCSS('font-family', /SUIT Variable/);
+      if (testInfo.project.use.isMobile) {
+        await actor.page.getByRole('button', { name: '메뉴 열기', exact: true }).click();
+        await expect(actor.page.getByRole('link', { name: '플랫폼 관리', exact: true })).toBeVisible();
+        await actor.page.keyboard.press('Escape');
+        await expect(actor.page.getByRole('button', { name: '메뉴 열기', exact: true })).toBeFocused();
+      }
+    }
     if (key === 'memberA') {
       await expect(actor.page.getByRole('link', { name: '플랫폼 관리', exact: true })).toHaveCount(0);
       await expect(actor.page.getByRole('link', { name: '조직관리', exact: true })).toHaveCount(0);

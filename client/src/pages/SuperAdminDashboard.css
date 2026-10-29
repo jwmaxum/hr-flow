@@ -1,0 +1,170 @@
+.workflow-theme .platform-admin-screen { min-width: 0; }
+.platform-admin-screen .platform-content { display: flex; flex-direction: column; gap: 20px; min-width: 0; max-width: 1280px; margin-inline: auto; }
+.platform-admin-screen .platform-heading { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; min-width: 0; }
+.platform-admin-screen .platform-heading-copy { min-width: 0; }
+.platform-admin-screen .platform-heading-copy > p { margin: 7px 0 0; font-size: 13px; }
+.platform-admin-screen .platform-eyebrow { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px; color: var(--wf-primary-800); font-size: 11px; font-weight: 600; letter-spacing: .7px; }
+.platform-admin-screen .platform-eyebrow svg { width: 15px; height: 15px; }
+.platform-admin-screen .platform-heading-copy .platform-backend { color: var(--text-tertiary); font-size: 11px; overflow-wrap: anywhere; }
+.platform-admin-screen .platform-search { position: relative; flex: 0 1 280px; min-width: 220px; }
+.platform-admin-screen .platform-search > svg { position: absolute; top: 50%; left: 12px; width: 17px; height: 17px; color: var(--wf-muted); transform: translateY(-50%); pointer-events: none; }
+.platform-admin-screen .platform-search .wf-input { padding-left: 38px; }
+.platform-admin-screen .platform-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.platform-admin-screen .platform-stat { padding: 18px 20px; }
+.platform-admin-screen .platform-stat-label { display: flex; align-items: center; gap: 8px; color: var(--wf-muted); font-size: 13px; }
+.platform-admin-screen .platform-stat-label svg { width: 17px; height: 17px; color: var(--wf-primary-800); }
+.platform-admin-screen .platform-stat > p { display: flex; align-items: baseline; gap: 7px; margin: 12px 0 0; }
+.platform-admin-screen .platform-stat strong { color: var(--wf-strong); font-size: 28px; font-weight: 600; line-height: 1.15; letter-spacing: -.7px; }
+.platform-admin-screen .platform-stat > p > span { color: var(--wf-muted); font-size: 12px; }
+.platform-admin-screen .platform-tabs { display: flex; align-items: stretch; gap: 4px; width: fit-content; max-width: 100%; padding: 4px; border: 1px solid var(--wf-border); border-radius: 10px; background: var(--wf-panel); }
+.platform-admin-screen .platform-tabs .wf-btn { border-color: transparent; background: transparent; color: var(--wf-muted); white-space: nowrap; }
+.platform-admin-screen .platform-tabs .wf-btn[aria-pressed=true] { background: var(--wf-primary-50); color: var(--wf-primary-800); font-weight: 600; }
+.platform-admin-screen .wf-btn svg { flex: 0 0 auto; width: 16px; height: 16px; }
+.platform-admin-screen .platform-section-stack { display: flex; flex-direction: column; gap: 20px; }
+.platform-admin-screen .platform-tax { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px; }
+.platform-admin-screen .platform-tax-copy { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
+.platform-admin-screen .platform-tax-copy > div { min-width: 0; }
+.platform-admin-screen .platform-section-icon { display: inline-grid; flex: 0 0 auto; place-items: center; width: 40px; height: 40px; border-radius: 9px; background: var(--wf-primary-50); color: var(--wf-primary-800); }
+.platform-admin-screen .platform-section-icon svg { width: 20px; height: 20px; }
+.platform-admin-screen .platform-tax-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; color: var(--wf-muted); font-size: 12px; }
+.platform-admin-screen .platform-tax-file { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.platform-admin-screen .platform-tax-file svg { flex: 0 0 auto; width: 13px; height: 13px; }
+.platform-admin-screen .platform-tax-copy p { margin: 9px 0 0; font-size: 12px; }
+.platform-admin-screen .platform-tax-upload { position: relative; flex: 0 0 auto; overflow: hidden; }
+.platform-admin-screen .platform-tax-upload:focus-within { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+.platform-admin-screen .platform-file-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.platform-admin-screen .platform-upload-busy { opacity: .5; cursor: not-allowed; }
+.platform-admin-screen .platform-upload-busy .platform-file-input { cursor: not-allowed; }
+.platform-admin-screen .platform-panel-head { padding: 20px 22px; border-bottom: 1px solid var(--wf-border); }
+.platform-admin-screen .platform-section-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.platform-admin-screen .platform-section-heading > svg { flex: 0 0 auto; width: 18px; height: 18px; color: var(--wf-primary-800); }
+.platform-admin-screen .platform-panel-note { font-size: 12px; }
+.platform-admin-screen .platform-empty { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 48px 20px; text-align: center; color: var(--wf-muted); }
+.platform-admin-screen .platform-empty svg { width: 30px; height: 30px; margin-bottom: 5px; color: var(--text-tertiary); }
+.platform-admin-screen .platform-empty p { margin: 0; color: var(--wf-text); font-size: 14px; font-weight: 500; }
+.platform-admin-screen .platform-empty span { font-size: 12px; }
+.platform-admin-screen .platform-company + .platform-company { border-top: 1px solid var(--wf-border); }
+.platform-admin-screen .platform-company-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 22px; }
+.platform-admin-screen .platform-company-summary { display: flex; align-items: flex-start; gap: 12px; flex: 1; min-width: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; text-align: left; color: inherit; cursor: pointer; }
+.platform-admin-screen .platform-company-summary:hover .platform-company-name { color: var(--wf-primary-800); }
+.platform-admin-screen .platform-company-avatar { display: inline-grid; flex: 0 0 auto; place-items: center; width: 40px; height: 40px; border-radius: 9px; background: var(--color-neutral-200); color: var(--wf-muted); font-size: 17px; font-weight: 600; }
+.platform-admin-screen .platform-company-active { background: var(--wf-primary-50); color: var(--wf-primary-800); }
+.platform-admin-screen .platform-company-copy { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.platform-admin-screen .platform-company-title { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
+.platform-admin-screen .platform-company-name { color: var(--wf-strong); font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.platform-admin-screen .platform-company-english { color: var(--wf-muted); font-size: 12px; overflow-wrap: anywhere; }
+.platform-admin-screen .platform-company-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-width: 0; color: var(--wf-muted); font-size: 12px; }
+.platform-admin-screen .platform-company-meta > span:not(.wf-status) { display: inline-flex; align-items: center; gap: 4px; overflow-wrap: anywhere; }
+.platform-admin-screen .platform-company-meta svg { flex: 0 0 auto; width: 13px; height: 13px; }
+.platform-admin-screen .platform-company-meta .wf-status { min-height: 23px; font-size: 11px; white-space: normal; }
+.platform-admin-screen .platform-company-expand { color: var(--wf-primary-800); font-size: 11px; font-weight: 500; }
+.platform-admin-screen .platform-company-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 6px; }
+.platform-admin-screen .platform-company-actions .wf-btn { min-height: 36px; padding: 7px 10px; font-size: 12px; }
+.platform-admin-screen .platform-extend { color: var(--wf-primary-800); }
+.platform-admin-screen .platform-activate { background: var(--wf-success-bg); border-color: transparent; }
+.platform-admin-screen .platform-company-actions .platform-company-delete { padding-inline: 9px; }
+.platform-admin-screen .platform-company-delete:hover:not(:disabled) { color: var(--wf-text); background: var(--wf-error-bg); }
+.platform-admin-screen .platform-company-details { padding: 0 22px 20px; }
+.platform-admin-screen .platform-detail-title { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--wf-muted); }
+.platform-admin-screen .platform-detail-title svg { width: 15px; height: 15px; color: var(--wf-primary-800); }
+.platform-admin-screen .platform-users-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.platform-admin-screen .platform-user-card { display: flex; align-items: flex-start; gap: 10px; min-width: 0; padding: 14px; border: 1px solid var(--wf-border); border-radius: 8px; background: var(--wf-subtle); }
+.platform-admin-screen .platform-user-avatar { display: inline-grid; flex: 0 0 auto; place-items: center; width: 32px; height: 32px; border-radius: 7px; background: var(--color-neutral-200); color: var(--wf-muted); font-size: 13px; font-weight: 600; }
+.platform-admin-screen .platform-admin-avatar { background: var(--wf-primary-50); color: var(--wf-primary-800); }
+.platform-admin-screen .platform-user-copy { flex: 1; min-width: 0; }
+.platform-admin-screen .platform-user-copy p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.platform-admin-screen .platform-user-name { margin: 0; font-size: 13px; font-weight: 600; color: var(--wf-text); }
+.platform-admin-screen .platform-user-email { margin: 3px 0 7px; font-size: 11px; color: var(--wf-muted); }
+.platform-admin-screen .platform-user-copy .wf-status { min-height: 22px; max-width: 100%; padding: 2px 6px; font-size: 10px; white-space: normal; overflow-wrap: anywhere; }
+.platform-admin-screen .platform-user-card .platform-reset-button { flex: 0 0 auto; min-height: 30px; padding: 5px 7px; font-size: 10px; color: var(--wf-primary-800); }
+.platform-admin-screen .platform-reset-button svg { width: 12px; height: 12px; }
+.platform-admin-screen .platform-user-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; color: var(--wf-muted); font-size: 10px; overflow-wrap: anywhere; }
+.platform-admin-screen .platform-users-content { padding: 22px; }
+.platform-admin-screen .platform-inline-empty { margin: 0; padding: 16px; border-radius: 8px; background: var(--wf-subtle); color: var(--wf-muted); text-align: center; font-size: 13px; }
+.platform-admin-screen .platform-modal { width: calc(100% - 40px); max-width: 410px; max-height: calc(100dvh - 40px); margin: auto; padding: 24px; overflow-y: auto; box-shadow: 0 12px 40px rgba(0,0,0,.16); }
+.platform-admin-screen .platform-modal::backdrop { background: var(--wf-overlay, rgba(0,0,0,.5)); }
+.platform-admin-screen .platform-delete-modal { max-width: 460px; }
+.platform-admin-screen .platform-modal-heading { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 22px; }
+.platform-admin-screen .platform-modal-heading > div { min-width: 0; }
+.platform-admin-screen .platform-modal-heading h2 { margin: 0; color: var(--wf-strong); font-size: 19px; font-weight: 600; line-height: 1.4; }
+.platform-admin-screen .platform-modal-heading p { margin: 5px 0 0; color: var(--wf-muted); font-size: 12px; overflow-wrap: anywhere; }
+.platform-admin-screen .platform-modal-body { display: flex; flex-direction: column; gap: 10px; }
+.platform-admin-screen .platform-day-presets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.platform-admin-screen .platform-day-presets .wf-btn[aria-pressed=true] { color: var(--wf-primary-800); background: var(--wf-primary-50); border-color: var(--wf-primary-800); }
+.platform-admin-screen .platform-password-field { margin-top: 10px; }
+.platform-admin-screen .platform-password-field > span { display: flex; align-items: center; gap: 5px; }
+.platform-admin-screen .platform-password-field svg { flex: 0 0 auto; width: 13px; height: 13px; }
+.platform-admin-screen .platform-modal-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 22px; }
+.platform-admin-screen .platform-modal-actions .wf-btn { width: 100%; }
+.platform-admin-screen .platform-danger-icon { background: var(--wf-error-bg); color: var(--wf-text); }
+.platform-admin-screen .platform-delete-warning { margin: 0; padding: 14px; border-radius: 8px; color: var(--wf-text); background: var(--wf-error-bg); font-size: 13px; line-height: 1.7; }
+.platform-admin-screen .platform-payments { padding: 22px; }
+.platform-admin-screen .platform-payment-section + .platform-payment-section { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--wf-border); }
+.platform-admin-screen .platform-payment-section > p { max-width: 900px; margin: 9px 0 18px; font-size: 13px; line-height: 1.7; }
+.platform-admin-screen .platform-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--wf-border); border-radius: 8px; }
+.platform-admin-screen .platform-table { width: 100%; min-width: 650px; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.platform-admin-screen .platform-table th { padding: 12px 14px; color: var(--wf-muted); background: var(--wf-subtle); font-size: 12px; font-weight: 500; text-align: left; }
+.platform-admin-screen .platform-table td { padding: 14px; border-top: 1px solid var(--wf-border); color: var(--wf-text); vertical-align: top; overflow-wrap: anywhere; }
+.platform-admin-screen .platform-table strong { font-weight: 500; }
+.platform-admin-screen .platform-table-subtext { display: block; margin-top: 5px; color: var(--wf-muted); font-size: 11px; }
+.platform-admin-screen .platform-transaction { font-family: ui-monospace, Consolas, monospace; font-size: 11px; word-break: break-all; }
+.platform-admin-screen .platform-currency { margin-left: 5px; color: var(--wf-muted); font-size: 11px; }
+.platform-admin-screen .platform-table .platform-table-empty { padding: 32px 14px; text-align: center; color: var(--wf-muted); }
+.platform-admin-screen.platform-loading { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 300px; color: var(--wf-muted); }
+.platform-admin-screen .platform-spinner, .platform-admin-screen.platform-loading > svg { width: 20px; height: 20px; color: inherit; animation: platform-spin 1s linear infinite; }
+.platform-admin-screen .platform-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@keyframes platform-spin { to { transform: rotate(360deg); } }
+@media (max-width: 1199px) {
+  .platform-admin-screen .platform-company-row { align-items: flex-start; flex-wrap: wrap; }
+  .platform-admin-screen .platform-company-actions { margin-left: 52px; }
+  .platform-admin-screen .platform-users-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .platform-admin-screen .platform-tax { align-items: flex-start; flex-direction: column; }
+  .platform-admin-screen .platform-tax-upload { margin-left: 54px; }
+}
+@media (max-width: 767px) {
+  .platform-admin-screen .platform-content { gap: 16px; }
+  .platform-admin-screen .platform-heading { flex-direction: column; align-items: stretch; gap: 16px; }
+  .platform-admin-screen .platform-search { flex: none; width: 100%; min-width: 0; }
+  .platform-admin-screen .platform-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .platform-admin-screen .platform-stat { padding: 14px; }
+  .platform-admin-screen .platform-stat-label { gap: 6px; font-size: 12px; }
+  .platform-admin-screen .platform-stat strong { font-size: 25px; }
+  .platform-admin-screen .platform-tabs { width: 100%; gap: 2px; overflow-x: auto; }
+  .platform-admin-screen .platform-tabs .wf-btn { flex: 1 0 auto; gap: 5px; min-height: 42px; padding: 8px; font-size: 12px; }
+  .platform-admin-screen .platform-tabs .wf-btn svg { width: 14px; height: 14px; }
+  .platform-admin-screen .platform-section-stack { gap: 16px; }
+  .platform-admin-screen .platform-tax, .platform-admin-screen .platform-payments { padding: 18px 16px; }
+  .platform-admin-screen .platform-tax-copy { gap: 10px; }
+  .platform-admin-screen .platform-tax .wf-section-title { font-size: 16px; }
+  .platform-admin-screen .platform-tax .platform-section-icon { width: 32px; height: 32px; }
+  .platform-admin-screen .platform-tax .platform-section-icon svg { width: 17px; height: 17px; }
+  .platform-admin-screen .platform-tax-upload { width: 100%; margin-left: 0; }
+  .platform-admin-screen .platform-tax-meta { gap: 7px 9px; }
+  .platform-admin-screen .platform-panel-head { gap: 9px; padding: 18px 16px; }
+  .platform-admin-screen .platform-company-row { gap: 14px; padding: 18px 16px; }
+  .platform-admin-screen .platform-company-summary { width: 100%; flex: 1 0 100%; }
+  .platform-admin-screen .platform-company-avatar { width: 34px; height: 34px; }
+  .platform-admin-screen .platform-company-name { font-size: 14px; }
+  .platform-admin-screen .platform-company-actions { width: 100%; margin-left: 0; }
+  .platform-admin-screen .platform-company-actions .wf-btn { min-height: 42px; }
+  .platform-admin-screen .platform-company-actions .wf-btn:not(.platform-company-delete) { flex: 1; }
+  .platform-admin-screen .platform-company-actions .platform-company-delete { width: 42px; }
+  .platform-admin-screen .platform-company-details { padding: 0 16px 18px; }
+  .platform-admin-screen .platform-users-grid { grid-template-columns: minmax(0, 1fr); }
+  .platform-admin-screen .platform-user-card { padding: 12px; }
+  .platform-admin-screen .platform-user-card .platform-reset-button { min-height: 40px; }
+  .platform-admin-screen .platform-users-content { padding: 16px; }
+  .platform-admin-screen .platform-modal { width: calc(100% - 32px); max-height: calc(100dvh - 32px); padding: 20px; }
+  .platform-admin-screen .platform-modal-heading { gap: 10px; }
+  .platform-admin-screen .platform-modal .wf-input { min-height: 44px; font-size: 16px; }
+  .platform-admin-screen .platform-modal-actions .wf-btn { min-height: 44px; }
+}
+@media (max-width: 359px) {
+  .platform-admin-screen .platform-tabs .wf-btn svg { display: none; }
+  .platform-admin-screen .platform-tabs .wf-btn { padding-inline: 7px; font-size: 11px; }
+  .platform-admin-screen .platform-user-card { flex-wrap: wrap; }
+  .platform-admin-screen .platform-user-card .platform-reset-button { margin-left: 42px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .platform-admin-screen .platform-spinner { animation: none; }
+}

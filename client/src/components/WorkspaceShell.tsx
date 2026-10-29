@@ -14,6 +14,7 @@ const workflowTitles: Record<string, string> = {
   '/leave': '휴가신청', '/expense': '지출결의 신청', '/documents': '서류발급',
   '/official-letters': '서류발급', '/board': '공지 게시판',
   '/admin/finance-stats': '지출결의 조회', '/admin/settings': '시스템 설정', '/subscription': '구독 관리',
+  '/super-admin': '플랫폼 관리',
 };
 
 /** Presentation shell only. Route guards and server authorization remain in their existing layers. */
@@ -21,7 +22,8 @@ export function WorkspaceShell({ profile, company, children }: {
   profile: UserData; company: CompanyData | null; children: ReactNode;
 }) {
   const { pathname } = useLocation();
-  const themed = profile.role !== 'SUPER_ADMIN' && Boolean(workflowTitles[pathname]);
+  const platformPage = profile.role === 'SUPER_ADMIN' && pathname === '/super-admin';
+  const themed = platformPage || (profile.role !== 'SUPER_ADMIN' && Boolean(workflowTitles[pathname]));
   const [mobileOpen, setMobileOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const sidebar = useRef<HTMLDivElement>(null);
@@ -61,10 +63,10 @@ export function WorkspaceShell({ profile, company, children }: {
     {mobileOpen && <button type="button" aria-label="메뉴 닫기 배경" className={`workspace-overlay fixed inset-0 z-30 md:hidden ${themed ? '' : 'bg-slate-900/60 backdrop-blur-sm'}`} onClick={closeMenu} />}
     <div className={`workspace-content flex-1 min-w-0 h-full ${themed ? 'wf-content' : 'overflow-y-auto mt-[64px] md:mt-0 bg-slate-50 transition-all duration-300'}`}>
       {themed && <header className="wf-topbar">
-        <div className="wf-breadcrumb"><span>회사 업무</span><ChevronRight size={14} /><strong>{workflowTitles[pathname]}</strong></div>
-        <span className="wf-mobile-company">{company?.id === profile.companyId ? company.nameKo : 'HR Flow'}</span>
+        <div className="wf-breadcrumb"><span>{platformPage ? '플랫폼 운영' : '회사 업무'}</span><ChevronRight size={14} /><strong>{workflowTitles[pathname]}</strong></div>
+        <span className="wf-mobile-company">{platformPage ? '플랫폼 관리' : company?.id === profile.companyId ? company.nameKo : 'HR Flow'}</span>
         <div className="wf-account">
-          <NotificationBell currentUserId={profile.uid} onNavigate={() => setMobileOpen(false)} appearance="workflow" />
+          {!platformPage && <NotificationBell currentUserId={profile.uid} onNavigate={() => setMobileOpen(false)} appearance="workflow" />}
           <div className="wf-profile"><span className="wf-avatar" aria-hidden="true">{profile.name?.slice(0, 1) || 'H'}</span><span>{profile.name}<small>{getRoleDisplayName(profile, company)}</small></span></div>
           <button ref={menuButton} type="button" className="wf-mobile-toggle wf-icon-button" onClick={() => setMobileOpen(value => !value)} aria-label={mobileOpen ? '메뉴 닫기' : '메뉴 열기'} aria-expanded={mobileOpen} aria-controls={sidebarId}>{mobileOpen ? <X size={20} /> : <Menu size={20} />}</button>
         </div>

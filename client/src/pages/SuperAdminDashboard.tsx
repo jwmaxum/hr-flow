@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuthStore } from '../store/authStore';
@@ -15,6 +15,8 @@ import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { setDoc } from 'firebase/firestore';
 import { functions, auth } from '../firebase';
+import { Button, Input, PageHeading, PageTitle, Panel, StatusBadge } from '../components/ui';
+import './SuperAdminDashboard.css';
 
 interface BackendStatus { version: string; deployedAt: string }
 interface PaymentRecord {
@@ -345,618 +347,249 @@ export const SuperAdminDashboard: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-slate-50 min-h-screen">
-        <div className="flex flex-col items-center gap-6">
-          <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin" />
-          <p className="text-slate-500 font-black tracking-tight text-lg">플랫폼 데이터 로딩 중...</p>
-        </div>
+      <div className="wf-page platform-admin-screen platform-loading" role="status" aria-live="polite">
+        <Loader2 className="platform-spinner" aria-hidden="true" />
+        <p>플랫폼 데이터 로딩 중...</p>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 p-4 md:p-10 bg-slate-50 min-h-screen">
-      <div className="max-w-7xl mx-auto space-y-10">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-          <div className="space-y-2">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-violet-600 rounded-2xl text-white shadow-xl shadow-violet-100">
-                <Shield className="w-6 h-6" />
-              </div>
-              <div>
-                <h1 className="text-3xl font-black text-slate-900 tracking-tight">플랫폼 관리 센터</h1>
-                {backendStatus && (
-                  <p className="text-[10px] font-bold text-violet-500 mt-0.5">
-                    Backend v{backendStatus.version} • Deployed: {new Date(backendStatus.deployedAt).toLocaleString()}
-                  </p>
-                )}
-              </div>
-            </div>
-            <p className="text-slate-500 font-medium">전체 조직 및 테넌트를 관리합니다. • {userData ? getRoleDisplayName(userData) : 'SYSTEM_ADMIN'}</p>
+    <div className="wf-page platform-admin-screen">
+      <div className="platform-content">
+        <PageHeading className="platform-heading">
+          <div className="platform-heading-copy">
+            <span className="platform-eyebrow"><Shield aria-hidden="true" /> {userData ? getRoleDisplayName(userData) : 'SYSTEM_ADMIN'}</span>
+            <PageTitle>플랫폼 관리 센터</PageTitle>
+            <p className="wf-muted">전체 조직의 이용 현황과 사용자, 결제 및 구독을 관리합니다.</p>
+            {backendStatus && (
+              <p className="platform-backend">Backend v{backendStatus.version} · 배포 {new Date(backendStatus.deployedAt).toLocaleString()}</p>
+            )}
           </div>
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-              <input
-                type="text"
-                placeholder="조직 검색..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-64 pl-12 pr-5 py-3.5 bg-white border border-slate-200 rounded-2xl focus:border-violet-500 focus:ring-4 focus:ring-violet-50/50 outline-none transition-all font-bold text-slate-700"
-              />
-            </div>
-          </div>
+          <label className="platform-search" htmlFor="platform-company-search">
+            <span className="platform-sr-only">조직명 또는 도메인 검색</span>
+            <Search aria-hidden="true" />
+            <Input id="platform-company-search" type="search" placeholder="조직 검색..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+          </label>
+        </PageHeading>
+
+        <div className="platform-metrics" aria-label="플랫폼 이용 현황">
+          <Panel className="platform-stat">
+            <div className="platform-stat-label"><Building2 aria-hidden="true" /><span>전체 조직</span></div>
+            <p><strong>{companies.length}</strong><span>개</span></p>
+          </Panel>
+          <Panel className="platform-stat">
+            <div className="platform-stat-label"><TrendingUp aria-hidden="true" /><span>활성 조직</span></div>
+            <p><strong>{activeCompanies}</strong><span>개</span></p>
+          </Panel>
+          <Panel className="platform-stat">
+            <div className="platform-stat-label"><Users aria-hidden="true" /><span>전체 사용자</span></div>
+            <p><strong>{totalUsers}</strong><span>명</span></p>
+          </Panel>
+          <Panel className="platform-stat">
+            <div className="platform-stat-label"><AlertTriangle aria-hidden="true" /><span>정지 조직</span></div>
+            <p><strong>{companies.length - activeCompanies}</strong><span>개</span></p>
+          </Panel>
         </div>
 
-        {/* 통계 카드 */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="bg-white rounded-3xl p-6 shadow-lg border border-slate-100">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-violet-50 rounded-xl flex items-center justify-center">
-                <Building2 className="w-5 h-5 text-violet-600" />
-              </div>
-              <span className="text-xs font-black text-slate-400 uppercase tracking-wider">전체 조직</span>
-            </div>
-            <p className="text-4xl font-black text-slate-900">{companies.length}</p>
-          </div>
-          <div className="bg-white rounded-3xl p-6 shadow-lg border border-slate-100">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-                <TrendingUp className="w-5 h-5 text-emerald-600" />
-              </div>
-              <span className="text-xs font-black text-slate-400 uppercase tracking-wider">활성 조직</span>
-            </div>
-            <p className="text-4xl font-black text-emerald-600">{activeCompanies}</p>
-          </div>
-          <div className="bg-white rounded-3xl p-6 shadow-lg border border-slate-100">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center">
-                <Users className="w-5 h-5 text-indigo-600" />
-              </div>
-              <span className="text-xs font-black text-slate-400 uppercase tracking-wider">전체 사용자</span>
-            </div>
-            <p className="text-4xl font-black text-slate-900">{totalUsers}</p>
-          </div>
-          <div className="bg-white rounded-3xl p-6 shadow-lg border border-slate-100">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-amber-600" />
-              </div>
-              <span className="text-xs font-black text-slate-400 uppercase tracking-wider">정지 조직</span>
-            </div>
-            <p className="text-4xl font-black text-amber-600">{companies.length - activeCompanies}</p>
-          </div>
-        </div>
-
-        {/* Tab Selector */}
-        <div className="flex items-center gap-2 p-1.5 bg-white rounded-2xl shadow-sm border border-slate-100 w-fit">
-          <button 
-            onClick={() => setActiveTab('COMPANIES')}
-            className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all ${
-              activeTab === 'COMPANIES' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            조직 관리
-          </button>
-          <button 
-            onClick={() => setActiveTab('PAYMENTS')}
-            className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all ${
-              activeTab === 'PAYMENTS' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            결제 및 구독 내역
-          </button>
-          <button 
-            onClick={() => setActiveTab('USERS')}
-            className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all ${
-              activeTab === 'USERS' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            전체 사용자 관리
-          </button>
-        </div>
+        <nav className="platform-tabs" aria-label="플랫폼 관리 구분">
+          <Button aria-pressed={activeTab === 'COMPANIES'} onClick={() => setActiveTab('COMPANIES')}><Building2 aria-hidden="true" />조직 관리</Button>
+          <Button aria-pressed={activeTab === 'PAYMENTS'} onClick={() => setActiveTab('PAYMENTS')}><CreditCard aria-hidden="true" />결제 및 구독 내역</Button>
+          <Button aria-pressed={activeTab === 'USERS'} onClick={() => setActiveTab('USERS')}><Users aria-hidden="true" />전체 사용자 관리</Button>
+        </nav>
 
         {activeTab === 'COMPANIES' && (
-          <>
-            {/* 세액표 관리 섹션 (기존 코드 유지) */}
-        <div className="bg-slate-900 rounded-[2.5rem] p-8 shadow-2xl text-white border border-slate-800">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="flex items-center gap-4">
-              <div className="p-4 bg-indigo-600 rounded-3xl shadow-lg">
-                <Calendar className="w-8 h-8" />
-              </div>
-              <div>
-                <h2 className="text-xl font-black tracking-tight">국세청 근로소득 간이세액표 관리</h2>
-                <div className="flex items-center gap-3 mt-1.5">
-                  <span className="text-xs font-bold text-indigo-300 bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-500/30">
-                    현재 버전: {taxTableInfo?.updateDate || '미등록'}
-                  </span>
-                  {taxTableInfo?.fileName && (
-                    <span className="text-[10px] font-black text-indigo-400/80 bg-white/5 px-2 py-1 rounded-lg border border-white/10 flex items-center gap-1.5">
-                      <Briefcase className="w-2.5 h-2.5" />
-                      적용 파일: {taxTableInfo.fileName}
-                    </span>
-                  )}
-                  <span className="text-xs font-bold text-slate-400">
-                    데이터 수: {taxTableInfo?.count || 0}개 구간
-                  </span>
+          <div className="platform-section-stack">
+            <Panel as="section" className="platform-tax" aria-labelledby="platform-tax-title">
+              <div className="platform-tax-copy">
+                <span className="platform-section-icon"><Calendar aria-hidden="true" /></span>
+                <div>
+                  <h2 id="platform-tax-title" className="wf-section-title">국세청 근로소득 간이세액표 관리</h2>
+                  <div className="platform-tax-meta">
+                    <StatusBadge className="wf-status-info">현재 버전: {taxTableInfo?.updateDate || '미등록'}</StatusBadge>
+                    <span>데이터 수: {taxTableInfo?.count || 0}개 구간</span>
+                    {taxTableInfo?.fileName && <span className="platform-tax-file"><Briefcase aria-hidden="true" />적용 파일: {taxTableInfo.fileName}</span>}
+                  </div>
+                  <p className="wf-muted">국세청 제공 엑셀 서식(.xlsx)을 업로드하세요.</p>
                 </div>
               </div>
-            </div>
-            <div className="flex items-center gap-4">
-               <div className="text-right hidden lg:block">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Excel Support (xlsx)</p>
-                  <p className="text-xs text-slate-400 font-medium">국세청 제공 엑셀 서식을 그대로 업로드하세요</p>
-               </div>
-               <label className={`flex items-center gap-3 px-8 py-4 bg-white text-slate-900 rounded-2xl font-black text-sm cursor-pointer hover:bg-slate-100 transition-all shadow-xl ${isUploadingTaxTable ? 'opacity-50 pointer-events-none' : ''}`}>
-                  {isUploadingTaxTable ? <Loader2 className="w-5 h-5 animate-spin" /> : <Globe className="w-5 h-5 text-indigo-600" />}
-                  최신 세액표 엑셀 업로드
-                  <input type="file" accept=".xlsx" onChange={handleTaxTableUpload} className="hidden" />
-               </label>
-            </div>
-          </div>
-        </div>
+              <label className={`wf-btn wf-btn-primary platform-tax-upload ${isUploadingTaxTable ? 'platform-upload-busy' : ''}`}>
+                {isUploadingTaxTable ? <Loader2 className="platform-spinner" aria-hidden="true" /> : <Globe aria-hidden="true" />}
+                {isUploadingTaxTable ? '세액표 처리 중...' : '최신 세액표 엑셀 업로드'}
+                <input type="file" accept=".xlsx" onChange={handleTaxTableUpload} disabled={isUploadingTaxTable} className="platform-file-input" aria-label="최신 세액표 엑셀 업로드" />
+              </label>
+            </Panel>
 
-        {/* 조직 목록 */}
-        <div className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-hidden">
-          <div className="p-8 border-b border-slate-50 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-violet-50 text-violet-600 rounded-xl">
-                <Briefcase className="w-5 h-5" />
+            <Panel as="section" className="platform-companies" aria-labelledby="platform-companies-title">
+              <div className="wf-panel-head platform-panel-head">
+                <div className="platform-section-heading"><Briefcase aria-hidden="true" /><h2 id="platform-companies-title" className="wf-section-title">등록된 조직 목록</h2><StatusBadge>{filteredCompanies.length}개</StatusBadge></div>
+                <span className="wf-muted platform-panel-note">조직을 선택하면 소속 사용자를 확인할 수 있습니다.</span>
               </div>
-              <h2 className="text-xl font-black text-slate-800 tracking-tight">등록된 조직 목록</h2>
-              <span className="text-xs font-bold text-slate-400 bg-slate-50 px-3 py-1 rounded-full">{filteredCompanies.length}개</span>
-            </div>
-          </div>
-
-          {filteredCompanies.length === 0 ? (
-            <div className="p-20 text-center">
-              <Building2 className="w-16 h-16 text-slate-200 mx-auto mb-4" />
-              <p className="text-slate-400 font-bold text-lg">등록된 조직이 없습니다</p>
-              <p className="text-slate-300 text-sm mt-1">회원가입을 통해 새 조직이 생성됩니다</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-50">
-              {filteredCompanies.map((company) => {
-                const companyUsers = getUsersForCompany(company.id);
-                const isExpanded = selectedCompany === company.id;
-
-                return (
-                  <div key={company.id} className="hover:bg-slate-50/50 transition-all">
-                    <div 
-                      className="p-6 flex items-center justify-between cursor-pointer"
-                      onClick={() => setSelectedCompany(isExpanded ? null : company.id)}
-                    >
-                      <div className="flex items-center gap-5">
-                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-white text-lg ${
-                          company.status === 'ACTIVE' ? 'bg-indigo-600' : 'bg-slate-400'
-                        }`}>
-                          {company.nameEn?.[0]?.toUpperCase() || 'C'}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-3">
-                            <h3 className="text-lg font-black text-slate-900">{company.nameKo}</h3>
-                            <span className="text-xs font-bold text-slate-400">{company.nameEn}</span>
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                              company.status === 'ACTIVE' 
-                                ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
-                                : 'bg-rose-50 text-rose-600 border border-rose-100'
-                            }`}>
-                              {company.status}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-4 mt-1">
-                            <span className="text-xs text-slate-400 flex items-center gap-1">
-                              <Globe className="w-3 h-3" /> {company.domain}
-                            </span>
-                            <span className="text-xs text-slate-400 flex items-center gap-1">
-                              <Users className="w-3 h-3" /> {companyUsers.length}명
-                            </span>
-                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg border ${
-                              company.subscriptionStatus === 'ACTIVE' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                              company.subscriptionStatus === 'EXPIRED' ? 'bg-rose-50 text-rose-600 border-rose-100' :
-                              'bg-indigo-50 text-indigo-600 border-indigo-100'
-                            }`}>
-                              {company.subscriptionStatus || 'TRIAL'}
-                            </span>
-                            {calculateRemainingDays(company.subscriptionEndDate) !== null && (
-                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg border ${
-                                calculateRemainingDays(company.subscriptionEndDate)! > 0 ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 'bg-rose-50 text-rose-600 border-rose-100'
-                              }`}>
-                                {calculateRemainingDays(company.subscriptionEndDate)! > 0 ? `${calculateRemainingDays(company.subscriptionEndDate)}일 남음` : '만료됨'}
-                                {company.subscriptionEndDate && ` (~${new Date(company.subscriptionEndDate).toLocaleDateString()})`}
+              {filteredCompanies.length === 0 ? (
+                <div className="platform-empty"><Building2 aria-hidden="true" /><p>등록된 조직이 없습니다</p><span>회원가입을 통해 새 조직이 생성됩니다</span></div>
+              ) : (
+                <div className="platform-company-list">
+                  {filteredCompanies.map((company) => {
+                    const companyUsers = getUsersForCompany(company.id);
+                    const isExpanded = selectedCompany === company.id;
+                    return (
+                      <article key={company.id} className="platform-company">
+                        <div className="platform-company-row">
+                          <button type="button" className="platform-company-summary" aria-expanded={isExpanded} aria-controls={`platform-company-${company.id}`} onClick={() => setSelectedCompany(isExpanded ? null : company.id)}>
+                            <span className={`platform-company-avatar ${company.status === 'ACTIVE' ? 'platform-company-active' : ''}`}>{company.nameEn?.[0]?.toUpperCase() || 'C'}</span>
+                            <span className="platform-company-copy">
+                              <span className="platform-company-title"><span className="platform-company-name">{company.nameKo}</span><span className="platform-company-english">{company.nameEn}</span><StatusBadge className={company.status === 'ACTIVE' ? 'wf-status-success' : 'wf-status-error'}>{company.status}</StatusBadge></span>
+                              <span className="platform-company-meta">
+                                <span><Globe aria-hidden="true" />{company.domain}</span>
+                                <span><Users aria-hidden="true" />{companyUsers.length}명</span>
+                                <StatusBadge className={company.subscriptionStatus === 'ACTIVE' ? 'wf-status-success' : company.subscriptionStatus === 'EXPIRED' ? 'wf-status-error' : 'wf-status-info'}>{company.subscriptionStatus || 'TRIAL'}</StatusBadge>
+                                {calculateRemainingDays(company.subscriptionEndDate) !== null && (
+                                  <StatusBadge className={calculateRemainingDays(company.subscriptionEndDate)! > 0 ? 'wf-status-info' : 'wf-status-error'}>
+                                    {calculateRemainingDays(company.subscriptionEndDate)! > 0 ? `${calculateRemainingDays(company.subscriptionEndDate)}일 남음` : '만료됨'}
+                                    {company.subscriptionEndDate && ` (~${new Date(company.subscriptionEndDate).toLocaleDateString()})`}
+                                  </StatusBadge>
+                                )}
                               </span>
+                              <span className="platform-company-expand">{isExpanded ? '소속 사용자 접기' : '소속 사용자 보기'}</span>
+                            </span>
+                          </button>
+                          <div className="platform-company-actions">
+                            <Button className="platform-extend" onClick={(e) => { e.stopPropagation(); setSubscriptionTarget({ id: company.id, name: company.nameKo || '', currentEndDate: company.subscriptionEndDate || '' }); setShowSubscriptionModal(true); }}><Calendar aria-hidden="true" />기간 연장</Button>
+                            <Button className={company.status === 'ACTIVE' ? 'wf-btn-danger' : 'platform-activate'} onClick={(e) => { e.stopPropagation(); handleToggleStatus(company.id, company.status); }}>
+                              {company.status === 'ACTIVE' ? <><ToggleRight aria-hidden="true" />정지</> : <><ToggleLeft aria-hidden="true" />활성화</>}
+                            </Button>
+                            <Button className="platform-company-delete" onClick={(e) => { e.stopPropagation(); setDeleteTarget(company.id); setShowDeleteModal(true); }} title="모든 데이터 삭제" aria-label={`${company.nameKo} 모든 데이터 삭제`}><Trash2 aria-hidden="true" /></Button>
+                          </div>
+                        </div>
+                        {isExpanded && (
+                          <div id={`platform-company-${company.id}`} className="platform-company-details">
+                            <h3 className="platform-detail-title"><Crown aria-hidden="true" />소속 사용자 목록</h3>
+                            {companyUsers.length === 0 ? <p className="platform-inline-empty">사용자가 없습니다</p> : (
+                              <div className="platform-users-grid">
+                                {companyUsers.map(user => (
+                                  <div key={user.uid} className="platform-user-card">
+                                    <span className={`platform-user-avatar ${user.role === 'ADMIN' ? 'platform-admin-avatar' : ''}`}>{user.name?.[0] || '?'}</span>
+                                    <div className="platform-user-copy"><p className="platform-user-name" title={user.name}>{user.name}</p><p className="platform-user-email" title={user.email}>{user.email}</p><StatusBadge>{getRoleDisplayName(user, company)}</StatusBadge></div>
+                                    {user.role === 'ADMIN' && <Button className="platform-reset-button" onClick={(e) => { e.stopPropagation(); setResetTarget({uid: user.uid, name: user.name || ''}); setShowResetModal(true); }}><Key aria-hidden="true" />PW 초기화</Button>}
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={(e) => { 
-                            e.stopPropagation(); 
-                            setSubscriptionTarget({ id: company.id, name: company.nameKo || '', currentEndDate: company.subscriptionEndDate || '' }); 
-                            setShowSubscriptionModal(true); 
-                          }}
-                          className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-100"
-                        >
-                          <Calendar className="w-4 h-4" /> 기간 연장
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleToggleStatus(company.id, company.status); }}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                            company.status === 'ACTIVE'
-                              ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-100'
-                              : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100'
-                          }`}
-                        >
-                          {company.status === 'ACTIVE' ? (
-                            <><ToggleRight className="w-4 h-4" /> 정지</>
-                          ) : (
-                            <><ToggleLeft className="w-4 h-4" /> 활성화</>
-                          )}
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setDeleteTarget(company.id); setShowDeleteModal(true); }}
-                          className="p-2.5 bg-slate-100 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-xl transition-all border border-transparent hover:border-rose-100"
-                          title="모든 데이터 삭제"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* 확장: 회사 상세 (사용자 목록) */}
-                    {isExpanded && (
-                      <div className="px-6 pb-6 animate-in slide-in-from-top-2 duration-300">
-                        <div className="bg-slate-50 rounded-2xl border border-slate-100 p-5">
-                          <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                            <Crown className="w-4 h-4 text-indigo-500" /> 소속 사용자 목록
-                          </h4>
-                          {companyUsers.length === 0 ? (
-                            <p className="text-slate-400 text-sm py-4 text-center">사용자가 없습니다</p>
-                          ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                              {companyUsers.map(user => (
-                                <div key={user.uid} className="flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-100">
-                                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-black ${
-                                    user.role === 'ADMIN' ? 'bg-violet-600' : 
-                                    user.role === 'SUB_ADMIN' ? 'bg-indigo-600' : 'bg-slate-400'
-                                  }`}>
-                                    {user.name?.[0] || '?'}
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-black text-slate-800 truncate">{user.name}</p>
-                                    <p className="text-[10px] text-slate-400 truncate">{user.email}</p>
-                                  </div>
-                                  <div className="flex flex-col items-end gap-1.5">
-                                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${
-                                      user.role === 'ADMIN' ? 'bg-violet-50 text-violet-600' :
-                                      user.role === 'SUB_ADMIN' ? 'bg-indigo-50 text-indigo-600' :
-                                      'bg-slate-100 text-slate-500'
-                                    }`}>
-                                      {getRoleDisplayName(user, company)}
-                                    </span>
-                                    {user.role === 'ADMIN' && (
-                                      <button 
-                                        onClick={(e) => { e.stopPropagation(); setResetTarget({uid: user.uid, name: user.name || ''}); setShowResetModal(true); }}
-                                        className="p-1 px-1.5 bg-violet-600 text-white rounded-md hover:bg-violet-700 transition-all flex items-center gap-1 text-[9px] font-bold"
-                                        /**
-                                         * 관리자 권한으로 사용자의 비밀번호를 초기화합니다.
-                                         * 호출자는 반드시 'ADMIN' 권한을 가지고 있어야 합니다.
-                                         */
-                                      >
-                                        <Key className="w-2.5 h-2.5" /> PW 초기화
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </>
-    )}
-
-    {activeTab === 'USERS' && (
-          <div className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-hidden">
-            <div className="p-8 border-b border-slate-50 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
-                  <Users className="w-5 h-5" />
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
-                <h2 className="text-xl font-black text-slate-800 tracking-tight">전체 사용자 목록</h2>
-                <span className="text-xs font-bold text-slate-400 bg-slate-50 px-3 py-1 rounded-full">{allUsers.length}명</span>
-              </div>
-            </div>
-            <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {allUsers.sort((a,b) => (a.companyId || '').localeCompare(b.companyId || '')).map(user => (
-                  <div key={user.uid} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center gap-4">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white font-black text-lg ${
-                      user.role === 'SUPER_ADMIN' ? 'bg-amber-500' :
-                      user.role === 'ADMIN' ? 'bg-violet-600' : 'bg-slate-400'
-                    }`}>
-                      {user.name?.[0] || '?'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-black text-slate-900 truncate">{user.name}</p>
-                      <p className="text-xs text-slate-500 truncate">{user.email}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase">
-                          {user.companyId || 'No Company'}
-                        </span>
-                        <span className="text-[10px] font-black text-slate-400 uppercase">
-                          {getRoleDisplayName(user, companies.find(company => company.id === user.companyId))}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+              )}
+            </Panel>
           </div>
         )}
 
-
-      {/* 구독 기간 변경 모달 */}
-      {showSubscriptionModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] w-full max-w-sm p-8 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
-                <Calendar className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-xl font-black text-slate-900">사용기간 변경</h3>
-                <p className="text-xs text-slate-400 font-bold">{subscriptionTarget?.name}</p>
-              </div>
-            </div>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">연장할 기간 (일)</label>
-                <div className="flex items-center gap-2 mt-1">
-                  {[30, 90, 365].map(days => (
-                    <button
-                      key={days}
-                      onClick={() => setSubscriptionDaysToAdd(days)}
-                      className={`flex-1 py-2 rounded-xl text-xs font-black transition-all ${
-                        subscriptionDaysToAdd === days ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
-                      }`}
-                    >
-                      {days}일
-                    </button>
-                  ))}
-                  <input 
-                    type="number"
-                    value={subscriptionDaysToAdd}
-                    onChange={(e) => setSubscriptionDaysToAdd(parseInt(e.target.value) || 0)}
-                    className="w-20 p-2 text-center bg-slate-50 border border-slate-100 rounded-xl outline-none focus:border-indigo-500 transition-all font-bold text-sm"
-                  />
+        {activeTab === 'USERS' && (
+          <Panel as="section" className="platform-all-users" aria-labelledby="platform-users-title">
+            <div className="wf-panel-head platform-panel-head"><div className="platform-section-heading"><Users aria-hidden="true" /><h2 id="platform-users-title" className="wf-section-title">전체 사용자 목록</h2><StatusBadge>{allUsers.length}명</StatusBadge></div></div>
+            <div className="platform-users-grid platform-users-content">
+              {allUsers.sort((a,b) => (a.companyId || '').localeCompare(b.companyId || '')).map(user => (
+                <div key={user.uid} className="platform-user-card">
+                  <span className={`platform-user-avatar ${user.role === 'SUPER_ADMIN' || user.role === 'ADMIN' ? 'platform-admin-avatar' : ''}`}>{user.name?.[0] || '?'}</span>
+                  <div className="platform-user-copy"><p className="platform-user-name" title={user.name}>{user.name}</p><p className="platform-user-email" title={user.email}>{user.email}</p><div className="platform-user-tags"><StatusBadge>{user.companyId || 'No Company'}</StatusBadge><span>{getRoleDisplayName(user, companies.find(company => company.id === user.companyId))}</span></div></div>
                 </div>
-              </div>
-              <div>
-                <div className="flex items-center gap-2 mb-1.5 ml-1 mt-4">
-                  <Lock className="w-3 h-3 text-slate-400" />
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">본인 비밀번호 재확인</label>
-                </div>
-                <input 
-                  type="password" 
-                  value={subscriptionPassword}
-                  onChange={(e) => setSubscriptionPassword(e.target.value)}
-                  placeholder="비밀번호를 입력하세요"
-                  className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50/50 transition-all font-bold"
-                />
-              </div>
-              <div className="pt-2 flex flex-col gap-2">
-                <button 
-                  disabled={isUpdatingSubscription || !subscriptionPassword}
-                  onClick={handleSubscriptionUpdateWithAuth}
-                  className={`w-full p-4 bg-indigo-600 text-white rounded-2xl font-black text-sm shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 ${
-                    isUpdatingSubscription ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                >
-                  {isUpdatingSubscription ? (
-                    <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                  ) : '변경사항 저장'}
-                </button>
-                <button 
-                  disabled={isUpdatingSubscription}
-                  onClick={() => { setShowSubscriptionModal(false); setSubscriptionPassword(''); }}
-                  className="w-full p-4 text-slate-400 font-bold text-sm hover:bg-slate-50 rounded-2xl transition-all"
-                >
-                  취소
-                </button>
-              </div>
+              ))}
             </div>
-          </div>
-        </div>
-      )}
+          </Panel>
+        )}
 
-      {/* 비밀번호 초기화 모달 */}
-      {showResetModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] w-full max-w-sm p-8 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="p-3 bg-violet-50 rounded-2xl text-violet-600">
-                <Key className="w-6 h-6" />
+        {showSubscriptionModal && (
+          <PlatformDialog titleId="platform-subscription-title" busy={isUpdatingSubscription} onClose={() => { setShowSubscriptionModal(false); setSubscriptionPassword(''); }}>
+              <div className="platform-modal-heading"><span className="platform-section-icon"><Calendar aria-hidden="true" /></span><div><h2 id="platform-subscription-title">사용기간 변경</h2><p>{subscriptionTarget?.name}</p></div></div>
+              <div className="platform-modal-body">
+                <label className="wf-field" htmlFor="platform-subscription-days">연장할 기간 (일)</label>
+                <div className="platform-day-presets">{[30, 90, 365].map(days => <Button key={days} aria-pressed={subscriptionDaysToAdd === days} onClick={() => setSubscriptionDaysToAdd(days)}>{days}일</Button>)}</div>
+                <Input id="platform-subscription-days" type="number" value={subscriptionDaysToAdd} onChange={(e) => setSubscriptionDaysToAdd(parseInt(e.target.value) || 0)} />
+                <label className="wf-field platform-password-field" htmlFor="platform-subscription-password"><span><Lock aria-hidden="true" />본인 비밀번호 재확인</span><Input id="platform-subscription-password" type="password" value={subscriptionPassword} onChange={(e) => setSubscriptionPassword(e.target.value)} placeholder="비밀번호를 입력하세요" autoComplete="current-password" autoFocus data-platform-initial-focus /></label>
               </div>
-              <div>
-                <h3 className="text-xl font-black text-slate-900">비밀번호 초기화</h3>
-                <p className="text-xs text-slate-400 font-bold">{resetTarget?.name}님</p>
-              </div>
-            </div>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">새 임시 비밀번호</label>
-                <input 
-                  type="text" 
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="최소 12자 이상"
-                  className="w-full mt-1 p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-50/50 transition-all font-bold"
-                />
-              </div>
-              <div className="pt-2 flex flex-col gap-2">
-                <button 
-                  onClick={handleResetPassword}
-                  className="w-full p-4 bg-violet-600 text-white rounded-2xl font-black text-sm shadow-xl shadow-violet-100 hover:bg-violet-700 transition-all"
-                >
-                  변경사항 저장
-                </button>
-                <button 
-                  onClick={() => setShowResetModal(false)}
-                  className="w-full p-4 text-slate-400 font-bold text-sm hover:bg-slate-50 rounded-2xl transition-all"
-                >
-                  취소
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+              <div className="platform-modal-actions"><Button className="wf-btn-primary" disabled={isUpdatingSubscription || !subscriptionPassword} onClick={handleSubscriptionUpdateWithAuth}>{isUpdatingSubscription ? <><Loader2 className="platform-spinner" aria-hidden="true" />저장 중...</> : '변경사항 저장'}</Button><Button disabled={isUpdatingSubscription} onClick={() => { setShowSubscriptionModal(false); setSubscriptionPassword(''); }}>취소</Button></div>
+          </PlatformDialog>
+        )}
 
-      {/* 조직 삭제 보안 모달 */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] w-full max-w-md p-8 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="p-4 bg-rose-50 rounded-2xl text-rose-600">
-                <Trash2 className="w-8 h-8" />
-              </div>
-              <div>
-                <h3 className="text-xl font-black text-slate-900">조직 데이터 전체 삭제</h3>
-                <p className="text-xs text-rose-500 font-bold">이 작업은 영구적이며 복구할 수 없습니다.</p>
-              </div>
-            </div>
-            
-            <div className="space-y-6">
-              <div className="p-4 bg-rose-50/50 border border-rose-100 rounded-2xl">
-                <p className="text-xs text-rose-700 font-medium leading-relaxed">
-                  해당 조직과 관련된 모든 데이터(직원, 근태, 결재, 휴가 등)가 파기되며, 소속된 모든 사용자의 인증 계정도 영구 삭제됩니다.
-                </p>
-              </div>
+        {showResetModal && (
+          <PlatformDialog titleId="platform-reset-title" onClose={() => setShowResetModal(false)}>
+              <div className="platform-modal-heading"><span className="platform-section-icon"><Key aria-hidden="true" /></span><div><h2 id="platform-reset-title">비밀번호 초기화</h2><p>{resetTarget?.name}님</p></div></div>
+              <div className="platform-modal-body"><label className="wf-field" htmlFor="platform-reset-password">새 임시 비밀번호<Input id="platform-reset-password" type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="최소 12자 이상" autoComplete="off" autoFocus data-platform-initial-focus /></label></div>
+              <div className="platform-modal-actions"><Button className="wf-btn-primary" onClick={handleResetPassword}>변경사항 저장</Button><Button onClick={() => setShowResetModal(false)}>취소</Button></div>
+          </PlatformDialog>
+        )}
 
-              <div>
-                <div className="flex items-center gap-2 mb-1.5 ml-1">
-                  <Lock className="w-3 h-3 text-slate-400" />
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">본인 비밀번호 재확인 ({userData ? getRoleDisplayName(userData) : 'SYSTEM_ADMIN'})</label>
-                </div>
-                <input 
-                  type="password" 
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  placeholder="비밀번호를 입력하세요"
-                  className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-rose-500 focus:ring-4 focus:ring-rose-50/50 transition-all font-bold"
-                />
-              </div>
+        {showDeleteModal && (
+          <PlatformDialog titleId="platform-delete-title" descriptionId="platform-delete-warning" className="platform-delete-modal" busy={isDeleting} onClose={() => { setShowDeleteModal(false); setAdminPassword(''); }}>
+              <div className="platform-modal-heading"><span className="platform-section-icon platform-danger-icon"><Trash2 aria-hidden="true" /></span><div><h2 id="platform-delete-title">조직 데이터 전체 삭제</h2><p>이 작업은 영구적이며 복구할 수 없습니다.</p></div></div>
+              <div className="platform-modal-body"><p id="platform-delete-warning" className="platform-delete-warning">해당 조직과 관련된 모든 데이터(직원, 근태, 결재, 휴가 등)가 파기되며, 소속된 모든 사용자의 인증 계정도 영구 삭제됩니다.</p><label className="wf-field platform-password-field" htmlFor="platform-delete-password"><span><Lock aria-hidden="true" />본인 비밀번호 재확인 ({userData ? getRoleDisplayName(userData) : 'SYSTEM_ADMIN'})</span><Input id="platform-delete-password" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="비밀번호를 입력하세요" autoComplete="current-password" autoFocus data-platform-initial-focus /></label></div>
+              <div className="platform-modal-actions"><Button className="wf-btn-danger" disabled={isDeleting || !adminPassword} onClick={handleDeleteCompanyData}>{isDeleting ? <><Loader2 className="platform-spinner" aria-hidden="true" />삭제 중...</> : '영구 삭제 실행'}</Button><Button disabled={isDeleting} onClick={() => { setShowDeleteModal(false); setAdminPassword(''); }}>취소</Button></div>
+          </PlatformDialog>
+        )}
 
-              <div className="flex flex-col gap-2">
-                <button 
-                  disabled={isDeleting || !adminPassword}
-                  onClick={handleDeleteCompanyData}
-                  className={`w-full p-4 bg-rose-600 text-white rounded-2xl font-black text-sm shadow-xl shadow-rose-100 hover:bg-rose-700 transition-all flex items-center justify-center gap-2 ${
-                    isDeleting ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                >
-                  {isDeleting ? (
-                    <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                  ) : '영구 삭제 실행'}
-                </button>
-                <button 
-                  disabled={isDeleting}
-                  onClick={() => { setShowDeleteModal(false); setAdminPassword(''); }}
-                  className="w-full p-4 text-slate-400 font-bold text-sm hover:bg-slate-50 rounded-2xl transition-all"
-                >
-                  취소
-                </button>
+        {activeTab === 'PAYMENTS' && (
+          <Panel as="section" className="platform-payments" aria-labelledby="platform-claims-title">
+            <section className="platform-payment-section">
+              <h2 id="platform-claims-title" className="wf-section-title">결제 확인 요청</h2>
+              <p className="wf-muted">아래 거래 ID는 고객 브라우저에서 접수된 신고입니다. PayPal 관리 화면에서 거래와 금액을 확인한 뒤 조직별 구독 기간을 연장하세요.</p>
+              <div className="platform-table-wrap" role="region" aria-label="결제 확인 요청 목록" tabIndex={0}>
+                <table className="platform-table"><caption className="platform-sr-only">접수된 PayPal 결제 확인 요청</caption><thead><tr><th scope="col">조직 / 관리자</th><th scope="col">PayPal 거래 ID</th><th scope="col">접수 시각</th></tr></thead><tbody>
+                  {paymentClaims.map(claim => <tr key={claim.id}><td>{claim.companyName} ({claim.adminName})</td><td className="platform-transaction">{claim.orderId}</td><td>{claim.createdAt?.seconds ? new Date(claim.createdAt.seconds * 1000).toLocaleString() : '-'}</td></tr>)}
+                  {paymentClaims.length === 0 && <tr><td colSpan={3} className="platform-table-empty">접수된 요청이 없습니다.</td></tr>}
+                </tbody></table>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'PAYMENTS' && (
-        <div className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-hidden p-8">
-           <h2 className="text-xl font-black text-slate-800 mb-3">결제 확인 요청</h2>
-           <p className="text-slate-500 text-sm mb-5">
-             아래 거래 ID는 고객 브라우저에서 접수된 신고입니다. PayPal 관리 화면에서 거래와 금액을 확인한 뒤 조직별 구독 기간을 연장하세요.
-           </p>
-           <div className="overflow-x-auto mb-10">
-             <table className="w-full text-left text-sm">
-               <thead><tr className="border-b border-slate-100 text-slate-500">
-                 <th className="p-3">조직 / 관리자</th><th className="p-3">PayPal 거래 ID</th><th className="p-3">접수 시각</th>
-               </tr></thead>
-               <tbody>
-                 {paymentClaims.map(claim => (
-                   <tr key={claim.id} className="border-b border-slate-50">
-                     <td className="p-3">{claim.companyName} ({claim.adminName})</td>
-                     <td className="p-3 font-mono break-all">{claim.orderId}</td>
-                     <td className="p-3">{claim.createdAt?.seconds ? new Date(claim.createdAt.seconds * 1000).toLocaleString() : '-'}</td>
-                   </tr>
-                 ))}
-                 {paymentClaims.length === 0 && <tr><td colSpan={3} className="p-6 text-center text-slate-400">접수된 요청이 없습니다.</td></tr>}
-               </tbody>
-             </table>
-           </div>
-           <h2 className="text-xl font-black text-slate-800 mb-6 flex items-center gap-3">
-             <CreditCard className="w-6 h-6 text-indigo-600" /> 기존 결제 기록
-           </h2>
-           <p className="text-slate-400 text-sm font-medium mb-8">
-             각 조직의 ADMIN이 PayPal을 통해 결제한 내역입니다. 실제 입금 여부를 대조하여 구독 상태를 관리하세요.
-           </p>
-           
-           <div className="overflow-x-auto">
-             <table className="w-full text-left">
-               <thead>
-                 <tr className="border-b border-slate-50">
-                   <th className="pb-4 text-[10px] font-black text-slate-400 uppercase tracking-widest px-4">조직 / 관리자</th>
-                   <th className="pb-4 text-[10px] font-black text-slate-400 uppercase tracking-widest px-4">거래 ID</th>
-                   <th className="pb-4 text-[10px] font-black text-slate-400 uppercase tracking-widest px-4">금액 / 통화</th>
-                   <th className="pb-4 text-[10px] font-black text-slate-400 uppercase tracking-widest px-4">날짜</th>
-                 </tr>
-               </thead>
-               <tbody className="divide-y divide-slate-50">
-                 {payments.map(p => (
-                   <tr key={p.id} className="hover:bg-slate-50 transition-all">
-                     <td className="py-4 px-4">
-                       <div className="font-black text-slate-800">{p.companyName}</div>
-                       <div className="text-[10px] text-slate-400 font-bold">{p.adminName} ({p.adminEmail || p.adminUid})</div>
-                     </td>
-                     <td className="py-4 px-4 text-[10px] font-mono text-slate-400">{p.transactionId}</td>
-                     <td className="py-4 px-4">
-                       <span className="font-black text-indigo-600">${p.amount || '29.99'}</span>
-                       <span className="text-[10px] text-slate-400 ml-1">{p.currency}</span>
-                     </td>
-                     <td className="py-4 px-4 text-[10px] text-slate-500 font-bold">
-                       {p.createdAt ? new Date(p.createdAt.seconds * 1000).toLocaleString() : '-'}
-                     </td>
-                   </tr>
-                 ))}
-                 {payments.length === 0 && (
-                   <tr>
-                     <td colSpan={4} className="py-20 text-center text-slate-300 font-bold">
-                       결제 내역이 아직 없습니다.
-                     </td>
-                   </tr>
-                 )}
-               </tbody>
-             </table>
-           </div>
-        </div>
-      )}
+            </section>
+            <section className="platform-payment-section" aria-labelledby="platform-payments-title">
+              <h2 id="platform-payments-title" className="wf-section-title platform-section-heading"><CreditCard aria-hidden="true" />기존 결제 기록</h2>
+              <p className="wf-muted">각 조직의 ADMIN이 PayPal을 통해 결제한 내역입니다. 실제 입금 여부를 대조하여 구독 상태를 관리하세요.</p>
+              <div className="platform-table-wrap" role="region" aria-label="기존 결제 기록 목록" tabIndex={0}>
+                <table className="platform-table"><caption className="platform-sr-only">조직별 기존 결제 기록</caption><thead><tr><th scope="col">조직 / 관리자</th><th scope="col">거래 ID</th><th scope="col">금액 / 통화</th><th scope="col">날짜</th></tr></thead><tbody>
+                  {payments.map(p => <tr key={p.id}><td><strong>{p.companyName}</strong><span className="platform-table-subtext">{p.adminName} ({p.adminEmail || p.adminUid})</span></td><td className="platform-transaction">{p.transactionId}</td><td><strong>${p.amount || '29.99'}</strong><span className="platform-currency">{p.currency}</span></td><td>{p.createdAt ? new Date(p.createdAt.seconds * 1000).toLocaleString() : '-'}</td></tr>)}
+                  {payments.length === 0 && <tr><td colSpan={4} className="platform-table-empty">결제 내역이 아직 없습니다.</td></tr>}
+                </tbody></table>
+              </div>
+            </section>
+          </Panel>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
 };
+
+function PlatformDialog({ children, titleId, descriptionId, className = '', busy = false, onClose }: {
+  children: React.ReactNode;
+  titleId: string;
+  descriptionId?: string;
+  className?: string;
+  busy?: boolean;
+  onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (element && !element.open) element.showModal();
+    element?.querySelector<HTMLElement>('[data-platform-initial-focus]')?.focus({ preventScroll: true });
+    return () => {
+      if (element?.open) element.close();
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, []);
+  return (
+    <dialog ref={dialog} className={`wf-panel platform-modal ${className}`} aria-labelledby={titleId} aria-describedby={descriptionId}
+      onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
+      onKeyDown={event => {
+        if (event.key !== 'Tab') return;
+        const elements = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button,input,select,textarea,a[href],[tabindex]'))
+          .filter(element => element.tabIndex >= 0 && !element.matches(':disabled') && element.getClientRects().length > 0);
+        const index = elements.indexOf(document.activeElement as HTMLElement);
+        if (!elements.length) { event.preventDefault(); event.currentTarget.focus(); }
+        else if (event.shiftKey && index <= 0) { event.preventDefault(); elements[elements.length - 1].focus(); }
+        else if (!event.shiftKey && (index === -1 || index === elements.length - 1)) { event.preventDefault(); elements[0].focus(); }
+      }}>
+      {children}
+    </dialog>
+  );
+}
