@@ -73,6 +73,62 @@ test('attachment HTTP verifies bearer revocation, denies missing identity and li
   assert.ok(f.verification.every(entry => entry.checkRevoked === true)); assert.equal(f.files.size, 0);
 });
 
+test('both production origins allow attachment preflights but never authorize anonymous requests', async () => {
+  for (const origin of ['https://hr-flow.pages.dev', 'https://hr-flow-chj.pages.dev']) {
+    for (const [action, method] of [['upload', 'POST'], ['download', 'GET']]) {
+      const f = fixture();
+      const preflight = await f.invoke(action, null, { method: 'OPTIONS', headers: { Origin: origin } });
+      assert.equal(preflight.statusCode, 204);
+      assert.equal(preflight.headers['access-control-allow-origin'], origin);
+      assert.equal(preflight.headers.vary, 'Origin');
+      assert.equal(preflight.headers['access-control-allow-methods'], `${method}, OPTIONS`);
+      assert.equal(preflight.headers['access-control-allow-headers'], 'Authorization, Content-Type, X-File-Name');
+      assert.equal(preflight.headers['cache-control'], 'private, no-store');
+      const anonymous = await f.invoke(action, null, { headers: { Origin: origin } });
+      assert.equal(anonymous.statusCode, 401);
+      assert.equal(anonymous.headers['access-control-allow-origin'], origin);
+      assert.equal(f.verification.length, 0);
+      assert.equal(f.files.size, 0);
+    }
+  }
+});
+
+test('attachment CORS rejects lookalikes, suffixes, subdomains, non-HTTPS and alternate ports', async () => {
+  const origins = ['https://hr-flow-chj-pages.dev', 'https://hr-flow-chj.pages.dev.attacker.invalid',
+    'https://preview.hr-flow-chj.pages.dev', 'http://hr-flow-chj.pages.dev',
+    'https://hr-flow-chj.pages.dev:8443', 'https://other.pages.dev'];
+  for (const origin of origins) {
+    for (const action of ['upload', 'download']) {
+      const f = fixture();
+      for (const overrides of [{ method: 'OPTIONS' }, {}]) {
+        const response = await f.invoke(action, 'owner', { ...overrides, headers: { Origin: origin } });
+        assert.equal(response.statusCode, 403, `${action}: ${origin}`);
+        assert.equal(response.headers['access-control-allow-origin'], undefined);
+        assert.equal(response.headers['cache-control'], 'private, no-store');
+      }
+      assert.equal(f.verification.length, 0);
+      assert.equal(f.files.size, 0);
+    }
+  }
+});
+
+test('the new production origin retains attachment tenant and department authorization', async () => {
+  const f = fixture();
+  await f.seed();
+  const headers = { Origin: 'https://hr-flow-chj.pages.dev' };
+  for (const uid of ['foreign', 'wrong-division', 'peer', 'revoked']) {
+    const response = await f.invoke('download', uid, { headers });
+    assert.equal(response.statusCode, uid === 'revoked' ? 401 : 403);
+    assert.equal(response.headers['access-control-allow-origin'], headers.Origin);
+    assert.equal(Buffer.isBuffer(response.body), false);
+  }
+  const owner = await f.invoke('download', 'owner', { headers });
+  assert.equal(owner.statusCode, 200);
+  assert.deepEqual(owner.body, png);
+  assert.ok(f.verification.every(entry => entry.checkRevoked === true));
+  assert.equal(f.files.size, 1);
+});
+
 test('upload checks current account readiness, company status and entitlement before saving', async () => {
   for (const mutate of [
     f => f.records.get('UserProfile/owner').status = 'RESIGNED',

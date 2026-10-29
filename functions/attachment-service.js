@@ -1,7 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { authorizeContext, fail } = require('./security-context');
 const { createDraftingAttachments, MAX_BYTES, TYPES, filename, fileType } = require('./drafting-attachments');
-const origins = new Set(['https://hr-flow.pages.dev', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5176', 'http://127.0.0.1:5176']);
+const origins = new Set(['https://hr-flow.pages.dev', 'https://hr-flow-chj.pages.dev', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5176', 'http://127.0.0.1:5176']);
 function legacyAttachmentPath(url, bucketName) {
   try {
     const parsed = new URL(url);
