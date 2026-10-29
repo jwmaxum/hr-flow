@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="bazier-x-title">
+  <title id="bazier-x-title">Bazier X</title>
+  <rect width="64" height="64" rx="14" fill="#8F357C"/>
+  <path fill="#FFFFFF" fill-rule="evenodd" d="M10 14h10c7.5 0 12 3.8 12 9.4 0 3.6-1.6 5.9-4.1 7.3 3.2 1.4 5.1 4.3 5.1 8.5 0 6.6-4.7 10.8-12.5 10.8H10V14Zm7 7v7h3c3.4 0 5-1.3 5-3.6 0-2.2-1.6-3.4-5-3.4h-3Zm0 14v8h3.5c3.7 0 5.5-1.3 5.5-4 0-2.6-1.8-4-5.5-4H17Z"/>
+  <path fill="#FEEEFA" d="M35 17h7l13 30h-7L35 17Zm13 0h7L42 47h-7l13-30Z"/>
+</svg>
