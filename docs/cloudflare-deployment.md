@@ -57,7 +57,9 @@ Secrets 갱신 시 키 이름·성공 여부만 기록한다. Cloudflare 비밀�
 
 Firebase Authentication·Firestore·Storage·Cloud Functions는 기존 백엔드를 사용한다. 새 호스트를 Firebase Auth의 허용 도메인으로 확인하고, 첨부 HTTP API의 CORS에는 `https://hr-flow-chj.pages.dev`라는 정확한 출처를 허용한다. 기존 `https://hr-flow.pages.dev` 출처도 유지한다. `*.pages.dev` 전체를 허용하거나 인증·회사 검사 조건을 줄이지 않는다.
 
-새 호스트의 Auth 도메인 추가와 두 첨부 함수의 운영 배포는 별도 승인 대상이다. 이번 전환에서는 해당 운영 변경이 승인 대기 중이며, 승인·반영·검증이 끝나기 전까지 새 호스트의 로그인·첨부 연결 완료로 보고하지 않는다. 웹 소스 연결이나 환경변수 등록만으로 백엔드 반영이 완료되지는 않는다.
+새 호스트의 Auth 도메인 추가와 두 첨부 함수의 운영 배포는 별도 승인 대상이다. 2026-10-29 사용자 명시 승인 후 `weberp-8f25f`의 인증 허용 도메인에 `hr-flow-chj.pages.dev`를 추가하고 기존 도메인을 모두 보존했다. `uploadCompanyAttachment`, `downloadCompanyAttachment` 두 함수의 운영 배포도 완료했다.
+
+운영 API 요청 24건으로 새·기존 정확한 출처의 OPTIONS 204, 비로그인 GET/POST 401, 유사·접미·하위 도메인·HTTP·다른 포트 출처의 403과 ACAO 미반환을 확인했다. `private, no-store`, `nosniff`와 쿠키 권한 미추가도 확인했다. 새 출처로 Firebase 공개 설정을 재조회해 인증 허용 도메인 반영을 검증했다. 앞선 자동 검사 996건과 별도로 수행했으며, 운영 고객 자료를 조회·생성·수정하는 로그인·업로드 테스트는 하지 않았다.
 
 CORS 변경이 필요하면 `uploadCompanyAttachment`, `downloadCompanyAttachment` 두 HTTP 함수만 대상과 검증을 확인해 별도로 배포한다. 공문 발급 PDF의 callable API와 기존 다른 함수·Hosting을 함께 재배포할 이유는 없다. 새 웹 주소 등록은 R2 이전이나 Firestore 회사 데이터 이전을 뜻하지 않는다.
 
