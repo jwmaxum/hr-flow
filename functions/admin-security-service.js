@@ -1,5 +1,6 @@
 const { createHash } = require('node:crypto');
 const { authorizeContext, recentAuthentication, fail } = require('./security-context');
+const { isValidNewPassword, PASSWORD_LENGTH_ERROR } = require('./password-policy.mjs');
 
 function createAdminSecurityService({ db, auth, bucket, now = () => new Date() }) {
   const authorize = (request, options = {}) => authorizeContext({ db, request, now, roles: ['ADMIN', 'SUPER_ADMIN'], ...options });
@@ -26,9 +27,10 @@ function createAdminSecurityService({ db, auth, bucket, now = () => new Date() }
       const caller = await authorize(request);
       recentAuthentication(request, now);
       const { uid, password } = request.data || {};
-      if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/') || typeof password !== 'string' || password.length < 12 || password.length > 128) {
-        fail('invalid-argument', '유효한 UID와 12~128자 비밀번호가 필요합니다.');
+      if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/')) {
+        fail('invalid-argument', '유효한 사용자 ID가 필요합니다.');
       }
+      if (!isValidNewPassword(password)) fail('invalid-argument', PASSWORD_LENGTH_ERROR);
       const targetRef = db.collection('UserProfile').doc(uid), target = await targetRef.get();
       if (!target.exists || target.data().role === 'SUPER_ADMIN') fail('permission-denied', '관리할 수 없는 계정입니다.');
       if (caller.role !== 'SUPER_ADMIN' && (target.data().companyId !== caller.companyId || uid === caller.uid ||

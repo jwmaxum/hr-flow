@@ -2,6 +2,12 @@
 
 2026-10-29 기준 기본 저장소는 [jwmaxum/hr-flow](https://github.com/jwmaxum/hr-flow), 새 웹 주소는 [hr-flow-chj.pages.dev](https://hr-flow-chj.pages.dev/)다. 새 Cloudflare 계정의 Pages 프로젝트 이름은 `hr-flow`다. 기존 [hr-flow.pages.dev](https://hr-flow.pages.dev/)는 다른 계정의 기존 서비스이며 그대로 유지한다. 새 배포를 검증할 때 두 주소를 혼동하지 않는다.
 
+## 비밀번호 정책 반영
+
+- 웹과 Firebase Functions의 `accountSecurity`·`adminResetPassword`를 같은 배포 작업에서 검증한다. 새 비밀번호는 6~15자이며 대문자·소문자·숫자·특수문자 사용 여부를 요구하지 않는다.
+- 회원가입은 Firebase Auth에 직접 요청한다. 운영 Firebase Console의 Authentication → Settings → Password policy에서 최소 6자·최대 15자, 문자 종류 요구 없음으로 맞춘다. 기존 사용자가 현재 비밀번호로 로그인할 수 있게 로그인 시 강제 변경은 끈다.
+- 배포 후 테스트 계정으로 가입과 비밀번호 변경을 확인한다. 시스템 관리자 로그인 문의는 Auth 로그인 가능 상태와 Firestore `UserProfile`의 `mustChangePassword`·`sessionValidAfter`를 대조하고 실제 비밀번호나 해시는 기록하지 않는다.
+
 ## 빌드와 검증
 
 | 항목 | 값 |

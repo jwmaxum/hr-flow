@@ -74,13 +74,16 @@ function fixture(file, { values = {}, profile = {}, company = {}, failAuth = fal
         EmailAuthProvider: { credential(email) { return { email }; } },
         async reauthenticateWithCredential() { calls.push({ type: 'reauth' }); if (failAuth) throw new Error('local reauthentication failure'); },
         async verifyBeforeUpdateEmail(_user, email) { calls.push({ type: 'verifyEmail', email }); },
+        async createUserWithEmailAndPassword(_auth, _email, password) { calls.push({ type: 'signup', length: password.length }); return { user: auth.currentUser }; },
+        async sendEmailVerification() { calls.push({ type: 'verifySignupEmail' }); },
         signInWithEmailAndPassword() { throw new Error('page must reauthenticate the existing user'); },
       };
       if (name === 'firebase/firestore') return firestore;
       if (name === 'firebase/functions') return { httpsCallable(_functions, action) { return async payload => { calls.push({ type: 'callable', action, payload }); return { data: action === 'checkDomainAvailability' ? { available } : { success: true, successCount: 2, failCount: 0 } }; }; } };
       if (name.endsWith('/firebase')) return { auth, db: {}, functions: {} };
       if (name.endsWith('/store/authStore')) return { useAuthStore };
-      if (name.endsWith('/services/accountSecurityService')) return { accountSecurity: { async changePassword() { calls.push({ type: 'passwordChange' }); } } };
+      if (name.endsWith('/services/accountSecurityService')) return { saveCompanySignup: noop, accountSecurity: { async changePassword() { calls.push({ type: 'passwordChange' }); } } };
+      if (name.endsWith('/password-policy.mjs')) return require(path.resolve(path.dirname(filename), name));
       if (name === 'react-router-dom') return { HashRouter: 'HashRouter', Routes: 'Routes', Route: 'Route', Navigate: 'Navigate', useLocation: () => ({ pathname: values.path || '/dashboard' }), useNavigate: () => noop };
       if (name.endsWith('/utils/leaveCalculator')) return { calculateLeaveEntitlement: () => ({ totalEntitlement: 0 }) };
       if (name.endsWith('/utils/errors')) {
@@ -106,9 +109,17 @@ function types(result, found = []) {
   return found;
 }
 const event = { preventDefault() {} };
-const samplePassword = Buffer.alloc(16, 120).toString();
+const samplePassword = Buffer.alloc(15, 120).toString();
 
 test('administrator UI security and lifecycle regressions', async t => {
+  await t.test('company signup accepts either length boundary without requiring mixed characters', async () => {
+    for (const [password, accepted] of [['123456', true], ['!'.repeat(15), true], ['abcde', false], ['a'.repeat(16), false]]) {
+      const f = fixture('pages/Login.tsx', { values: { regEmail: 'owner@example.test', regName: 'Owner', regOrgKo: '테스트', regOrgEn: 'Example', regPassword: password, regConfirmPassword: password } });
+      await f.handlers.handleRegister(event);
+      assert.equal(f.calls.some(call => call.type === 'signup'), accepted);
+      assert.equal(f.calls.some(call => call.type === 'verifySignupEmail'), accepted);
+    }
+  });
   await t.test('pending password takes priority over expired subscription without mounting business layout', () => {
     for (const subscriptionStatus of ['TRIAL', 'EXPIRED']) {
       const f = fixture('App.tsx', { capture: false, profile: { mustChangePassword: true }, company: { subscriptionStatus }, values: { store: { sessionReady: false } } });
@@ -164,7 +175,7 @@ test('administrator UI security and lifecycle regressions', async t => {
     }
   });
   await t.test('manual password change reauthenticates and uses server before logout', async () => {
-    const f = fixture('pages/AdminSettings.tsx', { values: { newPassword: samplePassword, confirmPassword: samplePassword, verifyPassword: samplePassword } });
+    const f = fixture('pages/AdminSettings.tsx', { values: { newPassword: '123456', confirmPassword: '123456', verifyPassword: samplePassword } });
     await f.handlers.handleChangePassword(event);
     assert.deepEqual(f.calls.map(call => call.type), ['reauth', 'token', 'passwordChange', 'logout']);
   });
@@ -187,7 +198,7 @@ test('administrator UI security and lifecycle regressions', async t => {
     const f = fixture('pages/EmployeeManagement.tsx', { values: { loading: false } });
     await f.handlers.handleInitializePassword({ uid: 'member', name: 'Member' });
     assert.deepEqual(f.calls.slice(0, 3).map(call => call.type), ['reauth', 'token', 'callable']);
-    const call = f.calls[2]; assert.equal(call.action, 'adminResetPassword'); assert.equal(call.payload.uid, 'member'); assert.ok(call.payload.password.length >= 12);
+    const call = f.calls[2]; assert.equal(call.action, 'adminResetPassword'); assert.equal(call.payload.uid, 'member'); assert.ok(call.payload.password.length >= 12 && call.payload.password.length <= 15);
     assert.ok(!f.calls.some(call => call.type === 'updateDoc'));
   });
   await t.test('organization member deletion uses server and scoped audit after reauthentication', async () => {

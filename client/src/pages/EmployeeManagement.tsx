@@ -1,4 +1,5 @@
 import { Button, Input, PageTitle, Panel, Select, Textarea } from '../components/ui';
+import { PASSWORD_MAX_LENGTH } from '../../../functions/password-policy.mjs';
 import React, { useState, useEffect } from 'react';
 import { 
   Users, Search, Building, Filter, Trash2, UserX, UserCheck, Key, 
@@ -272,9 +273,9 @@ export const EmployeeManagement: React.FC = () => {
       if (!confirmationPassword || !auth.currentUser?.email) return;
       await reauthenticateWithCredential(auth.currentUser, EmailAuthProvider.credential(auth.currentUser.email, confirmationPassword));
       await auth.currentUser.getIdToken(true);
-      const randomBytes = crypto.getRandomValues(new Uint8Array(18));
+      const randomBytes = crypto.getRandomValues(new Uint8Array(12));
       const temporaryPassword = btoa(String.fromCharCode(...randomBytes))
-        .replace(/\+/g, '-').replace(/\//g, '_');
+        .replace(/\+/g, '-').replace(/\//g, '_').slice(0, PASSWORD_MAX_LENGTH);
       // 1. Firebase Cloud Function을 통해 실제 Auth 비밀번호 변경 시도
       const adminResetPassword = httpsCallable<{ uid: string; password: string }, { success: boolean; message?: string }>(functions, 'adminResetPassword');
       const result = await adminResetPassword({ uid: emp.uid, password: temporaryPassword });

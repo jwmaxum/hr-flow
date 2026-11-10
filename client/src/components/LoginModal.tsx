@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore';
 import { accountSecurity } from '../services/accountSecurityService';
 import { AlertCircle, X, KeyRound, Loader2, LogOut } from 'lucide-react';
 import { Button, Input } from './ui';
+import { isValidNewPassword, PASSWORD_LENGTH_ERROR, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from '../../../functions/password-policy.mjs';
 import '../styles/WorkflowTheme.css';
 import './LoginModal.css';
 
@@ -19,7 +20,7 @@ function PasswordChangeDialog({ manual, required }: { manual: boolean; required:
   async function change(event: FormEvent) {
     event.preventDefault(); setError('');
     if (newPassword !== confirmation) { setError('새 비밀번호가 일치하지 않습니다.'); return; }
-    if (newPassword.length < 12 || newPassword.length > 128) { setError('새 비밀번호는 12~128자로 입력해 주세요.'); return; }
+    if (!isValidNewPassword(newPassword)) { setError(PASSWORD_LENGTH_ERROR); return; }
     setWorking(true);
     try {
       const user = auth.currentUser;
@@ -50,9 +51,9 @@ function PasswordChangeDialog({ manual, required }: { manual: boolean; required:
       {error && <p role="alert" className="password-change-error"><AlertCircle size={18} aria-hidden="true" /><span>{error}</span></p>}
       <fieldset disabled={working} className="password-change-fields">
         {manual && <label className="wf-field" htmlFor="password-change-current">현재 비밀번호<Input id="password-change-current" type="password" autoComplete="current-password" required value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} data-password-initial-focus /></label>}
-        <label className="wf-field" htmlFor="password-change-new">새 비밀번호<Input id="password-change-new" type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={newPassword} onChange={event => setNewPassword(event.target.value)} data-password-initial-focus={!manual || undefined} aria-describedby="password-change-policy" /></label>
-        <label className="wf-field" htmlFor="password-change-confirmation">새 비밀번호 확인<Input id="password-change-confirmation" type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={confirmation} onChange={event => setConfirmation(event.target.value)} /></label>
-        <p id="password-change-policy" className="password-change-policy">12~128자를 입력해 주세요. 공통 초기 비밀번호를 새 비밀번호로 사용할 수 없습니다. 최근 로그인 시간이 오래되었다면 다시 로그인해 주세요.</p>
+        <label className="wf-field" htmlFor="password-change-new">새 비밀번호<Input id="password-change-new" type="password" autoComplete="new-password" required minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={newPassword} onChange={event => setNewPassword(event.target.value)} data-password-initial-focus={!manual || undefined} aria-describedby="password-change-policy" /></label>
+        <label className="wf-field" htmlFor="password-change-confirmation">새 비밀번호 확인<Input id="password-change-confirmation" type="password" autoComplete="new-password" required minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={confirmation} onChange={event => setConfirmation(event.target.value)} /></label>
+        <p id="password-change-policy" className="password-change-policy">{PASSWORD_LENGTH_ERROR} 문자 조합은 자유입니다. 최근 로그인 시간이 오래되었다면 다시 로그인해 주세요.</p>
         <Button type="submit" className="wf-btn-primary password-change-submit">{working && <Loader2 className="password-change-spinner" size={18} aria-hidden="true" />}비밀번호 변경 후 다시 로그인</Button>
       </fieldset>
     </form>

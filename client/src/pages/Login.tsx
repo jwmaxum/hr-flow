@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { CheckCircle2, Loader2, LogIn, UserPlus, AlertCircle, Mail, Lock, User, Building2, Globe, ArrowRight } from 'lucide-react';
 
 import { Button, Input, Panel, PageTitle } from '../components/ui';
+import { isValidNewPassword, PASSWORD_LENGTH_ERROR, PASSWORD_LENGTH_LABEL, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from '../../../functions/password-policy.mjs';
 import '../styles/WorkflowTheme.css';
 import './Login.css';
 
@@ -67,8 +68,8 @@ export const Login: React.FC = () => {
       setError('비밀번호가 일치하지 않습니다.');
       return;
     }
-    if (regPassword.length < 12 || regPassword.length > 128) {
-      setError('비밀번호는 12~128자로 입력해 주세요.');
+    if (!isValidNewPassword(regPassword)) {
+      setError(PASSWORD_LENGTH_ERROR);
       return;
     }
     if (!regName.trim() || !regOrgKo.trim() || !regOrgEn.trim()) {
@@ -163,14 +164,14 @@ export const Login: React.FC = () => {
               <div className="auth-entry-password-grid">
                 <div className="auth-entry-field">
                   <label htmlFor="register-password">비밀번호</label>
-                  <div className="auth-entry-control"><Lock aria-hidden="true" /><Input id="register-password" type="password" required minLength={12} maxLength={128} value={regPassword} onChange={(e) => setRegPassword(e.target.value)} placeholder="12자 이상" autoComplete="new-password" aria-describedby="register-password-note" /></div>
+                  <div className="auth-entry-control"><Lock aria-hidden="true" /><Input id="register-password" type="password" required minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={regPassword} onChange={(e) => setRegPassword(e.target.value)} placeholder={PASSWORD_LENGTH_LABEL} autoComplete="new-password" aria-describedby="register-password-note" /></div>
                 </div>
                 <div className="auth-entry-field">
                   <label htmlFor="register-password-confirm">비밀번호 확인</label>
-                  <div className="auth-entry-control"><Lock aria-hidden="true" /><Input id="register-password-confirm" type="password" required minLength={12} maxLength={128} value={regConfirmPassword} onChange={(e) => setRegConfirmPassword(e.target.value)} placeholder="재입력" autoComplete="new-password" aria-invalid={!!regConfirmPassword && regPassword !== regConfirmPassword} className={regConfirmPassword && regPassword !== regConfirmPassword ? 'auth-entry-invalid' : undefined} /></div>
+                  <div className="auth-entry-control"><Lock aria-hidden="true" /><Input id="register-password-confirm" type="password" required minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={regConfirmPassword} onChange={(e) => setRegConfirmPassword(e.target.value)} placeholder="재입력" autoComplete="new-password" aria-invalid={!!regConfirmPassword && regPassword !== regConfirmPassword} className={regConfirmPassword && regPassword !== regConfirmPassword ? 'auth-entry-invalid' : undefined} /></div>
                 </div>
               </div>
-              <p id="register-password-note" className="auth-entry-field-note auth-entry-password-note">비밀번호는 12~128자로 입력해 주세요.</p>
+              <p id="register-password-note" className="auth-entry-field-note auth-entry-password-note">{PASSWORD_LENGTH_ERROR} 문자 조합은 자유입니다.</p>
               <div className="auth-entry-section-label"><Building2 aria-hidden="true" /><span>조직 정보</span></div>
               <div className="auth-entry-field">
                 <label htmlFor="register-company-ko">조직명 (한글)</label>

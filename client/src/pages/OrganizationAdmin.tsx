@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { PASSWORD_LENGTH_LABEL } from '../../../functions/password-policy.mjs';
 import { 
   PlusCircle, Users, UserPlus, Loader2,
   Trash2, Building, X, Search, ChevronRight, Briefcase, ShieldCheck, History, Filter
@@ -234,7 +235,7 @@ export const OrganizationAdmin: React.FC = () => {
       
       // 3. 로그 기록 및 알림
       await logAction('CREATE_MEMBER', newUid, newEmp.name, `직원 등록 (${finalEmail}) / 최초 로그인 시 비밀번호 변경 필요`);
-      alert(`[안내] 신규 직원 계정이 생성되었습니다.\n아이디: ${finalEmail}\n임시 비밀번호: !123456\n\n* 해당 직원은 첫 로그인 시 12자 이상의 새 비밀번호로 의무적으로 변경해야 합니다.`);
+      alert(`[안내] 신규 직원 계정이 생성되었습니다.\n아이디: ${finalEmail}\n임시 비밀번호: !123456\n\n* 해당 직원은 첫 로그인 시 ${PASSWORD_LENGTH_LABEL}의 새 비밀번호로 변경해야 합니다.`);
       
       setShowEmployeeModal(false);
       setNewEmp({ name: '', email: '', teamId: '', joinDate: new Date().toISOString().split('T')[0] });

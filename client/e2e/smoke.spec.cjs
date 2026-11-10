@@ -386,7 +386,7 @@ test('required and manual password changes keep business gates, logout and new-p
       await actor.page.keyboard.press('Escape');
       await expect(dialog).toBeVisible();
     }
-    const nextPassword = `E2E-New!${randomUUID()}`;
+    const nextPassword = randomUUID().replaceAll('-', '').slice(0, key === 'requiredA' ? 6 : 15);
     try {
       if (key === 'passwordA') await dialog.getByLabel('현재 비밀번호', { exact: true }).fill(account.password);
       await dialog.getByLabel('새 비밀번호', { exact: true }).fill(nextPassword);

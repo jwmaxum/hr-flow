@@ -1,4 +1,5 @@
 import express from 'express';
+import { isValidNewPassword, PASSWORD_LENGTH_ERROR } from '../functions/password-policy.mjs';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { adminAuth, adminDb } from './firebaseAdmin';
@@ -66,9 +67,10 @@ app.post('/api/reset-password', authenticate, async (req: AuthenticatedRequest, 
     return res.status(400).json({ error: '사용자 UID와 새 비밀번호가 필요합니다.' });
   }
 
-  if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/') || typeof password !== 'string' || password.length < 12 || password.length > 128) {
-    return res.status(400).json({ error: '유효한 UID와 12~128자 비밀번호가 필요합니다.' });
+  if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/')) {
+    return res.status(400).json({ error: '유효한 사용자 ID가 필요합니다.' });
   }
+  if (!isValidNewPassword(password)) return res.status(400).json({ error: PASSWORD_LENGTH_ERROR });
 
   try {
     const db = adminDb;

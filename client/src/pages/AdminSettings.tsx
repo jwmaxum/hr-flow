@@ -1,4 +1,5 @@
 import { Button, Input, PageTitle, Panel, StatusBadge } from '../components/ui';
+import { isValidNewPassword, PASSWORD_LENGTH_ERROR, PASSWORD_LENGTH_LABEL, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from '../../../functions/password-policy.mjs';
 import React, { useState, useEffect } from 'react';
 import { Settings, Lock, AlertCircle, CheckCircle2, ShieldCheck, Key, Globe, Layout, Fingerprint, ShieldAlert, Users, Database, Clock, CloudDownload } from 'lucide-react';
 import { auth, db, functions } from '../firebase';
@@ -38,8 +39,8 @@ export const AdminSettings: React.FC = () => {
       setMessage({ type: 'error', text: '입력하신 두 비밀번호가 일치하지 않습니다.' });
       return;
     }
-    if (newPassword.length < 12) {
-      setMessage({ type: 'error', text: '보안을 위해 비밀번호는 최소 12자 이상이어야 합니다.' });
+    if (!isValidNewPassword(newPassword)) {
+      setMessage({ type: 'error', text: PASSWORD_LENGTH_ERROR });
       return;
     }
 
@@ -434,9 +435,12 @@ export const AdminSettings: React.FC = () => {
                            id="settings-new-password"
                            type="password"
                     required
+                    minLength={PASSWORD_MIN_LENGTH}
+                    maxLength={PASSWORD_MAX_LENGTH}
+                    autoComplete="new-password"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="최소 12자 이상"
+                    placeholder={PASSWORD_LENGTH_LABEL}
                     className="wf-input"
                   />
                 </div>
@@ -448,6 +452,9 @@ export const AdminSettings: React.FC = () => {
                            id="settings-confirm-password"
                            type="password"
                     required
+                    minLength={PASSWORD_MIN_LENGTH}
+                    maxLength={PASSWORD_MAX_LENGTH}
+                    autoComplete="new-password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="재입력 확인"

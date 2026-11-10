@@ -16,7 +16,7 @@ const db = getFirestore(app);
 const now = () => new Date('2026-10-24T02:00:00.000Z');
 const authTime = Math.floor(now().getTime() / 1000);
 const request = (uid, data = {}, token = {}) => ({ ...(uid ? { auth: { uid, token: { auth_time: authTime, ...token } } } : {}), data });
-const secret = 'Synthetic-test-password-2026!';
+const secret = 'Audit-2026-Test';
 const domainKey = value => createHash('sha256').update(value).digest('hex');
 const rejects = (promise, code) => assert.rejects(promise, error => error.code === code);
 
@@ -145,7 +145,7 @@ test('admin security server authorization and company lifecycle', async t => {
     });
     await t.test('platform password reset can manage tenant administrators but never platform accounts', async () => {
       const { service } = await fixture();
-      assert.equal((await service.resetPassword(request('root', { uid: 'admin', password: secret }))).success, true);
+      assert.equal((await service.resetPassword(request('root', { uid: 'admin', password: '!'.repeat(6) }))).success, true);
       assert.equal((await service.resetPassword(request('root', { uid: 'foreign-member', password: secret }))).success, true);
       await rejects(service.resetPassword(request('root', { uid: 'root', password: secret })), 'permission-denied');
     });
@@ -154,7 +154,7 @@ test('admin security server authorization and company lifecycle', async t => {
       for (const uid of [null, 'member', 'manager', 'retired', 'missing']) {
         await rejects(service.resetPassword(request(uid, { uid: 'member', password: secret })), uid ? 'permission-denied' : 'unauthenticated');
       }
-      for (const value of [{ uid: '../member', password: secret }, { uid: '', password: secret }, { uid: 'a'.repeat(129), password: secret }, { uid: 'member', password: 'short' }, { uid: 'member', password: 'x'.repeat(129) }]) {
+      for (const value of [{ uid: '../member', password: secret }, { uid: '', password: secret }, { uid: 'a'.repeat(129), password: secret }, { uid: 'member', password: 'short' }, { uid: 'member', password: 'x'.repeat(16) }]) {
         await rejects(service.resetPassword(request('admin', value)), 'invalid-argument');
       }
       for (const token of [{ auth_time: undefined }, { auth_time: authTime - 301 }, { auth_time: authTime + 31 }]) {

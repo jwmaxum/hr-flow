@@ -133,20 +133,20 @@ test('account session, company enrollment, password and directory security', asy
     });
     await t.test('password Auth failure does not clear the pending flag or revoke sessions', async () => {
       const f = await fixture(); f.auth.updateUser = async () => { throw Object.assign(new Error('Auth unavailable'), { code: 'auth/internal-error' }); };
-      await assert.rejects(f.call('pending', 'changePassword', { newPassword: 'Audit-generated-passphrase-2026' }));
+      await assert.rejects(f.call('pending', 'changePassword', { newPassword: 'Audit-2026-Test' }));
       const profile = (await db.doc('UserProfile/pending').get()).data();
       assert.equal(profile.mustChangePassword, true); assert.equal(profile.sessionValidAfter, undefined); assert.equal(f.events.length, 0);
     });
-    await t.test('password change requires recent active membership and a 12-128 character value', async () => {
+    await t.test('password change requires recent active membership and a 6–15 character value', async () => {
       const f = await fixture();
-      for (const newPassword of ['', 'too-short', 'x'.repeat(129), 123]) await denied(f.call('pending', 'changePassword', { newPassword }), 'invalid-argument');
-      await denied(f.call('pending', 'changePassword', { newPassword: 'Audit-generated-passphrase-2026' }, { auth_time: seconds - 301 }), 'failed-precondition');
-      for (const uid of ['retired', 'suspended']) await denied(f.call(uid, 'changePassword', { newPassword: 'Audit-generated-passphrase-2026' }), 'permission-denied');
+      for (const newPassword of ['', 'short', 'x'.repeat(16), 123]) await denied(f.call('pending', 'changePassword', { newPassword }), 'invalid-argument');
+      await denied(f.call('pending', 'changePassword', { newPassword: 'Audit-2026-Test' }, { auth_time: seconds - 301 }), 'failed-precondition');
+      for (const uid of ['retired', 'suspended']) await denied(f.call(uid, 'changePassword', { newPassword: 'Audit-2026-Test' }), 'permission-denied');
       assert.equal(f.events.length, 0);
     });
     await t.test('successful password change updates only its own server flag, revokes refresh tokens and blocks its old login', async () => {
       const f = await fixture();
-      const result = await f.call('pending', 'changePassword', { newPassword: 'Audit-generated-passphrase-2026', uid: 'member', mustChangePassword: true });
+      const result = await f.call('pending', 'changePassword', { newPassword: 'Audit-2026-Test', uid: 'member', mustChangePassword: true });
       assert.deepEqual(result, { success: true, signInAgain: true });
       assert.deepEqual(f.events.map(event => [event.type, event.uid]), [['update', 'pending'], ['revoke', 'pending']]);
       const profile = (await db.doc('UserProfile/pending').get()).data();
@@ -156,17 +156,33 @@ test('account session, company enrollment, password and directory security', asy
       await denied(f.call('pending', 'session', {}, { auth_time: seconds }), 'unauthenticated');
       assert.equal((await f.call('pending', 'session', {}, { auth_time: seconds + 1 })).businessAllowed, true);
     });
+    await t.test('platform administrator clears the initial password gate once and keeps access on subsequent logins', async () => {
+      const f = await fixture();
+      const ref = db.doc('UserProfile/platform');
+      await ref.update({ mustChangePassword: true });
+      assert.equal((await f.call('platform', 'session')).businessAllowed, false);
+      assert.equal((await f.call('platform', 'changePassword', { newPassword: '123456' })).success, true);
+      assert.equal((await ref.get()).data().mustChangePassword, false);
+      assert.deepEqual(f.events.map(event => [event.type, event.uid]), [['update', 'platform'], ['revoke', 'platform']]);
+      await denied(f.call('platform', 'session', {}, { auth_time: seconds }), 'unauthenticated');
+      for (const authTime of [seconds + 1, seconds + 10]) {
+        const session = await f.call('platform', 'session', {}, { auth_time: authTime });
+        assert.equal(session.businessAllowed, true);
+        assert.equal(session.profile.mustChangePassword, false);
+        assert.equal(session.profile.role, 'SUPER_ADMIN');
+      }
+    });
     await t.test('membership changes during Auth password update cannot clear a pending activation flag', async () => {
       const f = await fixture();
       f.auth.updateUser = async () => { await db.doc('UserProfile/pending').update({ status: 'RESIGNED' }); return {}; };
-      await denied(f.call('pending', 'changePassword', { newPassword: 'Audit-generated-passphrase-2026' }), 'permission-denied');
+      await denied(f.call('pending', 'changePassword', { newPassword: 'Audit-2026-Test' }), 'permission-denied');
       const profile = (await db.doc('UserProfile/pending').get()).data();
       assert.equal(profile.mustChangePassword, true); assert.equal(profile.sessionValidAfter, undefined); assert.equal(profile.status, 'RESIGNED');
     });
     await t.test('refresh-token revocation failure leaves the server cutoff enforced', async () => {
       const f = await fixture();
       f.auth.revokeRefreshTokens = async () => { throw Object.assign(new Error('Auth revoke unavailable'), { code: 'auth/internal-error' }); };
-      await assert.rejects(f.call('pending', 'changePassword', { newPassword: 'Audit-generated-passphrase-2026' }));
+      await assert.rejects(f.call('pending', 'changePassword', { newPassword: 'Audit-2026-Test' }));
       assert.equal((await db.doc('UserProfile/pending').get()).data().sessionValidAfter, seconds + 1);
       await denied(f.call('pending', 'session', {}, { auth_time: seconds }), 'unauthenticated');
     });

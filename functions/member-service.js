@@ -1,8 +1,8 @@
 const { HttpsError } = require('firebase-functions/v2/https');
 const { authorizeContext } = require('./security-context');
 
-// Deliberately restricted to newly created employee accounts. Permanent and
-// administrator-reset passwords keep their separate 12~128-character policy.
+// Deliberately restricted to newly created employee accounts. First sign-in
+// still requires changing this temporary password before using business features.
 const INITIAL_MEMBER_PASSWORD = '!123456';
 const fail = (code, message) => { throw new HttpsError(code, message); };
 const read = (db, reader, ref) => reader === db ? ref.get() : reader.get(ref);

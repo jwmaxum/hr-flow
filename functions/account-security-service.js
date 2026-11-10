@@ -1,6 +1,7 @@
 const { randomUUID, createHash } = require('node:crypto');
 const { Timestamp } = require('firebase-admin/firestore');
 const { authorizeContext, recentAuthentication, fail, milliseconds } = require('./security-context');
+const { isValidNewPassword, PASSWORD_LENGTH_ERROR } = require('./password-policy.mjs');
 const text = (value, max) => {
   if (typeof value !== 'string' || !value.trim() || value.length > max) fail('invalid-argument', '입력 내용을 확인해 주세요.');
   return value.trim();
@@ -68,8 +69,8 @@ function createAccountSecurityService({ db, auth, bucket, now = () => new Date()
     if (input.action === 'changePassword') {
       const initial = await authorize(request, { allowPendingPassword: true, allowExpired: true });
       recentAuthentication(request, now);
-      if (typeof input.newPassword !== 'string' || input.newPassword.length < 12 || input.newPassword.length > 128) {
-        fail('invalid-argument', '새 비밀번호는 12~128자로 입력해 주세요.');
+      if (!isValidNewPassword(input.newPassword)) {
+        fail('invalid-argument', PASSWORD_LENGTH_ERROR);
       }
       await auth.updateUser(request.auth.uid, { password: input.newPassword });
       await db.runTransaction(async tx => {

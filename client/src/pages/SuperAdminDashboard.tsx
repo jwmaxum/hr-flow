@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { isValidNewPassword, PASSWORD_LENGTH_ERROR, PASSWORD_LENGTH_LABEL, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from '../../../functions/password-policy.mjs';
 import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuthStore } from '../store/authStore';
@@ -159,8 +160,8 @@ export const SuperAdminDashboard: React.FC = () => {
 
   const handleResetPassword = async () => {
     if (!resetTarget || !newPassword) return;
-    if (newPassword.length < 12) {
-      alert('비밀번호는 최소 12자 이상이어야 합니다.');
+    if (!isValidNewPassword(newPassword)) {
+      alert(PASSWORD_LENGTH_ERROR);
       return;
     }
 
@@ -496,7 +497,7 @@ export const SuperAdminDashboard: React.FC = () => {
         {showResetModal && (
           <PlatformDialog titleId="platform-reset-title" onClose={() => setShowResetModal(false)}>
               <div className="platform-modal-heading"><span className="platform-section-icon"><Key aria-hidden="true" /></span><div><h2 id="platform-reset-title">비밀번호 초기화</h2><p>{resetTarget?.name}님</p></div></div>
-              <div className="platform-modal-body"><label className="wf-field" htmlFor="platform-reset-password">새 임시 비밀번호<Input id="platform-reset-password" type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="최소 12자 이상" autoComplete="off" autoFocus data-platform-initial-focus /></label></div>
+              <div className="platform-modal-body"><label className="wf-field" htmlFor="platform-reset-password">새 임시 비밀번호<Input id="platform-reset-password" type="text" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder={PASSWORD_LENGTH_LABEL} autoComplete="off" autoFocus data-platform-initial-focus /></label></div>
               <div className="platform-modal-actions"><Button className="wf-btn-primary" onClick={handleResetPassword}>변경사항 저장</Button><Button onClick={() => setShowResetModal(false)}>취소</Button></div>
           </PlatformDialog>
         )}
