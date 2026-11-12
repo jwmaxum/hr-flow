@@ -17,6 +17,8 @@ const { createErpImportService } = require('./erp-import-service');
 const { createErpCorrectionService } = require('./erp-correction-service');
 const { createErpReportService } = require('./erp-report-service');
 const { createErpDocumentService } = require('./erp-document-service');
+const { createErpFinanceService } = require('./erp-finance-service');
+const { createErpCustodyService } = require('./erp-custody-service');
 const { renderErpDocumentPdf } = require('./erp-document-pdf');
 
 initializeApp();
@@ -44,6 +46,8 @@ exports.manageOfficialLetters = callable((request, dep) => createOfficialLetterS
 exports.adminCreateMember = callable((request, dep) => createMemberService(dep)(request));
 exports.accountSecurity = callable((request, dep) => createAccountSecurityService(dep)(request));
 exports.manageErp = callable((request, dep) => createErpService(dep)(request));
+exports.manageErpFinance = callable((request, dep) => createErpFinanceService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
+exports.manageErpCustody = callable((request, dep) => createErpCustodyService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.manageErpImport = callable((request, dep) => createErpImportService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.manageErpCorrection = callable((request, dep) => createErpCorrectionService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.manageErpReport = callable((request, dep) => createErpReportService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });

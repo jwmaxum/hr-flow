@@ -50,7 +50,7 @@ test('ERP imports validate and atomically post to the authenticated company', as
     await t.test('manual receipts retain old and new prices, sum all warehouses, reuse IDs and allow identical later receipts', async () => {
       await reset(); await initialized();
       const job = await manualPreview(); assert.equal(job.source.kind, 'MANUAL'); assert.equal(job.preview.canCommit, true, JSON.stringify(job.preview.errors));
-      assert.deepEqual(job.preview.itemTotals.map(({ itemId, ...totals }) => totals), [{ beforeQuantity: 10, beforeValue: 1000, quantity: 20, value: 3000 }]);
+      assert.deepEqual(job.preview.itemTotals.map(({ itemId, name, ...totals }) => totals), [{ beforeQuantity: 10, beforeValue: 1000, quantity: 20, value: 3000 }]);
       assert.equal((await stock())[0].value, 1000);
       assert.equal((await manualPreview(manual(), job.id)).id, job.id);
       await reject(manualPreview(manual({ date: '2026-11-03' }), job.id), 'already-exists');

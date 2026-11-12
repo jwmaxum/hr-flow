@@ -3,7 +3,7 @@ import { auth, functions } from '../firebase';
 import { useAuthStore } from '../store/authStore';
 
 export type ErpImportType = 'OPENING' | 'MOVEMENTS';
-export interface ManualLine { code: string; name: string; specification: string; unit: string; taxType: string; quantity: string; price: string; notes: string }
+export interface ManualLine { code: string; name: string; specification: string; unit: string; taxType: string; quantity: string; price: string; notes: string; fulfillment?: 'DIRECT' | 'HOLD' | 'BORROW'; custodyLotId?: string; borrowValue?: string }
 export interface ManualMovement {
   direction: '입고' | '출고'; date: string; warehouseId: string; partnerId?: string;
   partner?: { code: string; name: string; country: string; registrationNumber: string };
@@ -20,6 +20,7 @@ export interface ErpImportRow {
   newItem?: boolean; newPartner?: boolean; value?: number; supply?: number; tax?: number; total?: number; cost?: number;
   beforeQuantity?: number; beforeValue?: number; afterQuantity?: number; afterValue?: number;
   partnerCandidates: { id: string; code: string; name: string }[];
+  stockMode?: string; bundle?: {itemId: string; code: string; name: string; quantityScaled: number; cost: number}[];
 }
 export interface ErpImport {
   id: string; companyId: string; type: ErpImportType; status: 'PENDING' | 'COMMITTED' | 'CANCELLED';
@@ -27,7 +28,7 @@ export interface ErpImport {
   createdAt: string; committedAt: string | null;
   preview: { fingerprint: string; rows: ErpImportRow[]; errors: ErpImportIssue[]; warnings: ErpImportIssue[];
     canCommit: boolean; newItems: number; newPartners: number;
-    itemTotals?: { itemId: string; beforeQuantity: number; beforeValue: number; quantity: number; value: number }[];
+    itemTotals?: { itemId: string; name?: string; beforeQuantity: number; beforeValue: number; quantity: number; value: number }[];
     balances: { itemId: string; warehouseId: string; beforeQuantity: number; beforeValue: number; quantity: number; value: number }[] };
 }
 export interface ErpImportSummary { id: string; type: ErpImportType; sourceKind?: 'XLSX' | 'MANUAL'; status: ErpImport['status']; name: string; createdAt: string; rowCount: number; errorCount: number }

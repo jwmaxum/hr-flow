@@ -71,6 +71,17 @@ async function inventory() {
 }
 
 test('ERP PDF issuance, source allocation and private archive', async t => { try {
+  await t.test('bundle statements show the sale once and preserve the company seal without printing component stock rows', async () => {
+    const existing = await reset();
+    await masters(request({action:'save',kind:'items',id:'bundle',expectedRevision:0,values:{code:'SET',name:'조합상품',unit:'SET',specification:'',purchasePrice:0,salePrice:500,taxType:'과세',group:'',notes:'',active:true,itemType:'BUNDLE',components:[{itemId:existing.itemId,quantity:'2'}]}}));
+    const movement={direction:'출고',date:'2026-11-12',warehouseId:'warehouse',partnerId:existing.partnerId,currency:'KRW',exchangeRate:'1',priceBasis:'세금별도',allowNewItems:false,allowNewPartners:false,
+      lines:[{code:'SET',name:'조합상품',specification:'',unit:'SET',taxType:'과세',quantity:'2',price:'500',notes:''}]};
+    const job=(await imports(request({action:'manualPreview',id:'bundle-statement',movement}))).import;assert.equal(job.preview.canCommit,true);
+    await imports(request({action:'commit',id:job.id,fingerprint:job.preview.fingerprint}));
+    const source=await call('sources',{documentNo:job.preview.rows[0].documentNo,kind:'STATEMENT'});assert.equal(source.rows.length,1);assert.equal(source.rows[0].name,'조합상품');
+    const before=await inventory(),draft=await save(input({...source,sourceId:source.rows[0].id},'STATEMENT','2')),issued=(await issue(draft)).document;
+    assert.equal(issued.totalMinor,1100);const stored=(await parent().collection('erpIssuedDocuments').doc(issued.id).get()).data();assert.equal(stored.snapshot.rows.length,1);assert.ok(stored.snapshot.branding.assets.seal);assert.deepEqual(await inventory(),before);
+  });
   await t.test('a manual outgoing transaction issues a statement with its sales price and the registered seal', async () => {
     const existing = await reset();
     const movement = { direction: '출고', date: '2026-11-12', warehouseId: 'warehouse', partnerId: existing.partnerId,

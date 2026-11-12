@@ -17,7 +17,7 @@ export interface ReportRow {
   openingQuantity?: number; inQuantity?: number; outQuantity?: number; adjustQuantity?: number; closingQuantity?: number;
   transferInQuantity?: number; transferOutQuantity?: number; transferInValue?: number; transferOutValue?: number; transferWarehouseName?: string;
   openingValue?: number; inValue?: number; outValue?: number; adjustValue?: number; closingValue?: number; salesKRW?: number; cogsKRW?: number; marginKRW?: number; averageInPrice?: number | null;
-  id?: string; date?: string; order?: number; rowNo?: number; type?: string; operationType?: string; direction?: string; documentNo?: string; sourceId?: string | null;
+  bundleParentId?: string; stockMode?: string; id?: string; date?: string; order?: number; rowNo?: number; type?: string; operationType?: string; direction?: string; documentNo?: string; sourceId?: string | null;
   sourceDocumentNo?: string; importId?: string | null; operationId?: string | null; quantityDelta?: number; balanceQuantity?: number; partnerName?: string; reason?: string;
   currency?: string; price?: number | null; supply?: number | null; tax?: number | null; total?: number | null; valueDelta?: number; balanceValue?: number;
   refundKRW?: number | null; refundSupply?: number | null; refundTax?: number | null; returnedQuantity?: number; cancelledBy?: string | null;

@@ -5,7 +5,7 @@ const { authorizeContext, fail } = require('./security-context');
 const COLLECTIONS = { items: 'erpItems', warehouses: 'erpWarehouses', partners: 'erpPartners' };
 const COMMON_FIELDS = ['code', 'name', 'active', 'notes'];
 const FIELDS = {
-  items: [...COMMON_FIELDS, 'specification', 'unit', 'purchasePrice', 'salePrice', 'taxType', 'group'],
+  items: [...COMMON_FIELDS, 'specification', 'unit', 'purchasePrice', 'salePrice', 'taxType', 'group', 'itemType', 'components'],
   warehouses: [...COMMON_FIELDS, 'address'],
   partners: [...COMMON_FIELDS, 'type', 'country', 'registrationNumber', 'contactName', 'email', 'phone', 'address'],
 };
@@ -38,6 +38,18 @@ function validate(kind, input) {
     Object.assign(data, { specification: text(input.specification, '규격', 160), unit: text(input.unit, '단위', 20, true),
       purchasePrice: price(input.purchasePrice, '매입단가'), salePrice: price(input.salePrice, '판매단가'),
       taxType: input.taxType, group: text(input.group, '그룹', 80), currency: 'KRW' });
+    data.itemType = input.itemType || 'STOCK'; data.components = [];
+    if (!['STOCK','BUNDLE'].includes(data.itemType)) fail('invalid-argument','품목 유형을 확인해 주세요.');
+    if (data.itemType === 'BUNDLE') {
+      if (!Array.isArray(input.components) || !input.components.length || input.components.length > 20) fail('invalid-argument','조합 구성품은 1~20개로 입력해 주세요.');
+      const seen = new Set();
+      data.components = input.components.map(row => {
+        if (!object(row) || Object.keys(row).some(key => !['itemId','quantity'].includes(key))) fail('invalid-argument','구성품 입력을 확인해 주세요.');
+        const itemId = identifier(row.itemId), quantityScaled = require('./erp-import-schema').decimal(row.quantity,4,'구성 수량',1e10);
+        if (seen.has(itemId) || !quantityScaled) fail('invalid-argument','구성품은 중복 없이 양수 수량으로 입력해 주세요.'); seen.add(itemId);
+        return { itemId, quantityScaled };
+      });
+    } else if (input.components?.length) fail('invalid-argument','일반 품목에는 조합을 지정하지 않습니다.');
     if (!['과세', '영세', '면세'].includes(data.taxType)) fail('invalid-argument', '과세구분을 선택해 주세요.');
   } else if (kind === 'warehouses') data.address = text(input.address, '창고 주소', 300);
   else {
@@ -58,7 +70,7 @@ function keys(kind, data) {
 function view(kind, id, data, canManage) {
   const result = { id, code: data.code, name: data.name, active: data.active, revision: data.revision, updatedAt: data.updatedAt };
   if (canManage) for (const field of FIELDS[kind]) result[field] = data[field];
-  else if (kind === 'items') Object.assign(result, { unit: data.unit, specification: data.specification });
+  else if (kind === 'items') Object.assign(result, { unit: data.unit, specification: data.specification, itemType:data.itemType || 'STOCK' });
   return result;
 }
 function verifyTenant(data, companyId) {
@@ -113,6 +125,32 @@ function createErpService({ db, now = () => new Date() }) {
         const item = await tx.get(companyRef.collection('erpItems').doc(itemId));
         if (!item.exists) fail('not-found', '품목을 찾을 수 없습니다.');
         verifyTenant(item.data(), companyId);
+        if (item.data().itemType === 'BUNDLE') {
+          const components = item.data().components, stockByPart = [], allWarehouses = new Set();
+          if (!components?.length || components.length > 20) fail('failed-precondition','조합 구성을 확인해 주세요.');
+          for (const component of components) {
+            const part = await tx.get(companyRef.collection('erpItems').doc(identifier(component.itemId)));
+            if (!part.exists) fail('failed-precondition','구성품을 찾을 수 없습니다.'); verifyTenant(part.data(),companyId);
+            const stocks = await tx.get(companyRef.collection('erpInventory').where('itemId','==',component.itemId).limit(501));
+            if (stocks.size > 500) fail('resource-exhausted','구성품 창고 수를 확인해 주세요.');
+            const byWarehouse = new Map();
+            for (const snap of stocks.docs) {
+              const row=snap.data();verifyTenant(row,companyId);
+              if (byWarehouse.has(row.warehouseId) || !Number.isFinite(row.quantity) || row.quantity < 0) fail('failed-precondition','구성품 재고를 확인해 주세요.');
+              byWarehouse.set(row.warehouseId,part.data().active ? Math.round(row.quantity*10000) : 0); allWarehouses.add(row.warehouseId);
+            }
+            stockByPart.push({quantityScaled:component.quantityScaled,byWarehouse});
+          }
+          const rows=[];
+          for (const warehouseId of allWarehouses) {
+            const warehouse=await tx.get(companyRef.collection('erpWarehouses').doc(identifier(warehouseId)));
+            if(!warehouse.exists)fail('failed-precondition','구성품 창고를 확인해 주세요.');verifyTenant(warehouse.data(),companyId);
+            const quantity=Math.min(...stockByPart.map(part=>Math.floor((part.byWarehouse.get(warehouseId)||0)/part.quantityScaled)));
+            rows.push({warehouseId,warehouseCode:warehouse.data().code,warehouseName:warehouse.data().name,warehouseActive:warehouse.data().active,quantity,updatedAt:null,...(current.role==='ADMIN'?{value:0}:{})});
+          }
+          return {item:view('items',item.id,item.data(),current.role==='ADMIN'),virtual:true,status:'RECORDED',quantity:rows.reduce((sum,row)=>sum+row.quantity,0),
+            ...(current.role==='ADMIN'?{value:0,averagePrice:null,currency:'KRW'}:{}),warehouses:rows,checkedAt:now().toISOString()};
+        }
         const balances = await tx.get(companyRef.collection('erpInventory').where('itemId', '==', itemId).limit(501));
         if (balances.size > 500) fail('resource-exhausted', '창고별 재고가 너무 많습니다. 관리자에게 문의해 주세요.');
         const warehouseIds = [...new Set(balances.docs.map(row => identifier(row.data().warehouseId)))];
@@ -170,6 +208,15 @@ function createErpService({ db, now = () => new Date() }) {
       const snapshot = await tx.get(ref), previous = snapshot.data();
       if (snapshot.exists) verifyTenant(previous, companyId);
       if ((previous?.revision || 0) !== data.expectedRevision) fail('aborted', '다른 사용자가 수정했습니다. 목록을 새로고침한 후 다시 편집해 주세요.');
+      if (kind === 'items') {
+        if (previous && (previous.itemType || 'STOCK') !== values.itemType) fail('failed-precondition','등록 후 일반·조합 유형은 변경할 수 없습니다. 새 품목코드로 등록해 주세요.');
+        const components = values.components.length ? await tx.getAll(...values.components.map(row => companyRef.collection('erpItems').doc(row.itemId))) : [];
+        for (const component of components) {
+          if (component.id === id || !component.exists) fail('invalid-argument','자기 자신을 제외한 등록 구성품을 선택해 주세요.');
+          verifyTenant(component.data(),companyId);
+          if (!component.data().active || component.data().itemType === 'BUNDLE') fail('invalid-argument','조합에는 활성 일반 품목만 포함할 수 있습니다.');
+        }
+      }
       if (kind === 'items' && previous && previous.unit !== values.unit) {
         const stock = await tx.get(companyRef.collection('erpInventory').where('itemId', '==', id).limit(1));
         if (!stock.empty) fail('failed-precondition', '재고가 등록된 품목의 단위는 변경할 수 없습니다.');

@@ -5,6 +5,8 @@ import { erpImportService as api } from '../services/erpImportService';
 import type { ErpImport, ManualLine, ManualMovement } from '../services/erpImportService';
 import { erpScope } from '../services/erpLedgerService';
 import { getErrorMessage } from '../utils/errors';
+import { erpCustody } from '../services/erpAccountService';
+import type { CustodyLot } from '../services/erpAccountService';
 
 const number = (value: number | null | undefined) => value == null ? '—' : value.toLocaleString('ko-KR', { maximumFractionDigits: 4 });
 const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
@@ -57,17 +59,19 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
   const [items, setItems] = useState<ErpRecord[]>(initialItem ? [initialItem] : []), [warehouses, setWarehouses] = useState<ErpRecord[]>([]), [partners, setPartners] = useState<ErpRecord[]>([]);
   const [cursors, setCursors] = useState<Partial<Record<'items' | 'warehouses' | 'partners', ErpCursor | null>>>({});
   const [allowNewItems, setAllowNewItems] = useState(false), [allowNewPartners, setAllowNewPartners] = useState(false);
+  const [lots, setLots] = useState<CustodyLot[]>([]);
   const [job, setJob] = useState<ErpImport | null>(null), [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(true), [error, setError] = useState('');
   const live = useRef(true), lock = useRef(false), attempt = useRef(crypto.randomUUID()), title = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     live.current = true; title.current?.focus();
-    void Promise.all(['items','warehouses','partners'].map(kind => erpService.list(companyId, kind as 'items' | 'warehouses' | 'partners', '', 'name'))).then(([i, w, p]) => {
+    void Promise.all([Promise.all(['items','warehouses','partners'].map(kind => erpService.list(companyId, kind as 'items' | 'warehouses' | 'partners', '', 'name'))), direction === '출고' ? erpCustody.list(companyId) : Promise.resolve(null)]).then(([[i, w, p], c]) => {
       if (!live.current) return;
       setItems(initialItem && !i.records.some(row => row.id === initialItem.id) ? [initialItem, ...i.records] : i.records); setWarehouses(w.records); setPartners(p.records);
       setCursors({ items: i.nextCursor, warehouses: w.nextCursor, partners: p.nextCursor });
+      setLots(c?.lots || []);
     }).catch(failure => { if (live.current) setError(getErrorMessage(failure)); }).finally(() => { if (live.current) setBusy(false); });
     return () => { live.current = false; };
-  }, [companyId, initialItem]);
+  }, [companyId, initialItem, direction]);
   function changed() { setJob(null); setConfirmed(false); setError(''); attempt.current = crypto.randomUUID(); }
   function edit(index: number, patch: Partial<Line>) { changed(); setLines(current => current.map((line, i) => i === index ? { ...line, ...patch } : line)); setActive(index); }
   async function run(action: () => Promise<void>) {
@@ -83,7 +87,7 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
   }
   async function preview() {
     const movement: ManualMovement = { direction, date, warehouseId, ...(partnerId === 'NEW' ? { partner: newPartner } : { partnerId }), currency, exchangeRate, priceBasis,
-      lines: lines.map(({ code, name, specification, unit, taxType, quantity, price, notes }) => ({ code, name, specification, unit, taxType, quantity, price, notes })), allowNewItems, allowNewPartners };
+      lines: lines.map(({ code, name, specification, unit, taxType, quantity, price, notes, fulfillment, custodyLotId, borrowValue }) => ({ code, name, specification, unit, taxType, quantity, price, notes, fulfillment: fulfillment || 'DIRECT', ...(fulfillment === 'BORROW' ? {custodyLotId, borrowValue} : {}) })), allowNewItems, allowNewPartners };
     const result = await api.manualPreview(companyId, attempt.current, movement); if (live.current) { setJob(result.import); setConfirmed(false); }
   }
   const done = job?.status === 'COMMITTED', selected = lines[active], total = (field: 'supply' | 'tax' | 'total' | 'cost' | 'value') => job?.preview.rows.reduce((sum, row) => sum + (row[field] || 0), 0) || 0;
@@ -103,11 +107,12 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
         {lines.map((line, index) => <fieldset className="erp-movement-line erp-form-fields" key={line.key} disabled={busy || done}><legend>{index + 1}. {line.name || '품목 선택'}</legend>
           <label className="wf-field erp-form-wide"><span>등록 품목 선택 *</span><select className="wf-input" required value={line.itemId} onChange={e => {
             const item = items.find(row => row.id === e.target.value), next = lineFor(item); edit(index, { ...next, key: line.key, itemId: e.target.value });
-          }}><option value="">품목 선택</option>{direction === '입고' && <option value="NEW">신규 품목 입력</option>}{items.filter(row => row.active).map(row => <option key={row.id} value={row.id}>{row.code} · {row.name}</option>)}</select></label>
+          }}><option value="">품목 선택</option>{direction === '입고' && <option value="NEW">신규 품목 입력</option>}{items.filter(row => row.active && (direction === '출고' || row.itemType !== 'BUNDLE')).map(row => <option key={row.id} value={row.id}>{row.code} · {row.name}</option>)}</select></label>
           {(['code','name','specification','unit'] as const).map((key, i) => <label className="wf-field" key={key}><span>{['품목코드 *','품목명 *','규격','단위 *'][i]}</span><input className="wf-input" value={line[key]} required={key !== 'specification'} readOnly={line.itemId !== 'NEW'} maxLength={[60,120,160,20][i]} onChange={e => edit(index, { [key]: e.target.value })} /></label>)}
           <label className="wf-field"><span>{direction}수량 *</span><input className="wf-input" required inputMode="decimal" value={line.quantity} onChange={e => edit(index, { quantity: e.target.value })} /></label>
           <label className="wf-field"><span>{direction === '입고' ? '신규 입고단가' : '판매단가'} ({currency}) *</span><input className="wf-input" required inputMode="decimal" value={line.price} onChange={e => edit(index, { price: e.target.value })} /></label>
           <label className="wf-field"><span>부가세 구분</span><select className="wf-input" value={line.taxType} onChange={e => edit(index, { taxType: e.target.value })}><option>과세</option><option>영세</option><option>면세</option></select></label>
+          {direction === '출고' && <><label className="wf-field"><span>출고 방식</span><select className="wf-input" value={line.fulfillment || 'DIRECT'} onChange={e => edit(index, {fulfillment: e.target.value as ManualLine['fulfillment'], custodyLotId: '', borrowValue: ''})}><option value="DIRECT">회사 재고 직접 출고</option>{items.find(i => i.id === line.itemId)?.itemType !== 'BUNDLE' && <><option value="HOLD">판매 후 보관 (거래처 소유)</option><option value="BORROW">보관품 차용 판매</option></>}</select></label>{line.fulfillment === 'BORROW' && <><label className="wf-field"><span>차용할 보관품 *</span><select className="wf-input" required value={line.custodyLotId || ''} onChange={e => edit(index, {custodyLotId: e.target.value})}><option value="">소유자·보관품 선택</option>{lots.filter(l => l.itemId === line.itemId && l.warehouseId === warehouseId && l.ownerPartnerId !== partnerId && l.availableQuantityScaled > 0).map(l => <option key={l.id} value={l.id}>{l.ownerName} · {number(l.availableQuantityScaled / 10000)} · {l.reference}</option>)}</select></label><label className="wf-field"><span>이번 차용 전체 평가금액 (원) *</span><input className="wf-input" required inputMode="numeric" value={line.borrowValue || ''} onChange={e => edit(index, {borrowValue: e.target.value})} /></label><p className="wf-muted erp-form-wide">차용 평가금액을 매출원가로 기록하고 미반환 의무를 남깁니다. 현물 반환 시 실제 원가와의 차이를 정산합니다. 회사 재고자산은 차감하지 않습니다.</p></>}</>}
           <label className="wf-field"><span>비고 (무상 거래는 사유 필수)</span><input className="wf-input" maxLength={500} value={line.notes} onChange={e => edit(index, { notes: e.target.value })} /></label>
           <div className="erp-actions erp-form-wide">{line.itemId && line.itemId !== 'NEW' && <button type="button" className="wf-btn" aria-pressed={active === index} onClick={() => setActive(index)}>이 품목 재고·단가 비교</button>}{lines.length > 1 && <button type="button" className="wf-btn" onClick={() => { changed(); setLines(current => current.filter((_, i) => i !== index)); setActive(0); }}>행 삭제</button>}</div>
         </fieldset>)}
@@ -127,9 +132,10 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
       {job.preview.errors.map((issue, i) => <p role="alert" className="erp-error" key={i}>{issue.row >= 10 ? `${issue.row - 9}번 품목: ` : ''}{issue.message}</p>)}
       {job.preview.warnings.map((issue, i) => <p className="erp-notice" key={i}>{issue.message}</p>)}
       <dl className="erp-stock-totals"><div><dt>{direction === '출고' ? '매출액 (공급가액)' : '매입 공급가액'}</dt><dd>{number(total('supply'))}<small>{currency}</small></dd></div><div><dt>부가세</dt><dd>{number(total('tax'))}<small>{currency}</small></dd></div><div><dt>거래 합계</dt><dd>{number(total('total'))}<small>{currency}</small></dd></div>
-        <div><dt>재고자산 {direction === '출고' ? '감소 (출고원가)' : '증가'}</dt><dd>{number(total(direction === '출고' ? 'cost' : 'value'))}<small>원</small></dd></div></dl>
-      {direction === '출고' && <><p>원화 매출액 {number(total('value'))}원 · 매출총이익 {number(total('value') - total('cost'))}원</p><p className="wf-muted">출고원가는 출고 창고의 이동평균원가로 계산합니다. 아래 평균단가는 모든 창고를 합친 현재 재고 기준입니다.</p></>}
-      <div className="erp-table-scroll"><table className="erp-table"><caption>품목별 전체 창고 재고 변동</caption><thead><tr><th>품목</th><th>전체 수량 전 → 후</th><th>전체 금액 전 → 후 (원)</th><th>평균단가 전 → 후 (원)</th></tr></thead><tbody>{job.preview.itemTotals?.map(row => <tr key={row.itemId}><td>{job.preview.rows.find(line => line.itemId === row.itemId)?.name}</td><td>{number(row.beforeQuantity)} → {number(row.quantity)}</td><td>{number(row.beforeValue)} → {number(row.value)}</td><td>{number(row.beforeQuantity ? row.beforeValue / row.beforeQuantity : null)} → {number(row.quantity ? row.value / row.quantity : null)}</td></tr>)}</tbody></table></div>
+        <div><dt>재고자산 {direction === '출고' ? '감소 (출고원가)' : '증가'}</dt><dd>{number(direction === '출고' ? job.preview.rows.reduce((sum, row) => sum + (row.stockMode === 'BORROW' ? 0 : row.cost || 0), 0) : total('value'))}<small>원</small></dd></div></dl>
+      {direction === '출고' && <><p>원화 매출액 {number(total('value'))}원 · 매출총이익 {number(total('value') - total('cost'))}원</p><p className="wf-muted">일반·조합 출고원가는 구성품 출고 창고의 이동평균원가로 계산합니다. 차용 판매는 입력한 평가금액을 사용하고 반환 시 실제 원가로 정산합니다. 아래 평균단가는 모든 창고를 합친 현재 재고 기준입니다.</p></>}
+      <div className="erp-table-scroll"><table className="erp-table"><caption>품목별 전체 창고 재고 변동</caption><thead><tr><th>품목</th><th>전체 수량 전 → 후</th><th>전체 금액 전 → 후 (원)</th><th>평균단가 전 → 후 (원)</th></tr></thead><tbody>{job.preview.itemTotals?.map(row => <tr key={row.itemId}><td>{row.name || job.preview.rows.find(line => line.itemId === row.itemId)?.name}</td><td>{number(row.beforeQuantity)} → {number(row.quantity)}</td><td>{number(row.beforeValue)} → {number(row.value)}</td><td>{number(row.beforeQuantity ? row.beforeValue / row.beforeQuantity : null)} → {number(row.quantity ? row.value / row.quantity : null)}</td></tr>)}</tbody></table></div>
+      {job.preview.rows.filter(row => row.bundle?.length).map(row => <div key={row.sourceRow}><h4>{row.name} 판매 당시 조합 구성</h4><ul>{row.bundle!.map(part => <li key={part.itemId}>{part.code} · {part.name}: {number(part.quantityScaled / 10000)} 차감 · 원가 {number(part.cost)}원</li>)}</ul></div>)}
       {!done && <><label className="erp-active-field"><input type="checkbox" disabled={busy || !job.preview.canCommit} checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />수량·단가·거래처와 재고 변동을 확인했습니다.</label><div className="erp-actions"><button className="wf-btn" disabled={busy} onClick={() => { changed(); }}>입력 재검토</button><button className="wf-btn wf-btn-primary" disabled={busy || !job.preview.canCommit || !confirmed} onClick={() => void run(async () => {
         const expected = erpScope(companyId, true), result = await api.commit(companyId, job); if (live.current && erpScope(companyId, true) === expected) setJob(result.import);
       })}>{direction} 확정</button></div></>}

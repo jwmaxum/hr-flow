@@ -8,13 +8,15 @@ export interface ErpRecord {
   notes?: string; specification?: string; unit?: string; purchasePrice?: number; salePrice?: number;
   taxType?: string; group?: string; address?: string; type?: string; country?: string;
   registrationNumber?: string; contactName?: string; email?: string; phone?: string;
+  itemType?: 'STOCK' | 'BUNDLE'; components?: {itemId: string; quantityScaled: number}[];
 }
-export interface ErpValues { code: string; name: string; active: boolean; notes: string; [key: string]: string | number | boolean }
+export interface ErpValues { code: string; name: string; active: boolean; notes: string; [key: string]: string | number | boolean | {itemId: string; quantity: string}[] }
 export interface ErpCursor { key: string; id: string }
 export interface ErpList { records: ErpRecord[]; canManage: boolean; nextCursor: ErpCursor | null }
 export interface InventoryResult {
   item: ErpRecord; status: 'RECORDED' | 'UNINITIALIZED'; quantity: number | null; value?: number | null;
   currency?: string; averagePrice?: number | null; checkedAt: string;
+  virtual?: boolean;
   warehouses: { warehouseId: string; warehouseCode: string; warehouseName: string; warehouseActive: boolean;
     quantity: number; value?: number; updatedAt: string | null }[];
 }

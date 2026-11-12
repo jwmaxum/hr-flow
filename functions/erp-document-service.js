@@ -78,7 +78,7 @@ function createErpDocumentService({ db, bucket, renderPdf, now = () => new Date(
       master.verifyTenant(link, parent.id); master.verifyTenant(used, parent.id);
       links.set(row.id, link); usages.set(row.id, used);
     });
-    return { registry, rows, links, usages };
+    return { registry, rows: rows.filter(row => !row.bundleParentId), links, usages };
   }
   async function plan(reader, parent, value, edition = {}) {
     const content = D.input(value), { official, profile } = await settings(reader, parent.id);

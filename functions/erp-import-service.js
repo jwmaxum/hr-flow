@@ -3,6 +3,8 @@ const { erpMaster: master } = require('./erp-service');
 const { parseErpFile } = require('./erp-import-files');
 const { amounts, safe, round, SHEETS } = require('./erp-import-schema');
 const { hash } = require('./erp-ledger-model');
+const M = require('./erp-ledger-model');
+const { custodyContext } = require('./erp-custody-model');
 const { manualInput, parseManual } = require('./erp-manual-schema');
 const issue = (row, message, type) => ({ sheet: SHEETS[type], row, message });
 const publicSource = source => ({ kind: source.kind || 'XLSX', name: source.name, size: source.size, sha256: source.sha256 });
@@ -35,6 +37,7 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
   }
   async function plan(tx, parent, job) {
     const companyId = parent.id, options = job.options, errors = [...job.errors], warnings = [], previews = [], writes = new Map(), reads = new Map();
+    const custody = custodyContext(tx,parent,job);
     const get = ref => {
       if (!reads.has(ref.path)) reads.set(ref.path, tx.get(ref));
       return reads.get(ref.path);
@@ -193,10 +196,12 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
       try {
         const item = await itemFor(row), warehouse = await warehouseFor(row), partner = row.partner ? await partnerFor(row, preview) : null;
         if (job.source.kind === 'MANUAL' && row.direction === '출고' && partner?.type === 'SUPPLIER') fail('invalid-argument', '출고 거래처는 매출처 또는 매입·매출처를 선택해 주세요.');
+        if (item.itemType === 'BUNDLE' && (job.type !== 'MOVEMENTS' || row.direction !== '출고')) fail('invalid-argument','조합상품은 직접 입고하지 않습니다. 구성품을 입고해 주세요.');
         const balance = await stockFor(item.id, warehouse.id), amount = amounts(row), key = `${item.id}:${warehouse.id}`;
+        if (item.itemType === 'BUNDLE') balance.virtual = true;
         Object.assign(preview, { itemId: item.id, warehouseId: warehouse.id, warehouseName: warehouse.name, partnerName: partner?.name || '',
           partnerId: partner?.id || null, newItem: !!item.isNew, newPartner: !!partner?.isNew, beforeQuantity: balance.quantityScaled / 10000, beforeValue: balance.value, ...amount });
-        let movementId, cost = 0;
+        let movementId, cost = 0, bundle = null, effect, ownership = {};
         if (job.type === 'OPENING') {
           if (balance.exists || seenOpening.has(key)) fail('invalid-argument', '품목·창고 기초재고가 이미 있거나 파일 안에서 중복됩니다.');
           seenOpening.add(key); movementId = hash(['opening', item.id, warehouse.id]);
@@ -215,21 +220,57 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
           }
           if (state.lastDate && (row.date < state.lastDate || row.date === state.lastDate && row.order <= state.lastOrder)) fail('invalid-argument', `마지막 확정 순서(${state.lastDate}, ${state.lastOrder}) 이후 거래만 반영할 수 있습니다.`);
           if (row.direction === '출고') {
+            if (item.itemType === 'BUNDLE' && row.fulfillment && row.fulfillment !== 'DIRECT') fail('invalid-argument','조합상품은 구성품 직접 출고만 지원합니다. 보관·차용은 개별 품목으로 출고해 주세요.');
+            if (item.itemType === 'BUNDLE') {
+              bundle = [];
+              if (!item.components?.length || item.components.length > 20) fail('invalid-argument','조합 구성을 확인해 주세요.');
+              const parentId = hash(['trade',docKey,row.rowNo]);
+              for (const component of item.components) {
+                const part = await existing('items',component.itemId);
+                if (part.itemType === 'BUNDLE' || part.id === item.id) fail('invalid-argument','중첩·순환 조합은 사용할 수 없습니다.');
+                const product = BigInt(row.quantityScaled) * BigInt(component.quantityScaled);
+                if (product % 10000n) fail('invalid-argument','구성품 출고 수량은 소수점 4자리 이내여야 합니다.');
+                const quantityScaled = safe(product / 10000n,'구성 수량'), stock = await stockFor(part.id,warehouse.id);
+                if (stock.quantityScaled < quantityScaled) fail('invalid-argument',`${part.name} 구성품 재고 부족: ${stock.quantityScaled/10000}`);
+                const value = M.averageCost(stock.value,stock.quantityScaled,quantityScaled), partEffect = M.zeroEffect();
+                partEffect.outQuantityScaled = quantityScaled; partEffect.outValue = value;
+                stock.quantityScaled -= quantityScaled; stock.value -= value; cost = safe(BigInt(cost)+BigInt(value));
+                const id = hash(['bundle',parentId,part.id]), ref = parent.collection('erpMovements').doc(id);
+                if ((await get(ref)).exists) fail('invalid-argument','이미 확정된 구성품 출고입니다.');
+                bundle.push({ movementId:id,itemId:part.id,code:part.code,name:part.name,quantityScaled,cost:value,quantityPerSetScaled:component.quantityScaled });
+                writes.set(ref.path,{ ref,data:{ companyId,importId:job.id,...row,itemId:part.id,code:part.code,name:part.name,unit:part.unit,specification:part.specification || '',
+                  warehouseId:warehouse.id,warehouseName:warehouse.name,warehouseCode:warehouse.code,partnerId:partner.id,partnerName:partner.name,
+                  quantityScaled,priceScaled:0,supply:0,tax:0,total:0,value:0,cost:value,effect:partEffect,bundleParentId:parentId,
+                  afterQuantity:stock.quantityScaled/10000,afterValue:stock.value,createdAt:job.createdAt,createdBy:job.createdBy } });
+              }
+              effect = M.zeroEffect(); effect.salesKRW = amount.value; effect.cogsKRW = cost;
+            } else if (row.fulfillment === 'BORROW') {
+              const id = hash(['trade',docKey,row.rowNo]); cost = row.borrowValue;
+              effect = M.zeroEffect(); effect.salesKRW=amount.value; effect.cogsKRW=cost;
+              ownership={stockMode:'BORROW',custodyLotId:row.custodyLotId,borrowingId:`loan_${id}`,effect};
+              await custody.borrow(ownership.borrowingId,row.custodyLotId,{...row,id},item,warehouse,partner,cost);
+            } else {
             if (balance.quantityScaled < row.quantityScaled) fail('invalid-argument', `재고 부족: 현재 ${balance.quantityScaled / 10000}, 출고 ${row.quantityScaled / 10000}`);
             cost = row.quantityScaled === balance.quantityScaled ? balance.value : safe(round(BigInt(balance.value) * BigInt(row.quantityScaled), BigInt(balance.quantityScaled)));
             balance.quantityScaled -= row.quantityScaled; balance.value -= cost;
+            if (row.fulfillment === 'HOLD') {
+              const id=hash(['trade',docKey,row.rowNo]); ownership={stockMode:'HOLD',custodyLotId:`hold_${id}`};
+              await custody.hold(ownership.custodyLotId,{...row,id},item,warehouse,partner);
+            }
+            }
           } else { balance.quantityScaled = safe(BigInt(balance.quantityScaled) + BigInt(row.quantityScaled), '수량'); balance.value = safe(BigInt(balance.value) + BigInt(amount.value)); }
           movementId = hash(['trade', docKey, row.rowNo]);
         }
         const movementRef = parent.collection('erpMovements').doc(movementId), oldMovement = await get(movementRef);
         if (oldMovement.exists) fail('invalid-argument', '이미 반영된 원장 행입니다.');
-        Object.assign(preview, { cost, afterQuantity: balance.quantityScaled / 10000, afterValue: balance.value });
+        Object.assign(preview, { cost, ...ownership, ...(bundle ? { bundle } : {}), afterQuantity: balance.quantityScaled / 10000, afterValue: balance.value });
         writes.set(movementRef.path, { ref: movementRef, data: { companyId, importId: job.id, ...row, itemId: item.id, warehouseId: warehouse.id,
           sourceKind: job.source.kind || 'XLSX', partnerId: partner?.id || null, partnerName: partner?.name || '', warehouseName: warehouse.name, warehouseCode: warehouse.code,
-          ...amount, cost, afterQuantity: preview.afterQuantity, afterValue: preview.afterValue, createdAt: job.createdAt, createdBy: job.createdBy } });
+          ...amount, cost, ...ownership, ...(bundle ? { bundle,stockMode:'BUNDLE',effect } : {}), afterQuantity: preview.afterQuantity, afterValue: preview.afterValue, createdAt: job.createdAt, createdBy: job.createdBy } });
       } catch (error) { if (!['invalid-argument', 'failed-precondition'].includes(error.code)) throw error; errors.push(issue(row.sourceRow, error.message, job.type)); }
     }
     const balances = [...stocks.values()].map(b => ({ itemId: b.itemId, warehouseId: b.warehouseId, beforeQuantity: b.beforeQuantity, beforeValue: b.beforeValue, quantity: b.quantityScaled / 10000, value: b.value }));
+    if ([...writes.values()].filter(entry => entry.ref.parent.id === 'erpMovements').length > 200) errors.push(issue(0,'구성품을 포함한 원장 행은 문서당 200개까지 가능합니다.',job.type));
     const itemTotals = job.source.kind === 'MANUAL' ? [...itemBalances].map(([itemId, snapshots]) => {
       let quantity = 0n, value = 0n; const seen = new Set();
       for (const snapshot of snapshots.docs) {
@@ -239,12 +280,12 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
       }
       const beforeQuantity = safe(quantity, '수량') / 10000, beforeValue = safe(value);
       for (const b of balances.filter(row => row.itemId === itemId)) { quantity += BigInt(Math.round(b.quantity * 10000)) - BigInt(Math.round(b.beforeQuantity * 10000)); value += BigInt(b.value - b.beforeValue); }
-      return { itemId, beforeQuantity, beforeValue, quantity: safe(quantity, '수량') / 10000, value: safe(value) };
+      return { itemId, name:masters.get(`items:${itemId}`)?.name || '', beforeQuantity, beforeValue, quantity: safe(quantity, '수량') / 10000, value: safe(value) };
     }) : [];
-    const fingerprint = hash({ schema: 2, state, rows: previews, masters: [...masterState], source: job.source.sha256, options, errors, itemTotals });
+    const fingerprint = hash({ schema: 3, state, rows: previews, masters: [...masterState], source: job.source.sha256, options, errors, itemTotals, balances, custody:custody.snapshot() });
     return { preview: { fingerprint, rows: previews, errors, warnings, balances, itemTotals, canCommit: !errors.length && !!previews.length,
       newItems: [...masters.values()].filter(r => r.isNew && r.unit).length, newPartners: [...masters.values()].filter(r => r.isNew && r.country).length },
-      writes, stocks, documents, state, stateRef, last: sorted.at(-1) };
+      writes, stocks, documents, state, stateRef, custody, last: sorted.at(-1) };
   }
   return async request => {
     const input = request.data;
@@ -334,9 +375,10 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
       if (!fresh.preview.canCommit || fresh.preview.fingerprint !== input.fingerprint) fail('failed-precondition', '재고·기준정보 또는 다른 거래가 변경되었습니다. 파일을 다시 검증하고 새 미리보기를 확인해 주세요.');
       const timestamp = now().toISOString();
       // All authorization, duplicate, master and balance reads are complete before any writes.
+      fresh.custody.flush(timestamp);
       for (const entry of fresh.writes.values()) tx.set(entry.ref, entry.data);
       for (const entry of fresh.documents.values()) tx.create(entry.ref, entry.data);
-      for (const balance of fresh.stocks.values()) tx.set(balance.ref, { companyId: user.companyId, itemId: balance.itemId, warehouseId: balance.warehouseId,
+      for (const balance of fresh.stocks.values()) if (!balance.virtual) tx.set(balance.ref, { companyId: user.companyId, itemId: balance.itemId, warehouseId: balance.warehouseId,
         quantity: balance.quantityScaled / 10000, value: balance.value, currency: 'KRW', openingImportId: balance.openingImportId, updatedAt: timestamp, importId: id });
       tx.set(fresh.stateRef, { companyId: user.companyId, basisDate: job.basisDate, revision: (fresh.state.revision || 0) + 1,
         lastDate: job.type === 'MOVEMENTS' ? fresh.last.date : null, lastOrder: job.type === 'MOVEMENTS' ? fresh.last.order : null, updatedAt: timestamp });

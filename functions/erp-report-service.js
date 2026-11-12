@@ -20,7 +20,7 @@ function projectSummary(row, canManage) {
 }
 function projectDetail(row, canManage) {
   const effect = M.effectOf(row), output = { id: row.id, date: row.date, order: row.order, rowNo: row.rowNo, type: row.type,
-    operationType: row.operationType || '', direction: row.direction, documentNo: row.documentNo || '기초재고', sourceId: row.sourceId || null,
+    bundleParentId: row.bundleParentId || '', stockMode: row.stockMode || '', operationType: row.operationType || '', direction: row.direction, documentNo: row.documentNo || '기초재고', sourceId: row.sourceId || null,
     sourceDocumentNo: row.sourceDocumentNo || '', importId: row.importId || null, operationId: row.operationId || null,
     transferWarehouseName: row.transferWarehouseName || '',
     itemId: row.itemId, code: row.code, name: row.name, specification: row.specification || '', unit: row.unit,
