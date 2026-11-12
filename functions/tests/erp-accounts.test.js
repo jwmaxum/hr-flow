@@ -132,4 +132,17 @@ test('receivables, bundles and customer custody remain atomic and tenant-scoped'
     for(let i=0;i<3;i++) {await correct('SALES_RETURN',sale.id,'1');const asset=(await records('erpInventory')).reduce((s,r)=>s+r.value,0);assert.equal(asset+(await ledger()).totals.cogsKRW,2);}
     assert.equal((await ledger()).totals.cogsKRW,0);
   });
+  await t.test('manual multi-item confirmation is independent of concurrent inventory query completion order',async()=>{
+    await reset(false);let slowItem='part';
+    const wrapped=new Proxy(db,{get(target,key){
+      if(key==='runTransaction')return fn=>target.runTransaction(tx=>fn(new Proxy(tx,{get(reader,method){
+        if(method==='get')return async ref=>{const result=await reader.get(ref);if(ref.isEqual?.(parent().collection('erpInventory').where('itemId','==',slowItem).limit(501)))await new Promise(resolve=>setTimeout(resolve,80));return result;};
+        return typeof reader[method]==='function'?reader[method].bind(reader):reader[method];
+      }})));
+      return typeof target[key]==='function'?target[key].bind(target):target[key];
+    }});
+    const service=createErpImportService({db:wrapped,now});const movement={direction:'입고',date:'2026-11-12',warehouseId:'wh',partnerId:'buyer',currency:'KRW',exchangeRate:'1',priceBasis:'세금별도',allowNewItems:false,allowNewPartners:false,lines:[line('PART','3','100'),line('PART2','3','200')]};
+    const job=(await service(req({action:'manualPreview',id:`ordered-${++seq}`,movement}))).import;assert.equal(job.preview.canCommit,true);slowItem='part2';
+    await service(req({action:'commit',id:job.id,fingerprint:job.preview.fingerprint}));assert.equal((await stock('part')).quantity,3);assert.equal((await stock('part2')).value,600);
+  });
 }finally{await deleteApp(app);}});

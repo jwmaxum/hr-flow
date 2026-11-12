@@ -281,7 +281,7 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
       const beforeQuantity = safe(quantity, '수량') / 10000, beforeValue = safe(value);
       for (const b of balances.filter(row => row.itemId === itemId)) { quantity += BigInt(Math.round(b.quantity * 10000)) - BigInt(Math.round(b.beforeQuantity * 10000)); value += BigInt(b.value - b.beforeValue); }
       return { itemId, name:masters.get(`items:${itemId}`)?.name || '', beforeQuantity, beforeValue, quantity: safe(quantity, '수량') / 10000, value: safe(value) };
-    }) : [];
+    }).sort((a,b) => a.itemId.localeCompare(b.itemId)) : [];
     const fingerprint = hash({ schema: 3, state, rows: previews, masters: [...masterState], source: job.source.sha256, options, errors, itemTotals, balances, custody:custody.snapshot() });
     return { preview: { fingerprint, rows: previews, errors, warnings, balances, itemTotals, canCommit: !errors.length && !!previews.length,
       newItems: [...masters.values()].filter(r => r.isNew && r.unit).length, newPartners: [...masters.values()].filter(r => r.isNew && r.country).length },
