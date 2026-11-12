@@ -14,7 +14,8 @@ export interface ErpValues { code: string; name: string; active: boolean; notes:
 export interface ErpCursor { key: string; id: string }
 export interface ErpList { records: ErpRecord[]; canManage: boolean; nextCursor: ErpCursor | null }
 export interface InventoryResult {
-  item: ErpRecord; status: 'RECORDED' | 'UNINITIALIZED'; quantity: number | null; value?: number | null;
+  item: ErpRecord; status: 'RECORDED' | 'UNINITIALIZED' | 'PENDING_COST'; quantity: number | null; value?: number | null;
+  pendingOpening?: {basisDate: string; quantity: number | null; source: string; unit: string} | null;
   currency?: string; averagePrice?: number | null; checkedAt: string;
   virtual?: boolean;
   warehouses: { warehouseId: string; warehouseCode: string; warehouseName: string; warehouseActive: boolean;

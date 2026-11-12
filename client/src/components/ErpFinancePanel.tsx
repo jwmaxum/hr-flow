@@ -1,3 +1,4 @@
+import { ErpSettlementPanel } from './ErpSettlementPanel';
 import { useEffect, useRef, useState } from 'react';
 import { erpChoices, erpFinance as api, erpMoney as money, erpToday } from '../services/erpAccountService';
 import type { ReceiptInput, ReceiptJob, ReceivableReport } from '../services/erpAccountService';
@@ -5,6 +6,7 @@ import type { ErpRecord } from '../services/erpService';
 import { getErrorMessage } from '../utils/errors';
 const labels: Record<string, string> = { SALE: '출고 매출', SALES_RETURN: '판매 반품', CANCEL: '취소', RECEIPT: '수금', REFUND: '환불', BANK: '계좌이체', CASH: '현금', CARD: '카드', OTHER: '기타' };
 export function ErpFinancePanel({companyId}: {companyId: string}) {
+  const [settlementVersion,setSettlementVersion] = useState(0);
   const [from, setFrom] = useState('2000-01-01'), [to, setTo] = useState(erpToday), [filter, setFilter] = useState('');
   const [partners, setPartners] = useState<ErpRecord[]>([]), [report, setReport] = useState<ReceivableReport | null>(null);
   const [input, setInput] = useState<ReceiptInput>({type: 'RECEIPT', date: erpToday(), partnerId: '', currency: 'KRW', amount: '', method: 'BANK', reference: '', notes: ''});
@@ -42,9 +44,10 @@ export function ErpFinancePanel({companyId}: {companyId: string}) {
           <div className="erp-actions"><button className="wf-btn wf-btn-primary">수금 검증·미리보기</button></div>
         </fieldset></form>
       {job && <div aria-label="수금 미리보기"><p>{job.entry.partnerName} · {labels[job.entry.type]} {money(job.entry.amountMinor, job.entry.currency)} {job.entry.currency} · {job.entry.date}</p><p>미수잔액: {money(job.before, job.entry.currency)} → {money(job.after, job.entry.currency)} {job.entry.currency}</p>
-        {done ? <p role="status" className="erp-success">수금 원장 반영 완료</p> : <><label className="erp-active-field"><input type="checkbox" disabled={busy} checked={confirm} onChange={e => setConfirm(e.target.checked)} />거래처·통화·금액과 잔액을 확인했습니다.</label><button className="wf-btn wf-btn-primary" disabled={busy || !confirm} onClick={() => void run(async () => {const r = await api.commit(companyId, job); if (live.current) setJob(r.job); await query();})}>수금 처리 확정</button></>}
+        {done ? <p role="status" className="erp-success">수금 원장 반영 완료</p> : <><label className="erp-active-field"><input type="checkbox" disabled={busy} checked={confirm} onChange={e => setConfirm(e.target.checked)} />거래처·통화·금액과 잔액을 확인했습니다.</label><button className="wf-btn wf-btn-primary" disabled={busy || !confirm} onClick={() => void run(async () => {const r = await api.commit(companyId, job); if (live.current) {setJob(r.job);setSettlementVersion(v=>v+1);} await query();})}>수금 처리 확정</button></>}
         <button className="wf-btn" disabled={busy} onClick={() => change({type: 'RECEIPT', sourceId: undefined, amount: '', notes: ''})}>{done ? '새 수금 등록' : '입력 재검토'}</button></div>}
     </section>
+    <ErpSettlementPanel companyId={companyId} refreshKey={settlementVersion} />
     <section className="wf-panel"><h2 className="wf-section-title">매출·수금 상세 내역</h2><div className="erp-table-scroll"><table className="erp-table"><thead><tr><th>일자</th><th>거래처</th><th>유형·참조</th><th>청구금액</th><th>수금액</th><th>비고</th><th>처리</th></tr></thead><tbody>{report?.events.map(r => <tr key={r.id}><td>{r.date}</td><td>{r.partnerName}</td><td>{labels[r.kind] || r.kind}<small className="erp-cell-note">{r.documentNo}</small></td><td>{money(r.gross, r.currency)} {r.currency}</td><td>{money(r.receipt, r.currency)} {r.currency}</td><td>{labels[r.method || '']} {r.notes}</td><td>{['RECEIPT', 'REFUND'].includes(r.kind) && <button className="wf-btn" disabled={busy} onClick={() => change({type: 'CANCEL', sourceId: r.id, notes: '', date: erpToday()})}>수금·환불 취소</button>}</td></tr>)}</tbody></table></div>
       {report?.nextOffset != null && <button className="wf-btn" disabled={busy} onClick={() => void run(async () => {const r = await api.report(companyId, from, to, filter, report.nextOffset!, report.snapshot); if (live.current) setReport({...r, events: [...report.events, ...r.events]});})}>상세 내역 더 보기</button>}</section>
     {error && <p role="alert" className="erp-error">{error}</p>}{busy && <p role="status">미수금·수금 원장을 확인하고 있습니다.</p>}

@@ -39,6 +39,16 @@ const report=()=>finance(req({action:'report',from:'2026-01-01',to:'2026-12-31'}
 const payment=(extra={})=>({type:'RECEIPT',partnerId:'buyer',currency:'KRW',amount:'100',method:'BANK',reference:'은행검증',...extra});
 const stock=async id=>(await records('erpInventory')).find(r=>r.itemId===id);
 const ledger=()=>reports(req({action:'report',view:'summary',filters:{from:'2026-11-12',to:'2026-12-31',itemId:'',warehouseId:'',search:''}}));
+const settlements=(to='2026-11-12')=>finance(req({action:'settlementReport',to}));
+const settlementPreview=async input=>(await finance(req({action:'settlementPreview',id:`settle-${++seq}`,input:{date:'2026-11-12',notes:'배분 검증',...input}}))).job;
+const settle=job=>finance(req({action:'settlementCommit',id:job.id,fingerprint:job.fingerprint}));
+
+test('aging counts UTC calendar days across leap years and omits future financial events',()=>{
+  const {settlementReport}=require('../erp-settlement-model');
+  const event={id:'sale',documentId:'doc',documentNo:'OUT',saleDate:'2024-02-28',date:'2024-02-28',partnerId:'buyer',partnerName:'buyer',currency:'USD',gross:135,receipt:0};
+  const data={events:[event,{...event,id:'later',date:'2024-03-02',gross:-35}],paid:[],settlements:[{id:'due',type:'TERMS',documentId:'doc',dueDate:'2024-02-28',date:'2024-02-28',partnerId:'buyer',sequence:1}]};
+  const r=settlementReport(data,'2024-03-01');assert.equal(r.documents[0].overdueDays,2);assert.equal(r.documents[0].overdueAmount,135);assert.equal(settlementReport(data,'2024-03-02').documents[0].overdueAmount,100);
+});
 test('receivables, bundles and customer custody remain atomic and tenant-scoped',async t=>{try{
   await t.test('gross receivables, partial receipts, refunds and reversals reconcile',async()=>{
     await reset();const [sale]=await post('출고',[line()]);let r=await report();assert.deepEqual([r.rows[0].sales,r.rows[0].tax,r.rows[0].balance],[600,60,660]);
@@ -144,5 +154,70 @@ test('receivables, bundles and customer custody remain atomic and tenant-scoped'
     const service=createErpImportService({db:wrapped,now});const movement={direction:'입고',date:'2026-11-12',warehouseId:'wh',partnerId:'buyer',currency:'KRW',exchangeRate:'1',priceBasis:'세금별도',allowNewItems:false,allowNewPartners:false,lines:[line('PART','3','100'),line('PART2','3','200')]};
     const job=(await service(req({action:'manualPreview',id:`ordered-${++seq}`,movement}))).import;assert.equal(job.preview.canCommit,true);slowItem='part2';
     await service(req({action:'commit',id:job.id,fingerprint:job.preview.fingerprint}));assert.equal((await stock('part')).quantity,3);assert.equal((await stock('part2')).value,600);
+  });
+  await t.test('one receipt allocates across documents without double counting and cancellation restores them',async()=>{
+    await reset();await post('출고',[line('PART','1','100'),line('PART','1','200')]);await post('출고',[line('PART','1','100')]);
+    const receipt=await preview(finance,payment({amount:'400'}));await commit(finance,receipt);
+    let r=await settlements();assert.equal(r.documents.length,2);assert.equal(r.summaries[0].balance,40);assert.equal(r.summaries[0].unallocated,400);
+    const big=r.documents.find(d=>d.billed===330),small=r.documents.find(d=>d.billed===110);
+    const job=await settlementPreview({type:'ALLOCATE',receiptId:receipt.id,lines:[{documentId:big.id,amount:'300'},{documentId:small.id,amount:'100'}]});
+    const result=await Promise.all([settle(job),settle(job)]);assert.equal(result.filter(r=>r.idempotent).length,1);
+    r=await settlements();assert.equal(r.summaries[0].balance,40);assert.equal(r.summaries[0].unallocated,0);assert.equal(r.documents.find(d=>d.id===big.id).balance,30);
+    await settle(await settlementPreview({type:'RELEASE',sourceId:job.id}));r=await settlements();assert.equal(r.receipts[0].available,400);assert.equal(r.summaries[0].documentBalance,440);
+    await reject(settlementPreview({type:'RELEASE',sourceId:job.id}));
+    await settle(await settlementPreview({type:'ALLOCATE',receiptId:receipt.id,lines:[{documentId:big.id,amount:'330'}]}));
+    await commit(finance,await preview(finance,{type:'CANCEL',sourceId:receipt.id,date:'2026-11-13'}));
+    assert.equal((await settlements()).documents.find(d=>d.id===big.id).balance,0);
+    r=await settlements('2026-11-13');assert.equal(r.documents.find(d=>d.id===big.id).balance,330);assert.equal(r.receipts[0].cancelled,true);assert.equal(r.summaries[0].balance,440);
+    assert.equal((await report()).rows[0].balance,r.summaries[0].balance);
+  });
+  await t.test('allocation validates identity, currency, precision and concurrent available amounts',async()=>{
+    await reset();await post('출고',[line('PART','1','100')]);await post('출고',[line('PART','1','100')],{partnerId:'owner'});await post('출고',[line('PART','1','1.23')],{currency:'USD',exchangeRate:'1400'});
+    const receipt=await preview(finance,payment({amount:'100'}));await commit(finance,receipt);
+    const r=await settlements(),doc=r.documents.find(d=>d.partnerId==='buyer'&&d.currency==='KRW');
+    const input={type:'ALLOCATE',receiptId:receipt.id,lines:[{documentId:doc.id,amount:'100'}]};
+    for(const documentId of ['missing',...r.documents.filter(d=>d.id!==doc.id).map(d=>d.id)])await reject(settlementPreview({...input,lines:[{documentId,amount:'1'}]}));
+    await reject(settlementPreview({...input,lines:[input.lines[0],input.lines[0]]}),'invalid-argument');
+    for(const amount of ['0','111','101'])await reject(settlementPreview({...input,lines:[{documentId:doc.id,amount}]}));
+    await reject(settlementPreview({...input,lines:[{documentId:doc.id,amount:'1.01'}]}),'invalid-argument');
+    const a=await settlementPreview(input),b=await settlementPreview(input);await settle(a);await reject(settle(b));
+    await reject(settlementPreview({...input,date:'2026-11-11'}));
+    const foreignReceipt=await preview(finance,payment({currency:'USD',amount:'1.35'}));await commit(finance,foreignReceipt);
+    const usd=r.documents.find(d=>d.currency==='USD');await settle(await settlementPreview({type:'ALLOCATE',receiptId:foreignReceipt.id,lines:[{documentId:usd.id,amount:'1.35'}]}));
+    assert.equal((await settlements()).documents.find(d=>d.id===usd.id).balance,0);
+    for(const uid of [null,'member','manager','root','foreign'])await reject(finance(req({action:'settlementReport',to:'2026-11-12'},uid)),uid?'permission-denied':'unauthenticated');
+    await reject(finance(req({action:'settlementPreview',id:'forged',input:{...input,companyId:'b',date:'2026-11-12',notes:'x'}})),'invalid-argument');
+  });
+  await t.test('due dates age at calendar boundaries and historical terms remain reproducible',async()=>{
+    await reset();await post('출고',[line('PART','1','100')]);const receipt=await preview(finance,payment({amount:'40'}));await commit(finance,receipt);
+    const doc=(await settlements()).documents[0];await settle(await settlementPreview({type:'ALLOCATE',receiptId:receipt.id,lines:[{documentId:doc.id,amount:'40'}]}));
+    await reject(settlementPreview({type:'TERMS',documentId:doc.id,dueDate:'2026-11-11'}),'invalid-argument');
+    await reject(settlementPreview({type:'TERMS',documentId:doc.id,dueDate:'2026-02-30'}),'invalid-argument');
+    await settle(await settlementPreview({type:'TERMS',documentId:doc.id,dueDate:'2026-11-12'}));
+    assert.equal((await settlements()).documents[0].overdueAmount,0);
+    let r=await settlements('2026-11-13');assert.equal(r.documents[0].overdueDays,1);assert.equal(r.documents[0].overdueAmount,70);
+    const term=await settlementPreview({type:'TERMS',documentId:doc.id,dueDate:'2026-11-30',date:'2026-11-14'});await settle(term);
+    assert.equal((await settlements('2026-11-13')).documents[0].dueDate,'2026-11-12');assert.equal((await settlements('2026-11-14')).documents[0].overdueAmount,0);
+    await settle(await settlementPreview({type:'TERMS',documentId:doc.id,dueDate:'',date:'2026-11-15'}));r=await settlements('2026-12-01');assert.equal(r.documents[0].dueDate,'');assert.equal(r.summaries[0].undated,70);
+    assert.equal((await settlements('2026-11-11')).documents.length,0);
+  });
+  await t.test('allocated sales returns expose credit and release reconciles refunds without changing sales',async()=>{
+    await reset();const [sale]=await post('출고',[line('PART','2','100')]);const receipt=await preview(finance,payment({amount:'200'}));await commit(finance,receipt);
+    const doc=(await settlements()).documents[0],allocation=await settlementPreview({type:'ALLOCATE',receiptId:receipt.id,lines:[{documentId:doc.id,amount:'200'}]});await settle(allocation);
+    await correct('SALES_RETURN',sale.id,'1');let r=await settlements();assert.equal(r.documents[0].credit,90);assert.equal(r.documents[0].overdueAmount,0);assert.equal(r.summaries[0].balance,-90);
+    await commit(finance,await preview(finance,payment({type:'REFUND',amount:'90'})));r=await settlements();assert.equal(r.summaries[0].balance,0);assert.equal(r.summaries[0].unallocated,-90);
+    await settle(await settlementPreview({type:'RELEASE',sourceId:allocation.id}));await settle(await settlementPreview({type:'ALLOCATE',receiptId:receipt.id,lines:[{documentId:doc.id,amount:'110'}]}));r=await settlements();assert.equal(r.summaries[0].balance,0);assert.equal(r.summaries[0].unallocated,0);assert.equal(r.documents[0].credit,0);
+    await post('출고',[line('PART','1','100')]);const next=(await settlements()).documents.find(d=>d.id!==doc.id);
+    await reject(settlementPreview({type:'ALLOCATE',receiptId:receipt.id,lines:[{documentId:next.id,amount:'90'}]}));
+  });
+  await t.test('pending opening quantities survive master edits without becoming posted or valued inventory',async()=>{
+    await reset(false);const pendingOpening={status:'PENDING_COST',basisDate:'2026-11-11',quantity:209,unit:'EA',source:'재고.xlsx 원본!C9'};
+    await parent().collection('erpItems').doc('part').update({pendingOpening});
+    let r=await masters(req({action:'inventory',itemId:'part'}));assert.equal(r.status,'PENDING_COST');assert.equal(r.pendingOpening.quantity,209);assert.equal(r.quantity,null);assert.equal(r.value,null);
+    await save('items','part',{...itemValues('PART','일반품'),purchasePrice:10},1);r=await masters(req({action:'inventory',itemId:'part'}));assert.deepEqual(r.pendingOpening,{basisDate:'2026-11-11',quantity:209,unit:'EA',source:'재고.xlsx 원본!C9'});assert.equal(r.value,null);assert.equal((await records('erpMovements')).length,0);
+    const member=await masters(req({action:'inventory',itemId:'part'},'member'));assert.equal(member.pendingOpening.quantity,209);assert.equal('value' in member,false);
+    await reject(save('items','part',{...itemValues('PART','일반품'),pendingOpening},2),'invalid-argument');
+    await parent().collection('erpItems').doc('part').update({'pendingOpening.quantity':null});assert.equal((await masters(req({action:'inventory',itemId:'part'}))).pendingOpening.quantity,null);
+    await parent().collection('erpItems').doc('part').update({'pendingOpening.quantity':-1});await reject(masters(req({action:'inventory',itemId:'part'})));
   });
 }finally{await deleteApp(app);}});

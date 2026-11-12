@@ -33,3 +33,10 @@ test('confirmation preserves the reviewed identifier and fingerprint, and reject
 test('minor currency units display consistently including refund balances',()=>{
   const f=fixture();assert.equal(f.erpMoney(123,'KRW'),'123');assert.equal(f.erpMoney(123,'JPY'),'123');assert.equal(f.erpMoney(123,'USD'),'1.23');assert.equal(f.erpMoney(-123,'EUR'),'-1.23');
 });
+test('document allocation uses the reviewed job and preserves company session checks',async()=>{
+  const f=fixture();await f.erpFinance.settlements('a','2026-11-13','buyer');
+  assert.deepEqual(JSON.parse(JSON.stringify(f.state.calls[0].data)),{companyId:'a',action:'settlementReport',to:'2026-11-13',partnerId:'buyer'});
+  const job={id:'allocation-a',companyId:'a',fingerprint:'reviewed'};f.state.reply={job};await f.erpFinance.commitSettlement('a',job);
+  assert.deepEqual(JSON.parse(JSON.stringify(f.state.calls[1].data)),{companyId:'a',action:'settlementCommit',id:job.id,fingerprint:job.fingerprint});
+  f.state.hook=()=>{f.state.scope='foreign:b';};await assert.rejects(f.erpFinance.settlements('a','2026-11-13'),/권한/);
+});

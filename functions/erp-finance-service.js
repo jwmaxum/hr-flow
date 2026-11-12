@@ -1,6 +1,7 @@
 const { authorizeContext, fail } = require('./security-context');
 const { erpMaster: master } = require('./erp-service');
 const M = require('./erp-ledger-model');
+const { createSettlementHandler } = require('./erp-settlement-service');
 const currencies = ['KRW','USD','EUR','JPY','CNY'];
 const digits = currency => ['KRW','JPY'].includes(currency) ? 0 : 2;
 const minor = (value, currency) => M.decimal(value, digits(currency), '거래 금액', 9e12);
@@ -11,7 +12,7 @@ function salesEvents(rows) {
     if (seen.has(row.id) || seen.size > 5) fail('failed-precondition', '매출 역거래 연결을 확인해 주세요.');
     seen.add(row.id); let result = null;
     if (row.type === 'MOVEMENTS' && row.direction === '출고' && !row.bundleParentId) result = { partnerId: row.partnerId, partnerName: row.partnerName || '', currency: row.currency,
-      supply: minor(row.supply, row.currency), tax: minor(row.tax, row.currency), documentNo: row.documentNo };
+      supply: minor(row.supply, row.currency), tax: minor(row.tax, row.currency), documentNo: row.documentNo, documentId: M.hash(master.normalize(row.documentNo)), saleDate: row.date };
     if (row.type === 'CORRECTION' && row.sourceId && ['CANCEL','SALES_RETURN'].includes(row.operationType)) {
       const source = byId.get(row.sourceId); if (!source) fail('failed-precondition', '매출 원거래를 찾을 수 없습니다.');
       const original = amount(source, seen);
@@ -49,15 +50,16 @@ function summarize(events, from, to, partnerId = '') {
 function createErpFinanceService({ db, now = () => new Date() }) {
   async function context(request, tx) { const user = await authorizeContext({ db, request, reader: tx || db, now, roles: ['ADMIN'] }); if (user.companyId !== request.data.companyId) fail('permission-denied', '로그인한 회사에서 조회해 주세요.'); return user; }
   async function load(tx, parent) {
-    const [sales, payments, state, ledger] = await Promise.all([tx.get(parent.collection('erpMovements').limit(20001)), tx.get(parent.collection('erpReceipts').limit(20001)), tx.get(parent.collection('erpState').doc('receivables')), tx.get(parent.collection('erpState').doc('ledger'))]);
-    if (sales.size > 20000 || payments.size > 20000) fail('resource-exhausted', '원장 20,000행을 초과했습니다. 자료 분할 집계를 요청해 주세요.');
-    for (const snap of [...sales.docs,...payments.docs,state,ledger]) if (snap.exists) master.verifyTenant(snap.data(), parent.id);
+    const [sales, payments, state, ledger, settlements, settlementState] = await Promise.all([tx.get(parent.collection('erpMovements').limit(20001)), tx.get(parent.collection('erpReceipts').limit(20001)), tx.get(parent.collection('erpState').doc('receivables')), tx.get(parent.collection('erpState').doc('ledger')),tx.get(parent.collection('erpSettlements').limit(20001)),tx.get(parent.collection('erpState').doc('settlements'))]);
+    if (sales.size > 20000 || payments.size > 20000 || settlements.size > 20000) fail('resource-exhausted', '원장 20,000행을 초과했습니다. 자료 분할 집계를 요청해 주세요.');
+    for (const snap of [...sales.docs,...payments.docs,...settlements.docs,state,ledger,settlementState]) if (snap.exists) master.verifyTenant(snap.data(), parent.id);
     const paid = payments.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-    return { events: [...salesEvents(sales.docs.map(doc => ({ ...doc.data(), id: doc.id }))), ...paymentEvents(paid)], paid, state: state.data() || {}, ledger: ledger.data() || {} };
+    return { events: [...salesEvents(sales.docs.map(doc => ({ ...doc.data(), id: doc.id }))), ...paymentEvents(paid)], paid, settlements:settlements.docs.map(doc=>({...doc.data(),id:doc.id})), settlementState:settlementState.data() || {}, state: state.data() || {}, ledger: ledger.data() || {} };
   }
   async function plan(tx, parent, job) {
     const data = await load(tx, parent), input = job.input;
     if (data.state.lastDate && input.date < data.state.lastDate) fail('failed-precondition', `마지막 수금 처리일 ${data.state.lastDate} 이후로 등록해 주세요.`);
+    if (data.settlementState.lastDate && input.date < data.settlementState.lastDate) fail('failed-precondition', `마지막 문서 배분·기일 처리일 ${data.settlementState.lastDate} 이후로 등록해 주세요.`);
     let normalized = { ...input };
     if (input.type === 'CANCEL') {
       const source = data.paid.find(row => row.id === input.sourceId);
@@ -76,9 +78,11 @@ function createErpFinanceService({ db, now = () => new Date() }) {
     const delta = nextEvents.find(row => row.id === job.id).receipt;
     return { entry, before: balance, after: M.signed(balance - delta), state: data.state, fingerprint: M.hash({ input, state: data.state, ledger: data.ledger, events: data.events, partner: partner.data(), entry }) };
   }
+  const settlement = createSettlementHandler({db,now,context,load});
   return async request => {
     const input = M.exactObject(request.data, ['action','companyId','from','to','partnerId','offset','snapshot','id','input','fingerprint']);
-    if (!['report','preview','commit'].includes(input.action)) fail('invalid-argument', '수금 요청을 확인해 주세요.');
+    if (!['report','preview','commit','settlementReport','settlementPreview','settlementCommit'].includes(input.action)) fail('invalid-argument', '수금 요청을 확인해 주세요.');
+    if (input.action.startsWith('settlement')) {const user=await context(request);return settlement(request,input,user,db.collection('companies').doc(user.companyId));}
     M.exactObject(input,['action','companyId',...({report:['from','to','partnerId','offset','snapshot'],preview:['id','input'],commit:['id','fingerprint']})[input.action]]);
     const user = await context(request), parent = db.collection('companies').doc(user.companyId);
     if (input.action === 'report') {

@@ -1,7 +1,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { test, expect } = require('@playwright/test');
 const { PROJECT_ID, WEB_ORIGIN, HOSTS, assertE2EEnvironment } = require('../../scripts/e2e/safety.cjs');
-const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, readErpInventory, clearErpFixture } = require('../../scripts/e2e/fixtures.cjs');
+const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture } = require('../../scripts/e2e/fixtures.cjs');
 const { workbook: erpWorkbook, opening: erpOpening, movement: erpMovement } = require('../../functions/tests/erp-import-fixtures.cjs');
 
 assertE2EEnvironment();
@@ -389,6 +389,13 @@ test('ERP company masters and name search show independent inventory on desktop 
     await expect(actor.page.getByText('재고 미등록', { exact: true })).toBeVisible();
   }
   await createItem(owner, '자동점검 A품목', 1000);
+  await seedErpPendingOpening(fixtures.companyA);
+  await owner.page.getByRole('button',{name:'재고 새로고침',exact:true}).click();
+  const pendingPanel=owner.page.getByRole('region',{name:'품목 재고현황'});
+  await expect(pendingPanel.getByText('이관 대기 수량 (원본 기준)',{exact:true})).toBeVisible({timeout:65000});
+  await expect(pendingPanel.getByText('2026-11-11 기준 · 원본 수량 209 EA',{exact:true})).toBeVisible();
+  await expect(pendingPanel.getByText('원가 미확정',{exact:true})).toHaveCount(2);
+  await owner.page.screenshot({path:testInfo.outputPath('erp-pending-inventory.png'),fullPage:true});
   const stock = await seedErpBalance(fixtures.companyA, 'ERP-001', 'WH-001');
   await owner.page.getByLabel('품목명 검색', { exact: true }).fill('자동점검 A');
   const panel = owner.page.getByRole('region', { name: '품목 재고현황' });
@@ -594,6 +601,31 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   await collection.getByLabel('수금 처리일 *', {exact: true}).fill('2026-11-12'); await collection.getByLabel('수금·환불 금액 *', {exact: true}).fill('300'); await collection.getByLabel('수금 처리 사유 *', {exact: true}).fill('부분 입금 확인');
   await collection.getByRole('button', {name: '수금 검증·미리보기', exact: true}).click(); await expect(collection.getByText('미수잔액: 1,100 → 800 KRW', {exact: true})).toBeVisible({timeout: 65000});
   await collection.getByRole('checkbox', {name: '거래처·통화·금액과 잔액을 확인했습니다.', exact: true}).check(); await collection.getByRole('button', {name: '수금 처리 확정', exact: true}).click(); await expect(collection.getByText('수금 원장 반영 완료', {exact: true})).toBeVisible({timeout: 65000});
+  const settlements = page.getByRole('region', {name: '출고 문서별 수금 배분·연체', exact: true});
+  await settlements.getByRole('button', {name: '문서에 배분', exact: true}).click();
+  const saleNumber = saleJob.import.preview.rows[0].documentNo;
+  await settlements.getByRole('textbox', {name: '배분액 ' + saleNumber, exact: true}).fill('300');
+  await settlements.getByLabel('배분·기일 적용일 *', {exact: true}).fill('2026-11-12');
+  await settlements.getByLabel('배분·기일 처리 사유 *', {exact: true}).fill('출고 문서 부분 수금 배분');
+  await settlements.getByRole('button', {name: '배분·기일 검증·미리보기', exact: true}).click();
+  await expect(settlements.getByText('원수금 미배분 잔액: 300 → 0', {exact: true})).toBeVisible({timeout:65000});
+  await settlements.getByRole('checkbox', {name:'문서·금액·적용일을 확인했습니다.',exact:true}).check();
+  await settlements.getByRole('button', {name:'배분·기일 확정',exact:true}).click();
+  await expect(settlements.getByText('배분·지급기일 반영 완료',{exact:true})).toBeVisible({timeout:65000});
+  await settlements.getByRole('button', {name:'지급기일 설정',exact:true}).click();
+  await settlements.getByLabel('배분·기일 적용일 *', {exact: true}).fill('2026-11-12');
+  await settlements.getByLabel('지급기일 (공란이면 미설정)', {exact: true}).fill('2026-11-12');
+  await settlements.getByLabel('배분·기일 처리 사유 *', {exact: true}).fill('약정 지급기일 확인');
+  await settlements.getByRole('button', {name: '배분·기일 검증·미리보기', exact: true}).click();
+  await settlements.getByRole('checkbox', {name:'문서·금액·적용일을 확인했습니다.',exact:true}).check();
+  await settlements.getByRole('button', {name:'배분·기일 확정',exact:true}).click();
+  await expect(settlements.getByText('배분·지급기일 반영 완료',{exact:true})).toBeVisible({timeout:65000});
+  await settlements.getByLabel('연체 조회 기준일',{exact:true}).fill('2026-11-13');
+  await settlements.getByRole('button',{name:'문서 잔액 조회',exact:true}).click();
+  const documentTable=settlements.getByRole('table',{name:'출고 문서별 잔액·연체',exact:true});
+  await expect(documentTable.getByRole('cell',{name:'1일',exact:true})).toBeVisible({timeout:65000});
+  await expect(documentTable.getByRole('cell',{name:'800',exact:true})).toHaveCount(2);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await page.screenshot({path: testInfo.outputPath('erp-receivables.png'), fullPage: true});
   await page.getByRole('button', {name: '보관·차용', exact: true}).click(); const custody = page.getByRole('region', {name: '보관 처리 등록', exact: true});
   await custody.getByRole('combobox', {name: '보관 품목 *', exact: true}).selectOption(part.id); await custody.getByRole('combobox', {name: '보관 창고 *', exact: true}).selectOption('warehouse'); await custody.getByRole('combobox', {name: '소유 거래처 *', exact: true}).selectOption('owner');

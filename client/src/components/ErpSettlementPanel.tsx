@@ -1,0 +1,64 @@
+import { useEffect, useRef, useState } from 'react';
+import { erpFinance as api, erpMoney as money, erpToday } from '../services/erpAccountService';
+import type { SettlementInput, SettlementJob, SettlementReport } from '../services/erpAccountService';
+import { getErrorMessage } from '../utils/errors';
+const labels = {ALLOCATE: '수금 배분', RELEASE: '배분 해제', TERMS: '지급기일 변경'};
+
+export function ErpSettlementPanel({companyId, refreshKey}: {companyId: string; refreshKey: number}) {
+  const [asOf,setAsOf] = useState(erpToday), [partner,setPartner] = useState(''), [overdueOnly,setOverdueOnly] = useState(false);
+  const [report,setReport] = useState<SettlementReport | null>(null), [busy,setBusy] = useState(true), [error,setError] = useState('');
+  const [input,setInput] = useState<SettlementInput>({type:'ALLOCATE',date:erpToday(),notes:'',receiptId:'',lines:[]});
+  const [job,setJob] = useState<SettlementJob | null>(null), [confirmed,setConfirmed] = useState(false);
+  const live=useRef(true),lock=useRef(false),attempt=useRef(crypto.randomUUID());
+  useEffect(()=>{live.current=true;setBusy(true);void api.settlements(companyId,erpToday()).then(r=>{if(live.current){setReport(r);setAsOf(r.asOf);setJob(null);setConfirmed(false);attempt.current=crypto.randomUUID();}}).catch(e=>{if(live.current)setError(getErrorMessage(e));}).finally(()=>{if(live.current)setBusy(false);});return()=>{live.current=false;};},[companyId,refreshKey]);
+  function change(patch: Partial<SettlementInput>) {setInput(v=>({...v,...patch}));setJob(null);setConfirmed(false);setError('');attempt.current=crypto.randomUUID();}
+  async function run(work:()=>Promise<void>){if(busy||lock.current)return;lock.current=true;setBusy(true);setError('');try{await work();}catch(e){if(live.current)setError(getErrorMessage(e));}finally{lock.current=false;if(live.current)setBusy(false);}}
+  async function query(){const r=await api.settlements(companyId,asOf);if(live.current)setReport(r);}
+  const receipt=report?.receipts.find(r=>r.id===input.receiptId),done=job?.status==='COMMITTED';
+  const documents=report?.documents.filter(d=>(!partner||d.partnerId===partner)&&(!overdueOnly||d.overdueAmount>0))||[];
+  const eligible=report?.documents.filter(d=>d.partnerId===receipt?.partnerId&&d.currency===receipt?.currency&&d.balance>0)||[];
+  const partners=[...new Map(report?.summaries.map(row=>[row.partnerId,row.partnerName])).entries()];
+  function reviewInput():SettlementInput {
+    const common={type:input.type,date:input.date,notes:input.notes};
+    if(input.type==='TERMS')return {...common,documentId:input.documentId,dueDate:input.dueDate||''};
+    if(input.type==='RELEASE')return {...common,sourceId:input.sourceId};
+    return {...common,receiptId:input.receiptId,lines:input.lines?.filter(l=>l.amount.trim()!=='')};
+  }
+  return <section className="wf-panel erp-settlements" aria-label="출고 문서별 수금 배분·연체" aria-busy={busy}>
+    <h2 className="wf-section-title">출고 문서별 수금 배분·연체</h2>
+    <p className="wf-muted">등록된 수금을 출고 문서에 배분합니다. 환불액은 거래처의 배분 가능 총액에서 제외합니다. 지급기일 다음 날부터 문서의 남은 미수금이 연체금액에 포함됩니다. 조회 기준일 이전의 매출·반품·수금·배분·기일 변경을 반영합니다.</p>
+    <form onSubmit={e=>{e.preventDefault();void run(query);}}><fieldset disabled={busy} className="erp-form-fields">
+      <label className="wf-field"><span>연체 조회 기준일</span><input className="wf-input" type="date" required value={asOf} onChange={e=>{setAsOf(e.target.value);setReport(null);}} /></label>
+      <label className="wf-field"><span>문서 조회 거래처</span><select className="wf-input" value={partner} onChange={e=>setPartner(e.target.value)}><option value="">전체 거래처</option>{partners.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label>
+      <label className="erp-active-field"><input type="checkbox" checked={overdueOnly} onChange={e=>setOverdueOnly(e.target.checked)} />연체 문서만 보기</label>
+      <div className="erp-actions"><button className="wf-btn">문서 잔액 조회</button></div>
+    </fieldset></form>
+    {report && <>
+      <p>조회 기준일: <strong>{report.asOf}</strong> · 지급기일 미설정 문서는 연체일수를 계산하지 않습니다.</p>
+      <div className="erp-table-scroll"><table className="erp-table"><caption>문서 잔액과 미배분 수금 대사</caption><thead><tr><th>거래처·통화</th><th>문서 잔액 합계</th><th>미배분 순수금</th><th>거래처 미수잔액</th><th>문서 연체금액</th><th>기일 미설정 잔액</th></tr></thead><tbody>{report.summaries.filter(r=>!partner||r.partnerId===partner).map(r=><tr key={`${r.partnerId}:${r.currency}`}><td>{r.partnerName} · {r.currency}</td>{(['documentBalance','unallocated','balance','overdueAmount','undated'] as const).map(key=><td className="erp-number" key={key}>{money(r[key],r.currency)}</td>)}</tr>)}</tbody></table></div>
+      <p className="wf-muted">거래처 미수잔액 = 문서 잔액 합계 − 미배분 순수금. 미배분 수금과 반품으로 생긴 문서 초과수금은 연체 문서에 자동 상계하지 않습니다. 환불은 미배분 순수금에 반영되며, 문서 초과수금은 배분을 해제해 정리할 수 있습니다.</p>
+      <div className="erp-table-scroll"><table className="erp-table"><caption>출고 문서별 잔액·연체</caption><thead><tr><th>출고일·문서번호</th><th>거래처·통화</th><th>순청구액</th><th>배분 수금액</th><th>문서 잔액</th><th>지급기일</th><th>연체일수</th><th>연체금액</th><th>처리</th></tr></thead><tbody>{documents.map(d=><tr key={d.id}><td>{d.date}<small className="erp-cell-note">{d.documentNo}</small></td><td>{d.partnerName} · {d.currency}</td>{(['billed','allocated','balance'] as const).map(key=><td className="erp-number" key={key}>{money(d[key],d.currency)}{key==='balance'&&d.credit>0&&<small className="erp-cell-note">초과 수금 · 배분 재검토</small>}</td>)}<td>{d.dueDate||'미설정'}</td><td>{!d.dueDate?'미설정':`${d.overdueDays}일`}</td><td className="erp-number">{money(d.overdueAmount,d.currency)}</td><td><button className="wf-btn" disabled={busy} onClick={()=>change({type:'TERMS',documentId:d.id,dueDate:d.dueDate,date:erpToday(),notes:''})}>지급기일 설정</button></td></tr>)}</tbody></table></div>
+      {!documents.length&&<p>조건에 맞는 출고 문서가 없습니다.</p>}
+      <div className="erp-table-scroll"><table className="erp-table"><caption>수금별 배분 현황</caption><thead><tr><th>수금일·참조번호</th><th>거래처·통화</th><th>원수금액</th><th>배분액</th><th>원수금 미배분액</th><th>처리</th></tr></thead><tbody>{report.receipts.filter(r=>!partner||r.partnerId===partner).map(r=><tr key={r.id}><td>{r.date}<small className="erp-cell-note">{r.reference||r.id}</small></td><td>{r.partnerName} · {r.currency}</td>{(['amount','allocated','available'] as const).map(key=><td key={key} className="erp-number">{money(r[key],r.currency)}</td>)}<td>{r.cancelled?'취소된 수금':<button className="wf-btn" disabled={busy||r.allocatable<=0} onClick={()=>change({type:'ALLOCATE',receiptId:r.id,lines:[],date:erpToday(),notes:''})}>문서에 배분</button>}</td></tr>)}</tbody></table></div>
+    </>}
+    <h3>{labels[input.type]}</h3>
+    <form onSubmit={e=>{e.preventDefault();void run(async()=>{const r=await api.previewSettlement(companyId,attempt.current,reviewInput());if(live.current){setJob(r.job);setConfirmed(false);}});}}><fieldset disabled={busy||done} className="erp-form-fields">
+      <label className="wf-field"><span>배분 처리유형</span><select className="wf-input" value={input.type} onChange={e=>change({type:e.target.value as SettlementInput['type']})}><option value="ALLOCATE">수금 배분</option>{input.documentId&&<option value="TERMS">지급기일 변경</option>}{input.sourceId&&<option value="RELEASE">배분 해제</option>}</select></label>
+      <label className="wf-field"><span>배분·기일 적용일 *</span><input className="wf-input" type="date" required min={report?.lastDate||undefined} value={input.date} onChange={e=>change({date:e.target.value})} /></label>
+      {input.type==='ALLOCATE'&&<><label className="wf-field erp-form-wide"><span>배분할 수금 *</span><select className="wf-input" required value={input.receiptId} onChange={e=>change({receiptId:e.target.value,lines:[]})}><option value="">수금 선택</option>{report?.receipts.filter(r=>!r.cancelled&&r.allocatable>0).map(r=><option key={r.id} value={r.id}>{r.date} · {r.partnerName} · {r.reference||r.id} · 배분 가능 {money(r.allocatable,r.currency)} {r.currency}</option>)}</select></label>
+        <div className="erp-form-wide"><p className="wf-muted">금액을 입력한 문서만 배분합니다. 원수금과 같은 거래처·통화의 미수 문서가 표시됩니다.</p>{eligible.map(d=><label key={d.id} className="wf-field"><span>배분액 · {d.documentNo} ({money(d.balance,d.currency)} {d.currency} 미수)</span><input className="wf-input" inputMode="decimal" aria-label={`배분액 ${d.documentNo}`} value={input.lines?.find(l=>l.documentId===d.id)?.amount||''} onChange={e=>change({lines:[...(input.lines||[]).filter(l=>l.documentId!==d.id),{documentId:d.id,amount:e.target.value}]})} /></label>)}{receipt&&!eligible.length&&<p>배분할 미수 문서가 없습니다.</p>}</div></>}
+      {input.type==='TERMS'&&<><p className="erp-form-wide">문서: {report?.documents.find(d=>d.id===input.documentId)?.documentNo}</p><label className="wf-field"><span>지급기일 (공란이면 미설정)</span><input className="wf-input" type="date" value={input.dueDate||''} onChange={e=>change({dueDate:e.target.value})} /></label></>}
+      {input.type==='RELEASE'&&<p className="erp-form-wide">선택한 배분 건 전체를 해제합니다. 수금 원장은 유지되고 해당 금액을 다른 문서에 다시 배분할 수 있습니다.</p>}
+      <label className="wf-field erp-form-wide"><span>배분·기일 처리 사유 *</span><input className="wf-input" required maxLength={500} value={input.notes} onChange={e=>change({notes:e.target.value})} /></label>
+      <div className="erp-actions"><button className="wf-btn wf-btn-primary">배분·기일 검증·미리보기</button></div>
+    </fieldset></form>
+    {job&&<div aria-label="배분·기일 미리보기"><h3>{labels[job.input.type]} 확인</h3><p>{job.summary.partnerName} · {job.input.date}</p>
+      {job.input.type==='TERMS'?<p>{job.summary.documentNo} · 지급기일 {job.summary.previousDueDate||'미설정'} → {job.summary.dueDate||'미설정'}</p>:<><p>처리 합계 {money(job.summary.total||0,job.summary.currency)} {job.summary.currency}</p>{job.summary.lines?.map(l=><p key={l.documentId}>{l.documentNo} · {money(l.amountMinor,job.summary.currency)} {job.summary.currency}</p>)}{job.summary.after!=null&&<p>원수금 미배분 잔액: {money(job.summary.before||0,job.summary.currency)} → {money(job.summary.after,job.summary.currency)}</p>}</>}
+      {done?<p role="status" className="erp-success">배분·지급기일 반영 완료</p>:<><label className="erp-active-field"><input type="checkbox" disabled={busy} checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} />문서·금액·적용일을 확인했습니다.</label><button className="wf-btn wf-btn-primary" disabled={busy||!confirmed} onClick={()=>void run(async()=>{const r=await api.commitSettlement(companyId,job);if(live.current)setJob(r.job);await query();})}>배분·기일 확정</button></>}
+      <button className="wf-btn" disabled={busy} onClick={()=>change({type:'ALLOCATE',receiptId:'',lines:[],notes:''})}>{done?'새 배분 등록':'입력 재검토'}</button>
+    </div>}
+    <details><summary>수금 배분·해제 이력</summary><div className="erp-table-scroll"><table className="erp-table"><thead><tr><th>적용일·거래처</th><th>출고 문서별 배분액</th><th>상태·사유</th><th>처리</th></tr></thead><tbody>{report?.allocations.map(a=><tr key={a.id}><td>{a.date} · {a.partnerName}</td><td>{a.lines.map(l=><div key={l.documentId}>{l.documentNo} · {money(l.amountMinor,a.currency)} {a.currency}</div>)}</td><td>{a.receiptCancelled?'원수금 취소':a.released?'배분 해제':'배분 중'}<small className="erp-cell-note">{a.notes}{a.released&&` · 해제 ${a.releaseDate}: ${a.releaseNotes}`}</small></td><td>{a.active&&<button className="wf-btn" disabled={busy} onClick={()=>change({type:'RELEASE',sourceId:a.id,date:erpToday(),notes:''})}>배분 해제</button>}</td></tr>)}</tbody></table></div></details>
+    <details><summary>지급기일 변경 이력</summary>{report?.terms.map(t=><p key={t.id}>{t.date} · {t.partnerName} · {t.documentNo} · 지급기일 {t.dueDate||'미설정'} · {t.notes}</p>)}</details>
+    {error&&<p role="alert" className="erp-error">{error}</p>}{busy&&<p role="status">문서 잔액과 수금 배분을 확인하고 있습니다.</p>}
+  </section>;
+}

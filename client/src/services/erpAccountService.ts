@@ -26,10 +26,23 @@ export interface ReceiptJob { id: string; companyId: string; fingerprint: string
 export interface ReceivableRow { partnerId: string; partnerName: string; currency: string; opening: number; sales: number; tax: number; billed: number; receipts: number; balance: number }
 export interface ReceivableEvent { id: string; partnerId: string; partnerName: string; currency: string; date: string; kind: string; documentNo: string; supply: number; tax: number; gross: number; receipt: number; method?: string; notes?: string }
 export interface ReceivableReport { companyId: string; snapshot: string; rows: ReceivableRow[]; events: ReceivableEvent[]; nextOffset: number | null; lastDate: string | null }
+export interface SettlementInput {type: 'ALLOCATE' | 'RELEASE' | 'TERMS'; date: string; notes: string; receiptId?: string; lines?: {documentId: string; amount: string}[]; sourceId?: string; documentId?: string; dueDate?: string}
+export interface SettlementJob {id: string; companyId: string; fingerprint: string; status: 'PENDING' | 'COMMITTED'; input: SettlementInput; summary: {type: string; partnerName: string; currency: string; total?: number; before?: number; after?: number; lines?: {documentId: string; documentNo: string; amountMinor: number}[]; documentNo?: string; previousDueDate?: string; dueDate?: string}}
+export interface SettlementReport {
+  companyId: string; asOf: string; lastDate: string | null;
+  documents: {id: string; documentNo: string; date: string; partnerId: string; partnerName: string; currency: string; billed: number; allocated: number; balance: number; dueDate: string; overdueDays: number; overdueAmount: number; credit: number}[];
+  receipts: {id: string; date: string; reference: string; partnerId: string; partnerName: string; currency: string; amount: number; allocated: number; available: number; allocatable: number; cancelled: boolean}[];
+  allocations: {id: string; date: string; receiptId: string; partnerName: string; currency: string; active: boolean; released: boolean; receiptCancelled: boolean; releaseDate: string; releaseNotes: string; notes: string; lines: {documentId: string; documentNo: string; amountMinor: number}[]}[];
+  terms: {id: string; date: string; documentNo: string; partnerName: string; dueDate: string; notes: string}[];
+  summaries: {partnerId: string; partnerName: string; currency: string; documentBalance: number; unallocated: number; balance: number; overdueAmount: number; credit: number; undated: number}[];
+}
 export const erpFinance = {
   report: (companyId: string, from: string, to: string, partnerId = '', offset = 0, snapshot?: string) => call<ReceivableReport>('manageErpFinance', companyId, 'report', { from, to, partnerId, offset, ...(snapshot ? {snapshot} : {}) }),
   preview: (companyId: string, id: string, input: ReceiptInput) => call<{job: ReceiptJob}>('manageErpFinance', companyId, 'preview', {id, input}),
   commit: (companyId: string, job: ReceiptJob) => call<{job: ReceiptJob}>('manageErpFinance', companyId, 'commit', {id: job.id, fingerprint: job.fingerprint}),
+  settlements: (companyId: string, to: string, partnerId = '') => call<SettlementReport>('manageErpFinance', companyId, 'settlementReport', {to, partnerId}),
+  previewSettlement: (companyId: string, id: string, input: SettlementInput) => call<{job: SettlementJob}>('manageErpFinance', companyId, 'settlementPreview', {id,input}),
+  commitSettlement: (companyId: string, job: SettlementJob) => call<{job: SettlementJob}>('manageErpFinance', companyId, 'settlementCommit', {id:job.id,fingerprint:job.fingerprint}),
 };
 export interface CustodyLot { id: string; itemId: string; code: string; name: string; warehouseId: string; warehouseName: string; ownerPartnerId: string; ownerName: string; availableQuantityScaled: number; borrowedQuantityScaled: number; deliveredQuantityScaled: number; reference: string; date: string; cancelled?: boolean }
 export interface Borrowing { id: string; lotId: string; name: string; code: string; warehouseName: string; ownerName: string; buyerName: string; outstandingQuantityScaled: number; outstandingValue: number; date: string }

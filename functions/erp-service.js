@@ -125,6 +125,15 @@ function createErpService({ db, now = () => new Date() }) {
         const item = await tx.get(companyRef.collection('erpItems').doc(itemId));
         if (!item.exists) fail('not-found', '품목을 찾을 수 없습니다.');
         verifyTenant(item.data(), companyId);
+        // Imported reference quantities awaiting cost are not posted stock or zero-value assets.
+        let pendingOpening = null;
+        const pending = item.data().pendingOpening;
+        if (pending?.status === 'PENDING_COST') {
+          const M = require('./erp-ledger-model');
+          M.date(pending.basisDate);
+          if (pending.quantity !== null && (!Number.isFinite(pending.quantity) || pending.quantity < 0 || !Number.isSafeInteger(Math.round(pending.quantity * 10000)))) fail('failed-precondition','이관 대기 수량을 확인해 주세요.');
+          pendingOpening = {basisDate:pending.basisDate,quantity:pending.quantity,source:text(pending.source,'원본 위치',200,true),unit:text(pending.unit,'원본 단위',20,true)};
+        }
         if (item.data().itemType === 'BUNDLE') {
           const components = item.data().components, stockByPart = [], allWarehouses = new Set();
           if (!components?.length || components.length > 20) fail('failed-precondition','조합 구성을 확인해 주세요.');
@@ -172,7 +181,7 @@ function createErpService({ db, now = () => new Date() }) {
         const quantity = rows.length ? rows.reduce((sum, row) => sum + Math.round(row.quantity * 10000), 0) / 10000 : null;
         const value = current.role === 'ADMIN' && rows.length ? rows.reduce((sum, row) => sum + row.value, 0) : null;
         if (quantity !== null && !Number.isSafeInteger(Math.round(quantity * 10000)) || value !== null && !Number.isSafeInteger(value)) fail('failed-precondition', '재고 합계 범위를 확인해 주세요.');
-        return { item: view('items', item.id, item.data(), current.role === 'ADMIN'), status: rows.length ? 'RECORDED' : 'UNINITIALIZED',
+        return { item: view('items', item.id, item.data(), current.role === 'ADMIN'), pendingOpening, status: rows.length ? 'RECORDED' : pendingOpening ? 'PENDING_COST' : 'UNINITIALIZED',
           quantity, ...(current.role === 'ADMIN' ? { value, averagePrice: quantity > 0 ? value / quantity : null, currency: 'KRW' } : {}), warehouses: rows, checkedAt: now().toISOString() };
       });
     }
@@ -229,7 +238,7 @@ function createErpService({ db, now = () => new Date() }) {
         fail('already-exists', kind === 'partners' ? '같은 코드 또는 국가·등록번호의 거래처가 있습니다.' : '이미 등록된 코드입니다. 기존 자료를 확인해 주세요.');
       }
       const timestamp = now().toISOString();
-      const record = { ...values, companyId, revision: data.expectedRevision + 1,
+      const record = { ...values, ...(kind === 'items' && previous?.pendingOpening ? {pendingOpening:previous.pendingOpening} : {}), companyId, revision: data.expectedRevision + 1,
         createdAt: previous?.createdAt || timestamp, createdBy: previous?.createdBy || user.uid, updatedAt: timestamp, updatedBy: user.uid };
       for (const key of keyDocs) if (!nextKeys.includes(key.id) && key.data()?.recordId === id) tx.delete(key.ref);
       for (const key of nextKeys) tx.set(reservations.doc(key), { recordId: id, kind, companyId });
