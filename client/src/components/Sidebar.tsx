@@ -5,6 +5,7 @@ import type { LucideIcon } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
 import { useAuthStore } from '../store/authStore';
 import { getRoleDisplayName } from '../utils/roleDisplay';
+import { ErpEntry } from './ErpEntry';
 
 interface SidebarProps {
   userRole: string;
@@ -62,6 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ userRole, onItemClick, appeara
           <div className="sidebar-brand-mark w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center font-black text-white italic shadow-lg shadow-indigo-900/20 group-hover:scale-110 transition-transform">HF</div>
           <div className="sidebar-brand-title text-2xl font-black tracking-tighter text-white group-hover:text-indigo-400 transition-colors">{appearance === 'workflow' ? 'HR Flow' : <>HR <span className="text-indigo-400">FLOW</span></>}</div>
         </NavLink>
+        {user && userData?.companyId && !isSuperAdmin && <span className="erp-sidebar-entry"><ErpEntry onNavigate={onItemClick} /></span>}
         {!isSuperAdmin && showNotifications && <NotificationBell currentUserId={user?.uid || ''} onNavigate={onItemClick} />}
       </div>
 

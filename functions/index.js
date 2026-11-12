@@ -12,6 +12,12 @@ const { createAttachmentService } = require('./attachment-service');
 const { createPayrollService } = require('./payroll-service');
 const { renderMonthlyPayrollPdf, renderAnnualPayrollPdf } = require('./payroll-pdf');
 const { authorizeContext } = require('./security-context');
+const { createErpService } = require('./erp-service');
+const { createErpImportService } = require('./erp-import-service');
+const { createErpCorrectionService } = require('./erp-correction-service');
+const { createErpReportService } = require('./erp-report-service');
+const { createErpDocumentService } = require('./erp-document-service');
+const { renderErpDocumentPdf } = require('./erp-document-pdf');
 
 initializeApp();
 const dependencies = () => ({ db: getFirestore('(default)'), auth: getAuth(), bucket: getStorage().bucket('weberp-8f25f.firebasestorage.app') });
@@ -37,6 +43,11 @@ exports.manageOfficialLetters = callable((request, dep) => createOfficialLetterS
   renderPdf: renderOfficialLetterPdf })(request), { memory: '512MiB' });
 exports.adminCreateMember = callable((request, dep) => createMemberService(dep)(request));
 exports.accountSecurity = callable((request, dep) => createAccountSecurityService(dep)(request));
+exports.manageErp = callable((request, dep) => createErpService(dep)(request));
+exports.manageErpImport = callable((request, dep) => createErpImportService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
+exports.manageErpCorrection = callable((request, dep) => createErpCorrectionService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
+exports.manageErpReport = callable((request, dep) => createErpReportService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
+exports.manageErpDocuments = callable((request, dep) => createErpDocumentService({ ...dep, renderPdf: renderErpDocumentPdf })(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.managePayroll = callable((request, dep) => createPayrollService({ ...dep,
   renderMonthlyPdf: renderMonthlyPayrollPdf, renderAnnualPdf: renderAnnualPayrollPdf })(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.checkDomainAvailability = callable((request, dep) => createAdminSecurityService(dep).checkDomain(request));

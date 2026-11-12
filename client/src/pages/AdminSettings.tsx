@@ -495,7 +495,7 @@ export const AdminSettings: React.FC = () => {
                   <Clock className="w-6 h-6" />
                 </div>
                 <div>
-                  <p className="settings-help">최종 시스템 백업 일시</p>
+                  <p className="settings-help">최종 HR 데이터 다운로드 일시</p>
                   <p className="settings-backup-date">
                     {companyData?.lastBackupAt 
                       ? new Date(companyData.lastBackupAt).toLocaleString('ko-KR', { 
@@ -526,7 +526,8 @@ export const AdminSettings: React.FC = () => {
                 <div className="settings-note settings-backup-note">
                   <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
                   <p className="settings-note-text">
-                    백업 프로세스는 브라우저 내에서 안전하게 처리되며 즉시 JSON 파일로 다운로드됩니다. <br/>
+                    회사 기본 정보와 인사·급여·휴가·지출 등 HR 데이터를 JSON 파일로 다운로드합니다. <br/>
+                    ERP 재고·입출고·발행 문서와 인감·첨부 파일은 포함되지 않습니다. ERP 복구에는 별도 DB·파일 백업이 필요합니다. <br/>
                     데이터 크기에 따라 수 초에서 수십 초가 소요될 수 있으니 창을 닫지 말고 기다려주세요.
                   </p>
                 </div>
@@ -541,7 +542,7 @@ export const AdminSettings: React.FC = () => {
                   ) : (
                     <CloudDownload className="w-5 h-5" />
                   )}
-                  <span>전체 데이터 로컬 백업 다운로드</span>
+                  <span>HR 데이터 로컬 백업 다운로드</span>
                 </Button>
               </form>
             </div>

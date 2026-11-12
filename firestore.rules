@@ -119,6 +119,10 @@ service cloud.firestore {
         request.resource.data.status in ['ACTIVE', 'SUSPENDED'] &&
         onlyChanged(['nameKo', 'nameEn', 'status', 'updatedAt', 'updatedBy', 'lastBackupAt'])) ||
         (companyAdmin(id) && onlyChanged(['updatedAt', 'updatedBy', 'lastBackupAt']));
+      // ERP uses authenticated callable services, including quantity-only responses.
+      match /{erpCollection}/{recordId} {
+        allow read, write: if false;
+      }
     }
     match /tenantRegistry/{document=**} { allow read, write: if false; }
     match /divisions/{id} {

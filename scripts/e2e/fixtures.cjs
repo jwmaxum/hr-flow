@@ -215,6 +215,9 @@ async function clearFixtures() {
   // Only this run's company IDs and exact UIDs may be removed. No project-wide
   // clear/reset endpoint is used, even though this is an ephemeral demo project.
   for (const companyId of [current.fixtures.companyA, current.fixtures.companyB]) {
+    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings']) {
+      await attempt(() => current.db.recursiveDelete(current.db.doc(`companies/${companyId}`).collection(name)));
+    }
     for (const collection of ['expenses', 'leaves', 'attendance', 'notices', 'audit_logs', 'salary_history', 'payroll_records', 'payroll_drafts']) {
       await attempt(async () => {
         const records = await current.db.collection(collection).where('companyId', '==', companyId).get();
@@ -223,6 +226,7 @@ async function clearFixtures() {
       });
     }
     await attempt(() => current.bucket.deleteFiles({ prefix: `companies/${companyId}/` }));
+    await attempt(() => current.db.doc(`officialLetterSettings/${companyId}`).delete());
   }
   for (const reference of current.documentPaths) await attempt(() => current.db.doc(reference).delete());
   for (const uid of current.createdUsers) await attempt(() => current.auth.deleteUser(uid));
@@ -231,4 +235,31 @@ async function clearFixtures() {
   if (failures.length) throw new Error('Could not completely remove isolated E2E fixtures.');
 }
 
-module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll };
+async function seedErpBalance(companyId, itemCode, warehouseCode) {
+  const current = runtime();
+  if (![current.fixtures.companyA, current.fixtures.companyB].includes(companyId) || itemCode !== 'ERP-001' || warehouseCode !== 'WH-001') throw new Error('Only synthetic ERP fixtures may be seeded.');
+  const parent = current.db.doc(`companies/${companyId}`);
+  const items = await parent.collection('erpItems').where('code', '==', itemCode).get();
+  const warehouses = await parent.collection('erpWarehouses').where('code', '==', warehouseCode).get();
+  if (items.size !== 1 || warehouses.size !== 1) throw new Error('Expected generated ERP master data.');
+  const itemId = items.docs[0].id, warehouseId = warehouses.docs[0].id;
+  await parent.collection('erpInventory').doc('synthetic-balance').set({ companyId, itemId, warehouseId,
+    quantity: 7, value: 7000, currency: 'KRW', updatedAt: new Date().toISOString() });
+  return { itemId, warehouseId };
+}
+
+async function readErpInventory(companyId) {
+  const current = runtime();
+  if (![current.fixtures.companyA, current.fixtures.companyB].includes(companyId)) throw new Error('Only generated ERP company fixtures may be read.');
+  const parent = current.db.doc(`companies/${companyId}`);
+  const [balances, items, partners, ledger] = await Promise.all(['erpInventory','erpItems','erpPartners','erpMovements'].map(name => parent.collection(name).get()));
+  return { balances: balances.docs.map(doc => ({ quantity: doc.data().quantity, value: doc.data().value })), itemCount: items.size, partnerCount: partners.size, ledgerCount: ledger.size };
+}
+async function clearErpFixture(companyId) {
+  const current = runtime();
+  if (companyId !== current.fixtures.companyA) throw new Error('Only generated company A ERP fixtures may be reset.');
+  const parent = current.db.doc(`companies/${companyId}`);
+  for (const name of ['erpItems','erpWarehouses','erpPartners','erpKeys','erpInventory','erpAudit','erpImports','erpMovements','erpDocuments','erpState','erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings']) await current.db.recursiveDelete(parent.collection(name));
+  await current.bucket.deleteFiles({ prefix: `companies/${companyId}/erp-sources/` });
+}
+module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, readErpInventory, clearErpFixture };

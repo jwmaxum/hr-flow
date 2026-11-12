@@ -81,6 +81,9 @@ async function fixture() {
 async function seedLifecycle(objects, orphanInbox = false) {
   const batch = db.batch();
   for (const companyId of ['a', 'b']) {
+    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings']) {
+      batch.set(db.doc(`companies/${companyId}/${name}/test-record`), { companyId, marker: `${companyId}-erp-private` });
+    }
     for (const collection of ['attendance', 'divisions', 'teams', 'leaves', 'expenses', 'AuditLogs', 'payroll_records', 'backup_tasks', 'payments', 'payment_claims', 'customCompanyData']) {
       batch.set(db.doc(`${collection}/${companyId}-record`), { companyId, marker: `${companyId}-private` });
       batch.set(db.doc(`${collection}/${companyId}-record/history/version1`), { marker: `${companyId}-nested-without-company-field` });

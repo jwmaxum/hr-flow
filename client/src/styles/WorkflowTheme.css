@@ -81,6 +81,11 @@
 .workflow-theme .sidebar-brand { margin-bottom: 0; }
 .workflow-theme .sidebar-brand-mark { width: 32px; height: 32px; border-radius: 8px; background: var(--wf-primary-800); font-size: 14px; font-weight: 600; font-style: normal; box-shadow: none; transform: none; }
 .workflow-theme .sidebar-brand-title { color: var(--wf-strong); font-size: 18px; font-weight: 600; letter-spacing: -.5px; }
+.erp-entry { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; gap: 4px; min-height: 36px; padding: 6px 8px; border: 1px solid #8f357c; border-radius: 8px; color: #8f357c; background: #feeefa; font-size: 12px; font-weight: 600; text-decoration: none; }
+.erp-entry:hover, .erp-entry[aria-current=page] { background: #8f357c; color: #fff; }
+.erp-entry:focus-visible { outline: 2px solid #6e52ff; outline-offset: 3px; }
+.sidebar-brand { gap: 8px; }
+.erp-mobile-brand { font-size: 16px; white-space: nowrap; }
 .workflow-theme .sidebar-company { margin: 18px 0; padding: 0 8px 18px; border: 0; border-bottom: 1px solid var(--wf-border); border-radius: 0; background: transparent; }
 .workflow-theme .sidebar-company svg { display: none; }
 .workflow-theme .sidebar-company span { color: var(--wf-text); font-size: 14px; font-weight: 600; }
@@ -125,6 +130,9 @@
   .workflow-theme .wf-topbar { flex-basis: 60px; gap: 8px; padding: 0 12px; }
   .workflow-theme .wf-breadcrumb, .workflow-theme .wf-profile { display: none; }
   .workflow-theme .wf-mobile-company { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wf-strong); font-size: 15px; font-weight: 600; }
+  .workflow-theme .wf-mobile-company { display: flex; align-items: center; gap: 10px; overflow: visible; }
+  .erp-entry { min-height: 44px; }
+  .erp-sidebar-entry { display: none; }
   .workflow-theme .wf-mobile-toggle { display: inline-grid; }
   .workflow-theme .wf-account { gap: 4px; }
   .workflow-theme .wf-page { padding: 20px 16px; }

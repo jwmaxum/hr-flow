@@ -27,6 +27,7 @@ const SubscriptionManagement = lazy(() => import('./pages/SubscriptionManagement
 const SubscriptionRequired = lazy(() => import('./pages/SubscriptionRequired').then(module => ({ default: module.SubscriptionRequired })));
 const OfficialLetters = lazy(() => import('./pages/OfficialLetters').then(module => ({ default: module.OfficialLetters })));
 const Drafting = lazy(() => import('./pages/Drafting').then(module => ({ default: module.Drafting })));
+const ErpPage = lazy(() => import('./pages/ErpPage').then(module => ({ default: module.ErpPage })));
 
 function App() {
   const { initAuth, userData, companyData, user, loading, sessionReady, authError, refreshSession, logout } = useAuthStore();
@@ -94,6 +95,7 @@ function App() {
                       <>
                         <Route path="/" element={<RouteContent><AttendanceDashboard /></RouteContent>} />
                         <Route path="dashboard" element={<RouteContent><AttendanceDashboard /></RouteContent>} />
+                        <Route path="erp" element={<ProtectedRoute><RouteContent><ErpPage /></RouteContent></ProtectedRoute>} />
                         <Route path="leave" element={<ProtectedRoute><RouteContent><LeaveApplication /></RouteContent></ProtectedRoute>} />
                         <Route path="drafting" element={<ProtectedRoute><RouteContent><Drafting key={`${userData.uid}:${userData.companyId}:${userData.role}:${userData.divisionId || ''}`} /></RouteContent></ProtectedRoute>} />
                         <Route path="expense" element={<ProtectedRoute><RouteContent><ExpenseForm /></RouteContent></ProtectedRoute>} />

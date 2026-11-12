@@ -1,7 +1,8 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { test, expect } = require('@playwright/test');
 const { PROJECT_ID, WEB_ORIGIN, HOSTS, assertE2EEnvironment } = require('../../scripts/e2e/safety.cjs');
-const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll } = require('../../scripts/e2e/fixtures.cjs');
+const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, readErpInventory, clearErpFixture } = require('../../scripts/e2e/fixtures.cjs');
+const { workbook: erpWorkbook, opening: erpOpening, movement: erpMovement } = require('../../functions/tests/erp-import-fixtures.cjs');
 
 assertE2EEnvironment();
 const { CSV_TEMPLATE, HEADER_FIELDS } = require('../../functions/payroll-import-schema.mjs');
@@ -357,6 +358,303 @@ test('real platform, company-owner and member logins preserve role navigation', 
     actor.token = '';
     await actor.context.close();
   }
+});
+
+test('ERP company masters and name search show independent inventory on desktop and mobile', async ({ browser }, testInfo) => {
+  test.setTimeout(240000);
+  const owner = await actorFor(browser, testInfo);
+  await login(owner, fixtures.accounts.adminA);
+  await owner.page.locator('a.erp-entry:visible').first().click();
+  await expect(owner.page.getByRole('heading', { name: '재고관리 ERP', exact: true })).toBeVisible();
+  // The first emulator callable can start slowly. Wait for the actual list
+  // response before switching tabs and starting a separate mutation.
+  await expect(owner.page.getByRole('region', { name: '품목 목록', exact: true }).locator('[aria-busy]')).toHaveAttribute('aria-busy', 'false', { timeout: 65000 });
+  await owner.page.getByRole('button', { name: '창고 관리', exact: true }).click();
+  await expect(owner.page.getByRole('region', { name: '창고 목록', exact: true }).locator('[aria-busy]')).toHaveAttribute('aria-busy', 'false', { timeout: 65000 });
+  await owner.page.getByRole('button', { name: '창고 등록', exact: true }).click();
+  await owner.page.getByLabel('창고코드 *', { exact: true }).fill('WH-001');
+  await owner.page.getByLabel('창고명 *', { exact: true }).fill('자동점검 A창고');
+  await owner.page.getByRole('button', { name: '저장', exact: true }).click();
+  await expect(owner.page.getByRole('status').filter({ hasText: '저장 완료' })).toBeVisible({ timeout: 65000 });
+  await owner.page.getByRole('button', { name: '품목·재고현황', exact: true }).click();
+  async function createItem(actor, name, price) {
+    await actor.page.getByRole('button', { name: '품목 등록', exact: true }).click();
+    await actor.page.getByLabel('품목코드 *', { exact: true }).fill('ERP-001');
+    await actor.page.getByLabel('품목명 *', { exact: true }).fill(name);
+    await actor.page.getByLabel('단위 *', { exact: true }).fill('EA');
+    await actor.page.getByLabel('매입단가 (원) *', { exact: true }).fill(String(price));
+    await actor.page.getByLabel('판매단가 (원) *', { exact: true }).fill(String(price * 2));
+    await actor.page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect(actor.page.getByRole('status').filter({ hasText: '저장 완료' })).toBeVisible();
+    await expect(actor.page.getByText('재고 미등록', { exact: true })).toBeVisible();
+  }
+  await createItem(owner, '자동점검 A품목', 1000);
+  const stock = await seedErpBalance(fixtures.companyA, 'ERP-001', 'WH-001');
+  await owner.page.getByLabel('품목명 검색', { exact: true }).fill('자동점검 A');
+  const panel = owner.page.getByRole('region', { name: '품목 재고현황' });
+  await expect(panel.getByRole('cell', { name: '7', exact: true })).toBeVisible();
+  await expect(panel.getByRole('cell', { name: '7,000', exact: true })).toBeVisible();
+  await owner.page.getByRole('button', { name: '자동점검 A품목 재고 보기', exact: true }).click();
+  await expect(panel.getByRole('cell', { name: '7', exact: true })).toBeVisible();
+  await owner.page.getByRole('button', { name: '품목 수정', exact: true }).click();
+  await owner.page.getByLabel('판매단가 (원) *', { exact: true }).fill('2200');
+  await owner.page.getByRole('button', { name: '저장', exact: true }).click();
+  await expect(panel.getByText('2,200원', { exact: true })).toBeVisible();
+  await owner.page.screenshot({ path: testInfo.outputPath('erp-inventory.png'), fullPage: true });
+  expect(await owner.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  await owner.page.getByRole('button', { name: '거래처 관리', exact: true }).click();
+  await owner.page.getByRole('button', { name: '거래처 등록', exact: true }).click();
+  await owner.page.getByLabel('거래처코드 *', { exact: true }).fill('PART-001');
+  await owner.page.getByLabel('거래처명 *', { exact: true }).fill('자동점검 재사용 거래처');
+  await owner.page.getByRole('button', { name: '저장', exact: true }).click();
+  await expect(owner.page.getByRole('button', { name: '자동점검 재사용 거래처 수정' })).toBeVisible();
+  await owner.page.reload();
+  await owner.page.getByRole('button', { name: '거래처 관리', exact: true }).click();
+  await owner.page.getByLabel('거래처명 검색', { exact: true }).fill('자동점검 재사용');
+  await expect(owner.page.getByRole('button', { name: '자동점검 재사용 거래처 수정' })).toBeVisible();
+
+  const foreign = await actorFor(browser, testInfo);
+  await login(foreign, fixtures.accounts.adminB); await foreign.page.goto('/#/erp');
+  await createItem(foreign, '자동점검 B품목', 9000);
+  await expect(foreign.page.getByText('자동점검 A품목', { exact: true })).toHaveCount(0);
+  const erpEndpoint = `http://${HOSTS.functions}/${PROJECT_ID}/us-central1/manageErp`;
+  expect((await probe(foreign, erpEndpoint, { method: 'POST', body: { data: { action: 'inventory', companyId: fixtures.companyA, itemId: stock.itemId } } })).status).toBe(403);
+
+  const member = await actorFor(browser, testInfo);
+  await login(member, fixtures.accounts.memberA); await member.page.goto('/#/erp');
+  await member.page.getByLabel('품목명 검색', { exact: true }).fill('자동점검 A');
+  await expect(member.page.getByRole('region', { name: '품목 재고현황' }).getByRole('cell', { name: '7', exact: true })).toBeVisible();
+  await expect(member.page.getByRole('button', { name: '품목 등록', exact: true })).toHaveCount(0);
+  await expect(member.page.getByText('기본 매입단가', { exact: true })).toHaveCount(0);
+  await expect(member.page.getByRole('button', { name: '거래처 관리', exact: true })).toHaveCount(0);
+});
+
+test('ERP Excel opening and transactions preview then commit once with exact inventory on desktop and mobile', async ({ browser }, testInfo) => {
+  test.setTimeout(240000);
+  await clearErpFixture(fixtures.companyA);
+  const foreignBefore = await readErpInventory(fixtures.companyB);
+  const actor = await actorFor(browser, testInfo); await login(actor, fixtures.accounts.adminA); await actor.page.goto('/#/erp');
+  await expect(actor.page.getByRole('region', { name: '품목 목록', exact: true }).locator('[aria-busy]')).toHaveAttribute('aria-busy', 'false', { timeout: 65000 });
+  await actor.page.getByRole('button', { name: '창고 관리', exact: true }).click();
+  await expect(actor.page.getByRole('region', { name: '창고 목록', exact: true }).locator('[aria-busy]')).toHaveAttribute('aria-busy', 'false', { timeout: 65000 });
+  await actor.page.getByRole('button', { name: '창고 등록', exact: true }).click();
+  await actor.page.getByLabel('창고코드 *', { exact: true }).fill('WH-01');
+  await actor.page.getByLabel('창고명 *', { exact: true }).fill('본사 창고');
+  await actor.page.getByRole('button', { name: '저장', exact: true }).click();
+  await expect(actor.page.getByRole('status').filter({ hasText: '저장 완료' })).toBeVisible({ timeout: 65000 });
+  await actor.page.getByRole('button', { name: 'Excel 업로드', exact: true }).click();
+  const input = actor.page.getByLabel('Excel 파일 (.xlsx, 최대 3MB·200행)', { exact: true });
+  const opening = await erpWorkbook('OPENING', [erpOpening({ 8: '', 9: '' })]);
+  await input.setInputFiles({ name: opening.name, mimeType: opening.mimeType, buffer: Buffer.from(opening.base64, 'base64') });
+  await actor.page.getByRole('combobox', { name: '창고 공란에 적용할 회사 창고', exact: true }).selectOption({ label: 'WH-01 · 본사 창고' });
+  await actor.page.getByRole('checkbox', { name: /^신규 품목 등록 확인/ }).check();
+  const verify = actor.page.getByRole('button', { name: '검증 및 미리보기', exact: true });
+  const confirm = actor.page.getByRole('button', { name: 'DB 반영 확정', exact: true });
+  const consent = actor.page.getByRole('checkbox', { name: '로그인 회사의 품목·창고·거래처와 위 재고 변동을 확인했습니다.', exact: true });
+  await verify.click(); await expect(actor.page.getByRole('status').filter({ hasText: '검증 완료' })).toBeVisible();
+  expect(await readErpInventory(fixtures.companyA)).toEqual({ balances: [], itemCount: 0, partnerCount: 0, ledgerCount: 0 });
+  await expect(confirm).toBeDisabled(); await consent.check(); await confirm.click();
+  await expect(actor.page.getByRole('status').filter({ hasText: 'DB 반영 완료' })).toBeVisible();
+  expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{ quantity: 10, value: 1000 }]);
+  await actor.page.getByRole('combobox', { name: '업로드 종류', exact: true }).selectOption('MOVEMENTS');
+  const transaction = await erpWorkbook('MOVEMENTS', [erpMovement({ 9: '', 10: '' }), erpMovement({ 1: 2, 2: '출고', 3: 'OUT-001', 9: '', 10: '', 11: 5, 12: 300 })]);
+  await input.setInputFiles({ name: transaction.name, mimeType: transaction.mimeType, buffer: Buffer.from(transaction.base64, 'base64') });
+  await actor.page.getByRole('checkbox', { name: /^신규 거래처 등록 확인/ }).check();
+  await verify.click(); await expect(actor.page.getByRole('status').filter({ hasText: '검증 완료' })).toBeVisible();
+  const preview = actor.page.getByRole('region', { name: '업로드 미리보기', exact: true });
+  await expect(preview.getByRole('cell', { name: '3,000 → 2,250', exact: true })).toBeVisible();
+  await expect(preview.getByRole('cell', { name: '750', exact: true })).toBeVisible();
+  expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{ quantity: 10, value: 1000 }]);
+  await consent.check(); await confirm.click();
+  await expect(actor.page.getByRole('status').filter({ hasText: 'DB 반영 완료' })).toBeVisible();
+  const final = await readErpInventory(fixtures.companyA);
+  expect(final).toEqual({ balances: [{ quantity: 15, value: 2250 }], itemCount: 1, partnerCount: 1, ledgerCount: 3 });
+  const downloaded = actor.page.waitForEvent('download'); await preview.getByRole('button', { name: '원본 받기', exact: true }).click();
+  const source = await downloaded; expect(source.suggestedFilename()).toBe(transaction.name);
+  const stream = await source.createReadStream(); const chunks = []; for await (const chunk of stream) chunks.push(chunk);
+  expect(Buffer.concat(chunks).equals(Buffer.from(transaction.base64, 'base64'))).toBe(true);
+  await actor.page.getByRole('button', { name: '반영된 재고 확인', exact: true }).click();
+  await actor.page.getByLabel('품목명 검색', { exact: true }).fill('합성 품목');
+  const inventory = actor.page.getByRole('region', { name: '품목 재고현황' });
+  await expect(inventory.getByRole('cell', { name: '15', exact: true })).toBeVisible();
+  await expect(inventory.getByRole('cell', { name: '2,250', exact: true })).toBeVisible();
+  await actor.page.getByRole('button', { name: 'Excel 업로드', exact: true }).click();
+  await actor.page.getByRole('combobox', { name: '업로드 종류', exact: true }).selectOption('MOVEMENTS');
+  await input.setInputFiles({ name: transaction.name, mimeType: transaction.mimeType, buffer: Buffer.from(transaction.base64, 'base64') });
+  await actor.page.getByRole('combobox', { name: '창고 공란에 적용할 회사 창고', exact: true }).selectOption({ label: 'WH-01 · 본사 창고' });
+  await verify.click(); await expect(actor.page.getByRole('status').filter({ hasText: '검증 완료' })).toBeVisible();
+  await expect(actor.page.getByRole('alert').filter({ hasText: '이미 확정한 파일' })).toBeVisible();
+  await expect(confirm).toBeDisabled(); expect(await readErpInventory(fixtures.companyA)).toEqual(final);
+  await actor.page.getByRole('heading', { name: 'Excel 재고 업로드', exact: true }).scrollIntoViewIfNeeded();
+  await actor.page.screenshot({ path: testInfo.outputPath('erp-import.png'), fullPage: true });
+  expect(await actor.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
+});
+
+test('ERP period reports, returns, count/value adjustments and immutable cancellation reconcile with Excel', async ({ browser }, testInfo) => {
+  test.setTimeout(360000);
+  await clearErpFixture(fixtures.companyA);
+  const foreignBefore = await readErpInventory(fixtures.companyB);
+  const owner = await actorFor(browser,testInfo); await login(owner,fixtures.accounts.adminA);
+  async function erpCall(name,data) {
+    const response = await probe(owner,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/${name}`,{method:'POST',body:{data:{companyId:fixtures.companyA,...data}}});
+    expect(response.status,`Synthetic ${name} request failed`).toBe(200); return JSON.parse(Buffer.from(response.bytes).toString('utf8')).result;
+  }
+  await erpCall('manageErp',{action:'save',kind:'warehouses',id:'report-warehouse',expectedRevision:0,values:{code:'WH-01',name:'본사 창고',active:true,address:'',notes:''}});
+  for (const [type,rows] of [['OPENING',[erpOpening()]],['MOVEMENTS',[erpMovement(),erpMovement({1:2,2:'출고',3:'OUT-001',11:5,12:300})]]]) {
+    const source=await erpWorkbook(type,rows),p=await erpCall('manageErpImport',{action:'preview',id:randomUUID(),type,source,options:{allowNewItems:true,allowNewPartners:true}});
+    expect(p.import.preview.canCommit).toBe(true);await erpCall('manageErpImport',{action:'commit',id:p.import.id,fingerprint:p.import.preview.fingerprint});
+  }
+  await owner.page.goto('/#/erp');await owner.page.getByRole('button',{name:'입출고 총괄·원장',exact:true}).click();
+  await expect(owner.page.getByText(/기초재고 마감일 2026-11-01/)).toBeVisible({timeout:65000});
+  await owner.page.getByLabel('조회 시작일',{exact:true}).fill('2026-11-02');await owner.page.getByLabel('조회 종료일',{exact:true}).fill('2026-11-30');
+  await owner.page.getByRole('button',{name:'원장 조회',exact:true}).click();
+  const summary=owner.page.getByRole('region',{name:'입출고 총괄 결과',exact:true});await expect(summary.getByRole('cell',{name:'2,250',exact:true})).toBeVisible({timeout:65000});
+  await summary.getByRole('button',{name:/상세 원장$/}).click();
+  const detail=owner.page.getByRole('region',{name:'품목별 상세 원장 결과',exact:true});
+  const form=owner.page.getByRole('region',{name:'취소 반품 조정 처리',exact:true});
+  async function confirm(date,quantity,value) {
+    await form.getByLabel('처리일',{exact:true}).fill(date);await form.getByLabel('처리 사유',{exact:true}).fill('자동 점검 실물 대사');
+    if(quantity!==undefined)await form.getByRole('textbox',{name:/반품 수량|실사 후 총수량/}).fill(quantity);
+    if(value!==undefined)await form.getByRole('textbox',{name:/조정 후 총 장부금액|수량 증가분 재고금액/}).fill(value);
+    await form.getByRole('button',{name:'변동 미리보기',exact:true}).click();
+    await expect(form.getByRole('heading',{name:/변동 미리보기 ·/})).toBeVisible({timeout:65000});
+    const button=form.getByRole('button',{name:'취소·반품·조정 확정',exact:true});await expect(button).toBeDisabled();
+    await form.getByRole('checkbox',{name:'사유와 전체 변동 내역을 확인했습니다.',exact:true}).check();await button.click();
+    await expect(form.getByRole('status').filter({hasText:'처리 완료'})).toBeVisible({timeout:65000});
+    await expect(form.getByRole('button',{name:'처리 닫기',exact:true})).toBeEnabled();await form.getByRole('button',{name:'처리 닫기',exact:true}).click();
+  }
+  await detail.getByRole('button',{name:'OUT-001 1행 반품',exact:true}).click();await confirm('2026-11-03','2');
+  expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{quantity:17,value:2550}]);
+  await detail.getByRole('row').filter({hasText:'입고'}).getByRole('button',{name:/행 반품$/}).click();await confirm('2026-11-04','3');
+  expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{quantity:14,value:2100}]);
+  await owner.page.getByRole('button',{name:'재고 조정',exact:true}).click();
+  await form.getByRole('combobox',{name:'조정 품목',exact:true}).selectOption({index:1});await form.getByRole('combobox',{name:'조정 창고',exact:true}).selectOption('report-warehouse');
+  await confirm('2026-11-05','12');expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{quantity:12,value:1800}]);
+  await detail.getByRole('row').filter({hasText:'실사조정'}).getByRole('button',{name:/문서 취소$/}).click();await confirm('2026-11-06');
+  expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{quantity:14,value:2100}]);
+  await owner.page.getByRole('button',{name:'재고 조정',exact:true}).click();
+  await form.getByRole('combobox',{name:'조정 방식',exact:true}).selectOption('VALUE');
+  await form.getByRole('combobox',{name:'조정 품목',exact:true}).selectOption({index:1});await form.getByRole('combobox',{name:'조정 창고',exact:true}).selectOption('report-warehouse');
+  await confirm('2026-11-07',undefined,'2000');expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{quantity:14,value:2000}]);
+  await owner.page.getByRole('button',{name:'입출고 총괄',exact:true}).click();await owner.page.getByRole('button',{name:'원장 조회',exact:true}).click();
+  await expect(summary.getByRole('cell',{name:'2,000',exact:true})).toBeVisible({timeout:65000});await expect(summary.getByRole('cell',{name:'450',exact:true})).toHaveCount(2);
+  const download=owner.page.waitForEvent('download');await summary.getByRole('button',{name:'전체 Excel 내려받기',exact:true}).click();const file=await download;
+  expect(file.suggestedFilename()).toBe('입출고총괄_2026-11-02_2026-11-30.xlsx');const stream=await file.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);
+  const readExcel=require('read-excel-file/node').default,workbook=await readExcel(Buffer.concat(chunks));
+  expect(workbook[0].data[1][10]).toBe(14);expect(workbook[0].data[1][16]).toBe(2000);expect(workbook[0].data[1][19]).toBe(450);
+  await summary.locator('.erp-table-scroll').scrollIntoViewIfNeeded();await owner.page.screenshot({path:testInfo.outputPath('erp-period-report.png'),fullPage:true});
+  expect(await owner.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  const member=await actorFor(browser,testInfo);await login(member,fixtures.accounts.memberA);await member.page.goto('/#/erp');await member.page.getByRole('button',{name:'입출고 총괄·원장',exact:true}).click();
+  await expect(member.page.getByText(/수량 조회 전용/)).toBeVisible();await member.page.getByLabel('조회 시작일',{exact:true}).fill('2026-11-02');await member.page.getByLabel('조회 종료일',{exact:true}).fill('2026-11-30');await member.page.getByRole('button',{name:'원장 조회',exact:true}).click();
+  const memberSummary=member.page.getByRole('region',{name:'입출고 총괄 결과',exact:true});await expect(memberSummary.getByRole('cell',{name:'14',exact:true})).toBeVisible();await expect(member.page.getByRole('button',{name:'재고 조정',exact:true})).toHaveCount(0);
+  await expect(memberSummary.getByRole('columnheader',{name:'기말금액',exact:true})).toHaveCount(0);
+  const memberDownload=member.page.waitForEvent('download');await memberSummary.getByRole('button',{name:'전체 Excel 내려받기',exact:true}).click();const memberFile=await memberDownload,memberStream=await memberFile.createReadStream(),memberChunks=[];for await(const chunk of memberStream)memberChunks.push(chunk);
+  const memberWorkbook=await readExcel(Buffer.concat(memberChunks));expect(memberWorkbook[0].data[0]).toHaveLength(11);expect(JSON.stringify(memberWorkbook)).not.toContain('2000');
+  expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
+});
+
+test('ERP trade documents issue three PDFs with the registered seal and immutable revisions without changing stock', async ({ browser }, testInfo) => {
+  test.setTimeout(420000);
+  await clearErpFixture(fixtures.companyA);
+  const foreignBefore = await readErpInventory(fixtures.companyB), owner = await actorFor(browser, testInfo);
+  await login(owner, fixtures.accounts.adminA);
+  async function erpCall(name, data) {
+    const response = await probe(owner, `http://${HOSTS.functions}/${PROJECT_ID}/us-central1/${name}`, { method: 'POST', body: { data: { companyId: fixtures.companyA, ...data } } });
+    expect(response.status, `Synthetic ${name} ${data.action} request failed`).toBe(200); return JSON.parse(Buffer.from(response.bytes).toString('utf8')).result;
+  }
+  const docs = (action, data = {}) => erpCall('manageErpDocuments', { action, ...data });
+  await erpCall('manageErp', { action: 'save', kind: 'warehouses', id: 'document-warehouse', expectedRevision: 0, values: { code: 'WH-01', name: '본사 창고', active: true, address: '', notes: '' } });
+  for (const [type, rows] of [['OPENING', [erpOpening()]], ['MOVEMENTS', [erpMovement({ 2: '출고', 3: 'OUT-001', 11: 5, 12: 300 })]]]) {
+    const source = await erpWorkbook(type, rows), preview = await erpCall('manageErpImport', { action: 'preview', id: randomUUID(), type, source, options: { allowNewItems: true, allowNewPartners: true } });
+    expect(preview.import.preview.canCommit).toBe(true); await erpCall('manageErpImport', { action: 'commit', id: preview.import.id, fingerprint: preview.import.preview.fingerprint });
+  }
+  const official = await erpCall('manageOfficialLetters', { action: 'bootstrap' });
+  const stamp = require('../../functions/tests/erp-document-pdf-fixtures.cjs').sealPng();
+  const template = { companyName: 'PDF 검증 회사', companyNameEn: 'PDF Sample Company', address: '서울 검증로 10', representative: '김검증', phone: '02-000-0000', email: 'sample@example.invalid', logoData: `data:image/png;base64,${stamp.toString('base64')}`, sealData: `data:image/png;base64,${stamp.toString('base64')}`, sealWidthMm: 28, sealHeightMm: 18 };
+  await erpCall('manageOfficialLetters', { action: 'saveSettings', expectedVersion: official.settings?.version || 0, settings: template });
+  const stockBefore = await readErpInventory(fixtures.companyA);
+  await owner.page.goto('/#/erp'); await owner.page.getByRole('button', { name: '거래서류 발행', exact: true }).click();
+  await expect(owner.page.locator('.erp-documents')).toHaveAttribute('aria-busy', 'false', { timeout: 65000 });
+  await owner.page.locator('.erp-print-profile summary').click();
+  await owner.page.getByLabel('영문 회사명', { exact: true }).fill('PDF Sample Company');
+  await owner.page.getByLabel('영문 회사 주소', { exact: true }).fill('10 Sample Road, Seoul, Korea');
+  await owner.page.getByLabel('영문 대표자', { exact: true }).fill('Sample Kim');
+  await owner.page.getByLabel('공급자 사업자등록번호', { exact: true }).fill('000-00-00000');
+  await owner.page.getByRole('button', { name: '출력 설정 저장', exact: true }).click();
+  await expect(owner.page.getByRole('status').filter({ hasText: '공급자 출력 설정을 저장했습니다.' })).toBeVisible({ timeout: 65000 });
+  async function downloadPdf(buttonName, artifact) {
+    const pending = owner.page.waitForEvent('download'); await owner.page.getByRole('button', { name: buttonName, exact: true }).click(); const file = await pending;
+    const stream = await file.createReadStream(), chunks = []; for await (const chunk of stream) chunks.push(chunk); const bytes = Buffer.concat(chunks);
+    expect(bytes.subarray(0, 5).toString()).toBe('%PDF-'); expect(bytes.length).toBeGreaterThan(10000);
+    if (artifact) await file.saveAs(testInfo.outputPath(artifact));
+    await expect(owner.page.locator('.erp-documents')).toHaveAttribute('aria-busy', 'false', { timeout: 65000 });
+    return bytes;
+  }
+  async function confirm(expectedTotal) {
+    await owner.page.getByRole('button', { name: '초안 저장·금액 확인', exact: true }).click();
+    await expect(owner.page.getByRole('heading', { name: '발행 내용 확인', exact: true })).toBeVisible({ timeout: 65000 });
+    await expect(owner.page.locator('.erp-document-total')).toHaveText(`합계 ${expectedTotal} KRW`);
+    const issue = owner.page.getByRole('button', { name: '발행 확정', exact: true }); await expect(issue).toBeDisabled();
+    await owner.page.getByRole('checkbox', { name: '거래처·금액·등록 인감을 확인했습니다.', exact: true }).check(); await issue.click();
+    await expect(owner.page.getByRole('status').filter({ hasText: '발행이 완료되었습니다.' })).toBeVisible({ timeout: 65000 });
+  }
+  await owner.page.getByRole('button', { name: '영문 Proforma Invoice 작성', exact: true }).click();
+  await owner.page.getByRole('combobox', { name: '거래처 *', exact: true }).selectOption({ index: 1 });
+  await owner.page.getByLabel('Buyer name (영문) *', { exact: true }).fill('Sample Buyer Ltd.');
+  await owner.page.getByLabel('Buyer address (영문) *', { exact: true }).fill('20 Buyer Road, London');
+  await owner.page.getByRole('button', { name: '견적 품목 추가', exact: true }).click();
+  await owner.page.getByRole('combobox', { name: '품목 선택 *', exact: true }).selectOption({ index: 1 });
+  await owner.page.getByLabel('영문 품목명 *', { exact: true }).fill('Sample monitor');
+  await owner.page.getByLabel('수량 *', { exact: true }).fill('2'); await owner.page.getByLabel('단가 *', { exact: true }).fill('100');
+  await owner.page.getByRole('button', { name: '초안 저장·금액 확인', exact: true }).click();
+  await expect(owner.page.getByRole('heading', { name: '발행 내용 확인', exact: true })).toBeVisible({ timeout: 65000 });
+  await downloadPdf('초안 PDF 미리보기', 'erp-proforma-draft.pdf');
+  await owner.page.getByRole('checkbox', { name: '거래처·금액·등록 인감을 확인했습니다.', exact: true }).check(); await owner.page.getByRole('button', { name: '발행 확정', exact: true }).click();
+  await expect(owner.page.locator('.erp-documents')).toHaveAttribute('aria-busy', 'false', { timeout: 65000 });
+  const initialIssue = (await docs('list')).documents.find(doc => doc.kind === 'PROFORMA');
+  if (initialIssue && !initialIssue.pdfReady) {
+    const retry = await probe(owner, `http://${HOSTS.functions}/${PROJECT_ID}/us-central1/manageErpDocuments`, { method: 'POST', body: { data: { companyId: fixtures.companyA, action: 'pdf', id: initialIssue.id } } });
+    const error = JSON.parse(Buffer.from(retry.bytes).toString('utf8')).error;
+    expect(retry.status, `Synthetic PDF creation: ${error?.status || ''} ${error?.message || ''}`).toBe(200);
+  }
+  await expect(owner.page.getByRole('status').filter({ hasText: '발행이 완료되었습니다.' })).toBeVisible({ timeout: 65000 });
+  const proformaBytes = await downloadPdf('발행 PDF 내려받기', 'erp-proforma.pdf');
+  const proforma = (await docs('list')).documents.find(doc => doc.kind === 'PROFORMA'); expect(proforma.totalMinor).toBe(220);
+  let invoice, invoiceBytes;
+  for (const [kind, label, amount] of [['INVOICE', '한글 Invoice', '1,650'], ['STATEMENT', '거래명세표', '1,650']]) {
+    await owner.page.getByRole('button', { name: `${label} 작성`, exact: true }).click();
+    await owner.page.getByLabel('확정 출고 문서번호 *', { exact: true }).fill('OUT-001');
+    await owner.page.getByRole('button', { name: '출고 불러오기', exact: true }).click();
+    await expect(owner.page.getByText(/발행 가능 5 EA/)).toBeVisible({ timeout: 65000 });
+    await confirm(amount); const bytes = await downloadPdf('발행 PDF 내려받기', `erp-${kind.toLowerCase()}.pdf`);
+    if (kind === 'INVOICE') { invoice = (await docs('list')).documents.find(doc => doc.kind === kind); invoiceBytes = bytes; }
+    else expect(/\/Count 2\b/.test(bytes.toString('latin1'))).toBe(true);
+  }
+  const setting = await erpCall('manageOfficialLetters', { action: 'bootstrap' });
+  const replacementSeal = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
+  await erpCall('manageOfficialLetters', { action: 'saveSettings', expectedVersion: setting.settings.version, settings: { ...template, companyName: '변경 후 회사명', sealData: replacementSeal, sealWidthMm: 20, sealHeightMm: 20 } });
+  expect(Buffer.from((await docs('pdf', { id: proforma.id })).base64, 'base64').equals(proformaBytes)).toBe(true);
+  await owner.page.getByRole('button', { name: `${invoice.number} 열기`, exact: true }).click();
+  await expect(owner.page.getByRole('heading', { name: '한글 Invoice · 발행', exact: true })).toBeVisible();
+  await owner.page.getByLabel('문서 취소 사유', { exact: true }).fill('거래 조건 정정');
+  await owner.page.getByRole('checkbox', { name: '문서만 취소하고 재고는 유지함을 확인했습니다.', exact: true }).check();
+  await owner.page.getByRole('button', { name: '발행 문서 취소', exact: true }).click();
+  await expect(owner.page.getByRole('heading', { name: '한글 Invoice · 취소', exact: true })).toBeVisible({ timeout: 65000 });
+  expect((await downloadPdf('취소된 원본 PDF 내려받기')).equals(invoiceBytes)).toBe(true);
+  await owner.page.getByRole('button', { name: '정정 초안 만들기', exact: true }).click();
+  await expect(owner.page.getByRole('heading', { name: '한글 Invoice · 초안', exact: true })).toBeVisible({ timeout: 65000 });
+  await owner.page.getByLabel('문서 비고', { exact: true }).fill('거래 조건을 정정한 새 발행본'); await confirm('1,650');
+  const revised = (await docs('list')).documents.find(doc => doc.replacesId === invoice.id); expect(revised.number).not.toBe(invoice.number);
+  expect((await docs('get', { id: revised.id })).document.preview.branding.companyName).toBe('변경 후 회사명');
+  await owner.page.getByRole('region', { name: '거래서류 목록', exact: true }).scrollIntoViewIfNeeded();
+  await owner.page.screenshot({ path: testInfo.outputPath('erp-documents.png'), fullPage: true });
+  expect(await owner.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(await readErpInventory(fixtures.companyA)).toEqual(stockBefore); expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
+  const member = await actorFor(browser, testInfo); await login(member, fixtures.accounts.memberA); await member.page.goto('/#/erp');
+  await expect(member.page.getByRole('button', { name: '거래서류 발행', exact: true })).toHaveCount(0);
+  const denied = await probe(member, `http://${HOSTS.functions}/${PROJECT_ID}/us-central1/manageErpDocuments`, { method: 'POST', body: { data: { action: 'pdf', companyId: fixtures.companyA, id: proforma.id } } }); expect(denied.status).toBe(403);
 });
 
 test('real expense UI uploads PNG/PDF and downloads the original bytes and filename', async ({ browser }, testInfo) => {

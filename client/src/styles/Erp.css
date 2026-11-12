@@ -1,0 +1,119 @@
+.erp-page { color: var(--wf-text); }
+.erp-reports { display: grid; gap: 20px; min-width: 0; }
+.erp-report-totals { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0; }
+.erp-report-totals > div { border: 1px solid var(--wf-border); border-radius: 10px; padding: 12px 16px; flex: 1 1 170px; min-width: 0; }
+.erp-report-totals span { display: block; font-size: 12px; color: var(--wf-muted); margin-bottom: 6px; }
+.erp-report-totals strong { font-size: 20px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.erp-report-table { min-width: 900px; }
+.erp-row-actions { display: flex; gap: 8px; flex-wrap: wrap; min-width: 110px; }
+.erp-correction { border: 1px solid var(--wf-accent); }
+.erp-correction-preview { margin-top: 24px; display: grid; gap: 16px; }
+.erp-reports .erp-actions { margin-top: 16px; flex-wrap: wrap; }
+.erp-reports .erp-table-scroll:focus-visible { outline: 2px solid var(--wf-accent); outline-offset: 2px; }
+.erp-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.erp-eyebrow { margin: 0 0 8px; color: var(--wf-primary-800); font-size: 13px; font-weight: 600; }
+.erp-page-head p:last-child { margin: 8px 0 0; }
+.erp-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid var(--wf-border-strong); padding-bottom: 12px; }
+.erp-tabs button { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 9px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--wf-muted); cursor: pointer; }
+.erp-tabs button[aria-pressed=true] { color: var(--wf-primary-800); background: var(--wf-primary-50); border-color: var(--wf-primary-100); font-weight: 600; }
+.erp-layout { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(340px,1fr); gap: 20px; align-items: start; }
+.erp-layout-single { grid-template-columns: minmax(0,1fr); }
+.erp-list { overflow: hidden; }
+.erp-list-head, .erp-search { padding: 18px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.erp-search { padding-top: 0; align-items: flex-end; }
+.erp-search .wf-field:first-child { flex: 0 0 100px; }
+.erp-search-term { flex: 1; }
+.erp-table-scroll { overflow-x: auto; max-width: 100%; }
+.erp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.erp-table th { color: var(--wf-muted); background: var(--wf-subtle); font-weight: 500; text-align: left; white-space: nowrap; }
+.erp-table th, .erp-table td { padding: 13px 14px; border-bottom: 1px solid var(--wf-border); vertical-align: middle; }
+.erp-table td { overflow-wrap: anywhere; }
+.erp-table strong { font-weight: 500; }
+.erp-table .erp-number { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.erp-code { color: var(--wf-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.erp-cell-note { display: block; margin-top: 4px; color: var(--wf-muted); font-size: 11px; }
+.erp-name-button { display: block; padding: 4px 0; min-height: 36px; border: 0; background: transparent; color: var(--wf-text); text-align: left; cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.erp-name-button:hover { color: var(--wf-primary-800); text-decoration: underline; }
+.erp-selected { background: var(--wf-primary-50); }
+.erp-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 30px 18px; text-align: center; color: var(--wf-muted); }
+.erp-empty p { margin: 0; }
+.erp-more { padding: 16px; text-align: center; }
+.erp-inventory, .erp-editor { padding: 20px; }
+.erp-item-heading { margin-top: 24px; }
+.erp-item-heading h3 { margin: 4px 0; color: var(--wf-strong); font-size: 19px; font-weight: 600; overflow-wrap: anywhere; }
+.erp-item-heading p { margin: 4px 0 10px; }
+.erp-stock-totals { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin: 22px 0; }
+.erp-stock-totals dt, .erp-prices dt { color: var(--wf-muted); font-size: 12px; }
+.erp-stock-totals dd { margin: 4px 0 0; color: var(--wf-strong); font-size: 26px; font-weight: 600; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.erp-stock-totals small { margin-left: 6px; font-size: 12px; font-weight: 400; }
+.erp-notice { padding: 14px; background: var(--wf-info-bg); border-radius: 8px; line-height: 1.8; font-size: 13px; }
+.erp-prices { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin: 20px 0; padding-top: 16px; border-top: 1px solid var(--wf-border); }
+.erp-prices dd { margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+.erp-inventory-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.erp-form-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; padding: 0; margin: 18px 0; border: 0; }
+.erp-form-wide { grid-column: 1/-1; }
+.erp-active-field { display: flex; align-items: center; gap: 9px; min-height: 40px; }
+.erp-active-field input { width: 18px; height: 18px; accent-color: var(--wf-primary-800); }
+.erp-form-note { color: var(--wf-muted); font-size: 12px; line-height: 1.7; }
+.erp-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.erp-error { margin: 14px 18px; padding: 12px; background: var(--wf-error-bg); color: var(--wf-strong); border-radius: 8px; overflow-wrap: anywhere; }
+.erp-editor .erp-error, .erp-inventory .erp-error { margin-inline: 0; }
+.erp-success { padding: 12px 16px; background: var(--wf-success-bg); border-radius: 8px; }
+.erp-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.erp-import { display: grid; gap: 20px; min-width: 0; }
+.erp-import > .wf-panel { min-width: 0; overflow: hidden; }
+.erp-import-setup { padding: 20px; }
+.erp-import-setup .wf-panel-head { flex-wrap: wrap; gap: 10px; }
+.erp-template-button { align-self: end; }
+.erp-import .erp-active-field { align-items: flex-start; line-height: 1.7; }
+.erp-import .erp-active-field input { flex-shrink: 0; margin-top: 4px; }
+.erp-import-summary { margin: 0 18px 16px; color: var(--wf-muted); }
+.erp-import-table { min-width: 1100px; }
+.erp-import-notes, .erp-import-confirm { padding: 16px 18px; }
+.erp-import-notes summary { cursor: pointer; min-height: 36px; }
+.erp-import-mappings { display: grid; gap: 16px; max-height: 400px; overflow: auto; padding: 8px 0; }
+.erp-import-mapping { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.erp-documents { display: grid; gap: 20px; min-width: 0; }
+.erp-documents > .wf-panel { min-width: 0; overflow: hidden; }
+.erp-document-intro, .erp-print-profile, .erp-document-editor { padding: 18px; }
+.erp-documents .erp-list-head { padding: 0 0 14px; flex-wrap: wrap; gap: 10px; }
+.erp-documents > section:last-child > .erp-list-head { padding: 18px; }
+.erp-documents .erp-actions { flex-wrap: wrap; }
+.erp-documents .wf-field { min-width: 0; }
+.erp-documents textarea { resize: vertical; min-height: 70px; }
+.erp-print-profile summary { cursor: pointer; min-height: 32px; font-weight: 600; }
+.erp-document-source { display: flex; flex-wrap: wrap; gap: 8px; }
+.erp-document-source > input { flex: 1; min-width: 160px; }
+.erp-document-lines { border: 1px solid var(--wf-border); border-radius: 8px; padding: 16px; margin: 18px 0; min-width: 0; }
+.erp-document-line { padding: 14px 0; border-bottom: 1px solid var(--wf-border); }
+.erp-document-line-heading { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.erp-document-source-row { display: grid; grid-template-columns: minmax(0,2fr) minmax(100px,1fr); gap: 12px; padding: 10px 0; }
+.erp-document-preview, .erp-document-cancel { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--wf-border); }
+.erp-document-total { font-size: 19px; font-weight: 600; text-align: right; }
+.erp-document-list { min-width: 690px; }
+.erp-document-cancel { display: grid; gap: 12px; }
+.erp-documents .erp-active-field { line-height: 1.7; align-items: flex-start; }
+.erp-documents .erp-active-field input { flex-shrink: 0; margin-top: 4px; }
+.erp-document-issued p { overflow-wrap: anywhere; }
+.erp-import .erp-list-head { flex-wrap: wrap; }
+.erp-import .erp-list-head p { overflow-wrap: anywhere; }
+@media (max-width: 1100px) { .erp-layout { grid-template-columns: minmax(0,1fr); } }
+@media (max-width: 767px) {
+  .erp-page-head { flex-direction: column; }
+  .erp-list-head, .erp-search { padding-inline: 14px; gap: 8px; }
+  .erp-search { flex-wrap: wrap; }
+  .erp-search .wf-field:first-child { flex-basis: 85px; }
+  .erp-search-term { flex-basis: 140px; }
+  .erp-table th, .erp-table td { padding: 11px; }
+  .erp-table { min-width: 420px; }
+  .erp-inventory .erp-table { min-width: 320px; }
+  .erp-inventory, .erp-editor { padding: 16px; }
+  .erp-form-fields { grid-template-columns: minmax(0,1fr); }
+  .erp-tabs { gap: 4px; }
+  .erp-tabs button { padding-inline: 10px; font-size: 13px; }
+  .erp-stock-totals dd { font-size: 23px; }
+  .erp-import-setup { padding: 16px; }
+  .erp-import-mapping { grid-template-columns: minmax(0,1fr); }
+  .erp-document-source-row { grid-template-columns: minmax(0,1fr); }
+  .erp-document-intro, .erp-print-profile, .erp-document-editor { padding: 14px; }
+}

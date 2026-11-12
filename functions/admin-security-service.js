@@ -117,6 +117,10 @@ function createAdminSecurityService({ db, auth, bucket, now = () => new Date() }
         }
       }
       for (const name of ['config', 'officialLetterSettings', 'officialLetterPrinters']) await db.recursiveDelete(db.collection(name).doc(companyId));
+      // ERP data is company-scoped. Keep the locked company root until cleanup completes.
+      for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings']) {
+        await db.recursiveDelete(companyRef.collection(name));
+      }
       // Missing parent documents can still have subcollections. Older deletion
       // versions left inboxes for removed employees and archived letter roots.
       for (const [root, child] of [['officialLetterNotifications', 'items'], ['officialLetters', 'history']]) {

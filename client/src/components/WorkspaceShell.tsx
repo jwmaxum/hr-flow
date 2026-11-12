@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { ChevronRight, Menu, X } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { NotificationBell } from './NotificationBell';
+import { ErpEntry } from './ErpEntry';
 import type { CompanyData, UserData } from '../store/authStore';
 import { getRoleDisplayName } from '../utils/roleDisplay';
 import '../styles/WorkflowTheme.css';
@@ -15,6 +16,7 @@ const workflowTitles: Record<string, string> = {
   '/official-letters': '서류발급', '/board': '공지 게시판',
   '/admin/finance-stats': '지출결의 조회', '/admin/settings': '시스템 설정', '/subscription': '구독 관리',
   '/super-admin': '플랫폼 관리',
+  '/erp': '재고관리 ERP',
 };
 
 /** Presentation shell only. Route guards and server authorization remain in their existing layers. */
@@ -64,7 +66,9 @@ export function WorkspaceShell({ profile, company, children }: {
     <div className={`workspace-content flex-1 min-w-0 h-full ${themed ? 'wf-content' : 'overflow-y-auto mt-[64px] md:mt-0 bg-slate-50 transition-all duration-300'}`}>
       {themed && <header className="wf-topbar">
         <div className="wf-breadcrumb"><span>{platformPage ? '플랫폼 운영' : '회사 업무'}</span><ChevronRight size={14} /><strong>{workflowTitles[pathname]}</strong></div>
-        <span className="wf-mobile-company">{platformPage ? '플랫폼 관리' : company?.id === profile.companyId ? company.nameKo : 'HR Flow'}</span>
+        <span className="wf-mobile-company" title={company?.id === profile.companyId ? company.nameKo : undefined}>
+          {platformPage ? '플랫폼 관리' : <><span className="erp-mobile-brand">HR Flow</span><ErpEntry /></>}
+        </span>
         <div className="wf-account">
           {!platformPage && <NotificationBell currentUserId={profile.uid} onNavigate={() => setMobileOpen(false)} appearance="workflow" />}
           <div className="wf-profile"><span className="wf-avatar" aria-hidden="true">{profile.name?.slice(0, 1) || 'H'}</span><span>{profile.name}<small>{getRoleDisplayName(profile, company)}</small></span></div>
