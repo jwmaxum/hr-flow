@@ -20,18 +20,21 @@ export interface ErpImportRow {
   newItem?: boolean; newPartner?: boolean; value?: number; supply?: number; tax?: number; total?: number; cost?: number;
   beforeQuantity?: number; beforeValue?: number; afterQuantity?: number; afterValue?: number;
   partnerCandidates: { id: string; code: string; name: string }[];
-  stockMode?: string; bundle?: {itemId: string; code: string; name: string; quantityScaled: number; cost: number}[];
+  postingMode?: 'OPENING' | 'ADJUSTMENT'; stockMode?: string; bundle?: {itemId: string; code: string; name: string; quantityScaled: number; cost: number}[];
 }
 export interface ErpImport {
   id: string; companyId: string; type: ErpImportType; status: 'PENDING' | 'COMMITTED' | 'CANCELLED';
-  basisDate: string; companyLabel: string; source: { kind?: 'XLSX' | 'MANUAL'; name: string; size: number; sha256: string };
+  basisDate: string; companyLabel: string; source: { kind?: 'XLSX' | 'MANUAL' | 'PENDING_OPENING'; name: string; size: number; sha256: string };
   createdAt: string; committedAt: string | null;
   preview: { fingerprint: string; rows: ErpImportRow[]; errors: ErpImportIssue[]; warnings: ErpImportIssue[];
     canCommit: boolean; newItems: number; newPartners: number;
     itemTotals?: { itemId: string; name?: string; beforeQuantity: number; beforeValue: number; quantity: number; value: number }[];
     balances: { itemId: string; warehouseId: string; beforeQuantity: number; beforeValue: number; quantity: number; value: number }[] };
 }
-export interface ErpImportSummary { id: string; type: ErpImportType; sourceKind?: 'XLSX' | 'MANUAL'; status: ErpImport['status']; name: string; createdAt: string; rowCount: number; errorCount: number }
+export interface ErpImportSummary { id: string; type: ErpImportType; sourceKind?: 'XLSX' | 'MANUAL' | 'PENDING_OPENING'; status: ErpImport['status']; name: string; createdAt: string; rowCount: number; errorCount: number }
+export interface PendingOpeningRecord {id: string; code: string; name: string; unit: string; active: boolean; pendingOpening: {status: 'PENDING_COST' | 'CONFIRMED'; basisDate: string; quantity: number | null; unit: string; source: string; confirmedQuantity?: number; price?: number; value?: number; warehouseName?: string; postingDate?: string; postingMode?: string; reason?: string}}
+export interface PendingOpeningList {companyId: string; records: PendingOpeningRecord[]; basisDate: string; lastDate: string; suggestedDate: string}
+export interface PendingOpeningInput {date: string; warehouseId: string; reason: string; zeroCostConfirmed: boolean; lines: {itemId: string; quantity: string; price: string}[]}
 export interface ErpSourceFile { name: string; mimeType: string; base64: string }
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpImport', { timeout: 120000 });
 function scope(companyId: string) {
@@ -51,6 +54,8 @@ async function jobCall(companyId: string, action: string, data: Record<string, u
   return result;
 }
 export const erpImportService = {
+  openingList: async (companyId: string) => {const result=await call<PendingOpeningList>(companyId,'openingList');if(result.companyId!==companyId)throw new Error('이관 대기 자료의 소속 회사를 확인할 수 없습니다.');return result;},
+  openingPreview: (companyId: string,id: string,opening: PendingOpeningInput) => jobCall(companyId,'openingPreview',{id,opening}),
   manualPreview: (companyId: string, id: string, movement: ManualMovement) => jobCall(companyId, 'manualPreview', { id, movement }),
   preview: (companyId: string, id: string, type: ErpImportType, source: ErpSourceFile, options: ErpImportOptions) => jobCall(companyId, 'preview', { id, type, source, options }),
   get: (companyId: string, id: string) => jobCall(companyId, 'get', { id }),

@@ -42,6 +42,8 @@ const ledger=()=>reports(req({action:'report',view:'summary',filters:{from:'2026
 const settlements=(to='2026-11-12')=>finance(req({action:'settlementReport',to}));
 const settlementPreview=async input=>(await finance(req({action:'settlementPreview',id:`settle-${++seq}`,input:{date:'2026-11-12',notes:'배분 검증',...input}}))).job;
 const settle=job=>finance(req({action:'settlementCommit',id:job.id,fingerprint:job.fingerprint}));
+async function pendingItem(id='part',quantity=209){await parent().collection('erpItems').doc(id).update({pendingOpening:{status:'PENDING_COST',basisDate:'2026-11-11',quantity,unit:'EA',source:'합성 재고.xlsx 원본!C9'}});}
+async function openingPreview(lines=[{itemId:'part',quantity:'209',price:'10.1234'}],extra={}){return (await imports(req({action:'openingPreview',id:`opening-${++seq}`,opening:{date:'2026-11-11',warehouseId:'wh',reason:'매입 증빙 확인',zeroCostConfirmed:false,lines,...extra}}))).import;}
 
 test('aging counts UTC calendar days across leap years and omits future financial events',()=>{
   const {settlementReport}=require('../erp-settlement-model');
@@ -219,5 +221,64 @@ test('receivables, bundles and customer custody remain atomic and tenant-scoped'
     await reject(save('items','part',{...itemValues('PART','일반품'),pendingOpening},2),'invalid-argument');
     await parent().collection('erpItems').doc('part').update({'pendingOpening.quantity':null});assert.equal((await masters(req({action:'inventory',itemId:'part'}))).pendingOpening.quantity,null);
     await parent().collection('erpItems').doc('part').update({'pendingOpening.quantity':-1});await reject(masters(req({action:'inventory',itemId:'part'})));
+  });
+  await t.test('pending opening costs post original quantities once and update both valuation and source status atomically',async()=>{
+    await reset(false);await pendingItem();const list=await imports(req({action:'openingList'}));assert.equal(list.records.length,1);assert.equal(list.suggestedDate,'2026-11-11');
+    const job=await openingPreview();assert.equal(job.preview.canCommit,true,JSON.stringify(job.preview.errors));assert.equal(job.preview.rows[0].value,2116);assert.equal(await stock('part'),undefined);
+    const result=await Promise.all([commitMovement(job),commitMovement(job)]);assert.equal(result.filter(r=>r.idempotent).length,1);
+    const item=(await parent().collection('erpItems').doc('part').get()).data();assert.equal(item.purchasePrice,10.1234);assert.equal(item.pendingOpening.status,'CONFIRMED');assert.equal(item.pendingOpening.confirmedQuantity,209);assert.equal(item.pendingOpening.value,2116);
+    assert.equal((await stock('part')).quantity,209);assert.equal((await stock('part')).value,2116);
+    const inventory=await masters(req({action:'inventory',itemId:'part'}));assert.equal(inventory.status,'RECORDED');assert.equal(inventory.pendingOpening,null);assert.equal(inventory.averagePrice,2116/209);
+    assert.equal((await report()).rows.length,0);const state=(await parent().collection('erpState').doc('ledger').get()).data();assert.equal(state.basisDate,'2026-11-11');assert.equal(state.lastDate,null);
+    await reject(openingPreview());await reject(imports(req({action:'downloadSource',id:job.id})));
+    const [movement]=await records('erpMovements');await reject(correct('CANCEL',movement.id));
+    await post('출고',[line('PART','9','30')]);assert.equal((await stock('part')).quantity,200);assert.equal((await ledger()).totals.cogsKRW,91);
+  });
+  await t.test('late opening confirmation appends a dated adjustment and preserves prior reports and ledger sequence',async()=>{
+    await reset();await pendingItem('part2',3);const before=(await parent().collection('erpState').doc('ledger').get()).data();
+    await reject(openingPreview([{itemId:'part2',quantity:'3',price:'50'}]));
+    const job=await openingPreview([{itemId:'part2',quantity:'3',price:'50'}],{date:'2026-11-13'});assert.equal(job.preview.canCommit,true);assert.equal(job.preview.rows[0].postingMode,'ADJUSTMENT');await commitMovement(job);
+    const state=(await parent().collection('erpState').doc('ledger').get()).data();assert.equal(state.basisDate,before.basisDate);assert.equal(state.lastDate,'2026-11-13');assert.equal(state.lastOrder,1);assert.equal(state.revision,before.revision+1);
+    const old=await reports(req({action:'report',view:'summary',filters:{from:'2026-11-12',to:'2026-11-12',itemId:'part2',warehouseId:'',search:''}}));assert.equal(old.rows.length,0);
+    const current=await reports(req({action:'report',view:'summary',filters:{from:'2026-11-13',to:'2026-11-13',itemId:'part2',warehouseId:'',search:''}}));assert.equal(current.rows[0].adjustQuantity,3);assert.equal(current.rows[0].closingValue,150);assert.equal(current.rows[0].salesKRW,0);
+    const history=await masters(req({action:'purchaseHistory',itemId:'part2'}));assert.equal(history.rows[0].price,50);assert.equal(history.rows[0].priceBasis,'이관 원가 확정');
+    await post('출고',[line('PART2','1','80')],{date:'2026-11-13'});assert.equal((await parent().collection('erpState').doc('ledger').get()).data().lastOrder,2);
+  });
+  await t.test('opening confirmation protects source quantities, unknown costs, zero confirmations, roles and concurrent previews',async()=>{
+    await reset(false);await pendingItem('part',null);await pendingItem('part2',0);
+    await reject(openingPreview([{itemId:'part',quantity:'',price:'10'}]),'invalid-argument');await reject(openingPreview([{itemId:'part',quantity:'1',price:''}]),'invalid-argument');
+    for(const value of ['-1','1.00001'])await reject(openingPreview([{itemId:'part',quantity:value,price:'10'}]),'invalid-argument');
+    await reject(openingPreview([{itemId:'part2',quantity:'1',price:'10'}]));await reject(openingPreview([{itemId:'part2',quantity:'0',price:'0'}]),'invalid-argument');
+    const a=await openingPreview([{itemId:'part',quantity:'2',price:'20'},{itemId:'part2',quantity:'0',price:'0'}],{zeroCostConfirmed:true});assert.equal(a.preview.canCommit,true);
+    const b=await openingPreview([{itemId:'part',quantity:'2',price:'20'}]);await commitMovement(a);await reject(commitMovement(b));assert.equal((await stock('part2')).quantity,0);assert.equal((await stock('part2')).value,0);
+    for(const uid of [null,'member','manager','root','foreign'])await reject(imports(req({action:'openingList'},uid)),uid?'permission-denied':'unauthenticated');
+    await reject(imports(req({action:'openingPreview',id:'forged',opening:{companyId:'b'}})),'invalid-argument');
+    await reset();await pendingItem('part',209);const conflict=await openingPreview(undefined,{date:'2026-11-12'});assert.equal(conflict.preview.canCommit,false);assert.match(conflict.preview.errors[0].message,/대사/);assert.equal((await stock('part')).quantity,10);
+  });
+  await t.test('changed source, warehouse, or new stock invalidates the entire pending opening confirmation',async()=>{
+    await reset(false);await pendingItem();const job=await openingPreview();
+    await parent().collection('erpItems').doc('part').update({'pendingOpening.quantity':210});await reject(commitMovement(job));assert.equal(await stock('part'),undefined);
+    await pendingItem();const next=await openingPreview();await save('warehouses','wh',{code:'WH',name:'본사',address:'',notes:'',active:false},1);await reject(commitMovement(next));assert.equal((await records('erpMovements')).length,0);
+    await reset(false);await pendingItem();const stale=await openingPreview();await post('입고',[line('PART','1','10')]);await reject(commitMovement(stale));assert.equal((await stock('part')).quantity,1);
+  });
+  await t.test('collection plans retain due dates and monetary balances while preserving historical owner snapshots',async()=>{
+    await reset();await db.doc('UserProfile/member').update({name:'회수 담당'});await post('출고',[line('PART','1','100')]);const doc=(await settlements()).documents[0];
+    await settle(await settlementPreview({type:'TERMS',documentId:doc.id,dueDate:'2026-11-12'}));
+    const follow=await settlementPreview({type:'FOLLOW_UP',documentId:doc.id,date:'2026-11-13',expectedDate:'2026-11-14',assigneeId:'member',notes:'첫 회수 약속'});const duplicate=await Promise.all([settle(follow),settle(follow)]);assert.equal(duplicate.filter(r=>r.idempotent).length,1);
+    assert.equal((await settlements()).documents[0].assigneeId,'');let r=await settlements('2026-11-15');assert.equal(r.documents[0].dueDate,'2026-11-12');assert.equal(r.documents[0].overdueDays,3);assert.equal(r.documents[0].promiseOverdueDays,1);assert.equal(r.documents[0].assigneeName,'회수 담당');assert.equal(r.documents[0].balance,110);
+    // Follow-up management must not advance or lock the financial posting date.
+    await commit(finance,await preview(finance,payment({amount:'10'})));assert.equal((await settlements('2026-11-15')).documents[0].balance,110);assert.equal((await report()).rows[0].balance,100);
+    await settle(await settlementPreview({type:'FOLLOW_UP',documentId:doc.id,date:'2026-11-15',expectedDate:'2026-11-14',assigneeId:'admin',notes:'경과된 약속일 유지·담당 재배정'}));
+    await db.doc('UserProfile/admin').update({name:'변경된 이름'});r=await settlements('2026-11-15');assert.equal(r.documents[0].assigneeName,'이름 미등록');assert.equal(r.followUps.length,2);
+    await settle(await settlementPreview({type:'FOLLOW_UP',documentId:doc.id,date:'2026-11-16',expectedDate:'',assigneeId:'',notes:'회수 일정 재협의'}));assert.equal((await settlements('2026-11-16')).documents[0].assigneeId,'');assert.equal((await settlements('2026-11-14')).documents[0].assigneeId,'member');
+  });
+  await t.test('collection assignment rejects foreign or departed staff and rechecks staff status at commit',async()=>{
+    await reset();await post('출고',[line('PART','1','100')]);const doc=(await settlements()).documents[0],input={type:'FOLLOW_UP',documentId:doc.id,expectedDate:'2026-11-13',assigneeId:'member'};
+    for(const assigneeId of ['foreign','root','missing'])await reject(settlementPreview({...input,assigneeId}));
+    await reject(settlementPreview({...input,expectedDate:'2026-11-11'}),'invalid-argument');await reject(settlementPreview({...input,dueDate:'2026-12-01'}),'invalid-argument');
+    const pending=await settlementPreview(input);await db.doc('UserProfile/member').update({status:'RESIGNED'});await reject(settle(pending));assert.equal((await records('erpSettlements')).length,0);
+    await db.doc('UserProfile/member').update({status:'ACTIVE'});await settle(await settlementPreview(input));await db.doc('UserProfile/member').update({status:'RESIGNED'});
+    const report=await settlements();assert.equal(report.documents[0].assigneeId,'member');assert.equal(report.documents[0].assigneeActive,false);assert.equal(report.assignees.some(p=>p.id==='member'),false);
+    await reject(settlementPreview(input));await settle(await settlementPreview({...input,assigneeId:'admin'}));assert.equal((await settlements()).documents[0].assigneeActive,true);
   });
 }finally{await deleteApp(app);}});

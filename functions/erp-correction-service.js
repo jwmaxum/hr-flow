@@ -116,6 +116,7 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
       if (!source.exists) fail('not-found', '원거래를 찾을 수 없습니다.');
       const original = { ...source.data(), id: source.id };
       if (original.operationType?.startsWith('CUSTODY_')) fail('failed-precondition', '보관·차용 탭에서 해당 처리를 취소해 주세요.');
+      if (original.operationType === 'OPENING_CONFIRM') fail('failed-precondition','이관 원가 확정 이력은 보존합니다. 수량은 실사조정, 원가는 금액조정에서 바로잡아 주세요.');
       if (input.type === 'CANCEL') {
         if (original.operationType === 'CANCEL') fail('failed-precondition', '취소 역거래는 다시 취소할 수 없습니다. 재고 조정을 사용해 주세요.');
         const field = original.type === 'OPENING' ? 'importId' : original.type === 'CORRECTION' ? 'operationId' : 'documentNo';

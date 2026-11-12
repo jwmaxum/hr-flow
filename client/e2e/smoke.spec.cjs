@@ -627,6 +627,21 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   await expect(documentTable.getByRole('cell',{name:'800',exact:true})).toHaveCount(2);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await page.screenshot({path: testInfo.outputPath('erp-receivables.png'), fullPage: true});
+  const recoveryTable=settlements.getByRole('table',{name:'문서별 회수 관리',exact:true});
+  await recoveryTable.getByRole('button',{name:'회수 관리',exact:true}).click();
+  await settlements.getByLabel('회수 관리 적용일 *',{exact:true}).fill('2026-11-13');
+  await settlements.getByLabel('회수 예정일 (공란이면 해제)',{exact:true}).fill('2026-11-14');
+  await settlements.getByRole('combobox',{name:'회수 담당자',exact:true}).selectOption(fixtures.accounts.adminA.uid);
+  await settlements.getByLabel('회수 관리 메모 *',{exact:true}).fill('전화 확인 후 회수 약속');
+  await settlements.getByRole('button',{name:'회수 관리 검증·미리보기',exact:true}).click();
+  await settlements.getByRole('checkbox',{name:'회수 예정일·담당자·적용일을 확인했습니다.',exact:true}).check();
+  await settlements.getByRole('button',{name:'회수 관리 확정',exact:true}).click();
+  await expect(settlements.getByText('회수 관리 반영 완료',{exact:true})).toBeVisible({timeout:65000});
+  await settlements.getByLabel('연체 조회 기준일',{exact:true}).fill('2026-11-15');await settlements.getByRole('button',{name:'문서 잔액 조회',exact:true}).click();
+  await expect(recoveryTable.getByRole('cell',{name:'1일',exact:true})).toBeVisible({timeout:65000});
+  await expect(documentTable.getByRole('cell',{name:'3일',exact:true})).toBeVisible();
+  const recovery=await call('manageErpFinance',{action:'settlementReport',to:'2026-11-15'});expect(recovery.documents[0]).toMatchObject({assigneeId:fixtures.accounts.adminA.uid,expectedDate:'2026-11-14',dueDate:'2026-11-12',balance:800,overdueAmount:800});
+  await recoveryTable.scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-collection-follow-up.png')});
   await page.getByRole('button', {name: '보관·차용', exact: true}).click(); const custody = page.getByRole('region', {name: '보관 처리 등록', exact: true});
   await custody.getByRole('combobox', {name: '보관 품목 *', exact: true}).selectOption(part.id); await custody.getByRole('combobox', {name: '보관 창고 *', exact: true}).selectOption('warehouse'); await custody.getByRole('combobox', {name: '소유 거래처 *', exact: true}).selectOption('owner');
   await custody.getByLabel('보관 처리일 *', {exact: true}).fill('2026-11-12'); await custody.getByLabel('기존 판매 증빙번호 *', {exact: true}).fill('이전판매-001'); await custody.getByLabel('보관 처리수량 *', {exact: true}).fill('3'); await custody.getByLabel('보관 처리 사유 *', {exact: true}).fill('판매완료 미인도 보관');
@@ -645,6 +660,38 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{quantity: 5, value: 500}]);
   const ar = await call('manageErpFinance', {action: 'report', from: '2026-01-01', to: '2026-12-31'}); expect(ar.rows[0].balance).toBe(1240);
   await page.screenshot({path: testInfo.outputPath('erp-custody.png'), fullPage: true}); expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
+});
+
+test('ERP pending opening costs confirm real quantities and assets once on desktop and mobile', async ({browser},testInfo)=>{
+  test.setTimeout(300000);await clearErpFixture(fixtures.companyA);
+  const foreignBefore=await readErpInventory(fixtures.companyB),actor=await actorFor(browser,testInfo),page=actor.page;
+  await login(actor,fixtures.accounts.adminA);
+  async function call(name,data){const r=await probe(actor,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/${name}`,{method:'POST',body:{data:{companyId:fixtures.companyA,...data}}});expect(r.status).toBe(200);return JSON.parse(Buffer.from(r.bytes).toString('utf8')).result;}
+  await call('manageErp',{action:'save',kind:'warehouses',id:'opening',expectedRevision:0,values:{code:'OPENING',name:'기초재고 통합',active:true,address:'',notes:''}});
+  await call('manageErp',{action:'save',kind:'items',id:'pending-part',expectedRevision:0,values:{code:'ERP-001',name:'원가 확인 대기 품목',unit:'EA',specification:'',taxType:'과세',group:'',active:true,notes:'',purchasePrice:0,salePrice:20}});
+  await seedErpPendingOpening(fixtures.companyA);await page.goto('/#/erp');
+  await page.getByRole('button',{name:'원가 확인 대기 품목 재고 보기',exact:true}).click();
+  await page.getByRole('button',{name:'원가 입력·기초재고 확정',exact:true}).click();
+  const panel=page.getByRole('region',{name:'기초재고 원가 확정',exact:true});
+  await expect(panel.getByRole('checkbox',{name:'ERP-001 확정 선택',exact:true})).toBeChecked({timeout:65000});
+  await panel.getByRole('combobox',{name:'확정 창고 *',exact:true}).selectOption('opening');
+  await panel.getByLabel('재고 반영일 *',{exact:true}).fill('2026-11-11');
+  await panel.getByRole('textbox',{name:'ERP-001 실제 원가',exact:true}).fill('10');
+  await panel.getByLabel('원가 확인 근거 *',{exact:true}).fill('합성 매입증빙 확인');
+  await panel.getByRole('button',{name:'원가 검증·미리보기',exact:true}).click();
+  await expect(panel.getByRole('cell',{name:'2,090원',exact:true})).toBeVisible({timeout:65000});
+  expect((await readErpInventory(fixtures.companyA)).balances).toEqual([]);
+  await panel.getByRole('checkbox',{name:'원본 수량·실제 원가·창고·반영일과 재고자산 증가를 확인했습니다.',exact:true}).check();
+  await panel.getByRole('button',{name:'기초재고 원가 확정',exact:true}).click();
+  await expect(panel.getByText('기초재고 원가 확정 완료',{exact:true})).toBeVisible({timeout:65000});
+  const state=await readErpInventory(fixtures.companyA);expect(state.balances).toEqual([{quantity:209,value:2090}]);expect(state.ledgerCount).toBe(1);
+  expect((await call('manageErpImport',{action:'openingList'})).records[0].pendingOpening.status).toBe('CONFIRMED');
+  await page.screenshot({path:testInfo.outputPath('erp-opening-confirmed.png'),fullPage:true});
+  await panel.getByRole('button',{name:'재고현황 확인',exact:true}).click();
+  await page.getByRole('button',{name:'원가 확인 대기 품목 재고 보기',exact:true}).click();
+  const stock=page.getByRole('region',{name:'품목 재고현황',exact:true});await expect(stock.getByRole('cell',{name:'2,090',exact:true})).toBeVisible({timeout:65000});
+  await expect(stock.getByText('이관 대기 수량 (원본 기준)',{exact:true})).toHaveCount(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
 });
 
 test('ERP warehouse transfers allocate to three warehouses, validate stock, commit and cancel without company-wide changes', async ({ browser }, testInfo) => {

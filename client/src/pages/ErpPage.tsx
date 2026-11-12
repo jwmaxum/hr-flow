@@ -14,6 +14,7 @@ const ErpDocumentsPanel = lazy(() => import('../components/ErpDocumentsPanel').t
 const ErpTransferPanel = lazy(() => import('../components/ErpTransferPanel').then(module => ({ default: module.ErpTransferPanel })));
 const ErpMovementPanel = lazy(() => import('../components/ErpMovementPanel').then(module => ({ default: module.ErpMovementPanel })));
 const ErpFinancePanel = lazy(() => import('../components/ErpFinancePanel').then(module => ({ default: module.ErpFinancePanel })));
+const ErpOpeningPanel = lazy(() => import('../components/ErpOpeningPanel').then(module => ({ default: module.ErpOpeningPanel })));
 const ErpCustodyPanel = lazy(() => import('../components/ErpCustodyPanel').then(module => ({ default: module.ErpCustodyPanel })));
 
 const names: Record<ErpKind, string> = { items: '품목', warehouses: '창고', partners: '거래처' };
@@ -102,8 +103,8 @@ function MasterEditor({ companyId, kind, record, onClose, onSaved }: {
   </section>;
 }
 
-function InventoryPanel({ value, loading, error, onRetry, onEdit, canManage }: {
-  value: InventoryResult | null; loading: boolean; error: string; onRetry: () => void; onEdit: () => void; canManage: boolean;
+function InventoryPanel({ value, loading, error, onRetry, onEdit, onOpening, canManage }: {
+  value: InventoryResult | null; loading: boolean; error: string; onRetry: () => void; onEdit: () => void; onOpening: () => void; canManage: boolean;
 }) {
   return <section className="wf-panel erp-inventory" aria-label="품목 재고현황" aria-busy={loading}>
     <div className="wf-panel-head"><h2 className="wf-section-title">재고현황</h2><button className="wf-btn" onClick={onRetry} disabled={loading} aria-label="재고 새로고침"><RefreshCw size={16} aria-hidden="true" /></button></div>
@@ -114,7 +115,7 @@ function InventoryPanel({ value, loading, error, onRetry, onEdit, canManage }: {
         {canManage && <><div><dt>전체 재고금액</dt><dd>{value.status === 'PENDING_COST' ? <small>원가 미확정</small> : <>{value.value == null ? '—' : number(value.value)}<small>원</small></>}</dd></div><div><dt>평균 재고단가</dt><dd>{value.status === 'PENDING_COST' ? <small>원가 미확정</small> : <>{value.averagePrice == null ? '—' : number(value.averagePrice)}<small>원</small></>}</dd></div></>}</dl>
       {value.virtual && <p className="erp-notice">조합상품의 별도 재고자산은 없습니다. 출고 가능 수량은 창고별 구성품 보유량으로 계산하며 구성품 원가에서 차감합니다.</p>}{canManage && !value.virtual && <p className="wf-muted">평균 재고단가 = 전체 창고의 재고금액 ÷ 현재 재고수량</p>}
       {value.status === 'UNINITIALIZED' && <p className="erp-notice"><strong>재고 미등록</strong><br />기초재고 또는 입출고가 반영되면 창고별 수량을 확인할 수 있습니다.</p>}
-      {value.pendingOpening && <div className="erp-notice" aria-label="원가 미확정 이관 대기"><strong>원가 확인 후 재고 확정 필요</strong><p>{value.pendingOpening.basisDate} 기준 · 원본 수량 {value.pendingOpening.quantity == null ? '공란' : `${number(value.pendingOpening.quantity)} ${value.pendingOpening.unit}`}</p><p>{value.pendingOpening.source}</p><p>원본의 이관 대기 수량입니다. 출고 가능한 확정 재고와 재고자산에는 포함되지 않습니다. 실제 원가 확인 후 기초재고 Excel로 수량·금액을 확정해 주세요. 기본 매입단가만 수정해도 재고가 확정되지는 않습니다.</p></div>}
+      {value.pendingOpening && <div className="erp-notice" aria-label="원가 미확정 이관 대기"><strong>원가 확인 후 재고 확정 필요</strong><p>{value.pendingOpening.basisDate} 기준 · 원본 수량 {value.pendingOpening.quantity == null ? '공란' : `${number(value.pendingOpening.quantity)} ${value.pendingOpening.unit}`}</p><p>{value.pendingOpening.source}</p><p>원본의 이관 대기 수량입니다. 출고 가능한 확정 재고와 재고자산에는 포함되지 않습니다. 실제 원가 확인 후 기초재고 원가 확정에서 수량·금액을 확정해 주세요. 기본 매입단가만 수정해도 재고가 확정되지는 않습니다.</p>{canManage&&<button className="wf-btn wf-btn-primary" disabled={!value.item.active} onClick={onOpening}>원가 입력·기초재고 확정</button>}</div>}
       {canManage && <dl className="erp-prices"><div><dt>기본 매입단가</dt><dd>{number(value.item.purchasePrice ?? 0)}원</dd></div><div><dt>기본 판매단가</dt><dd>{number(value.item.salePrice ?? 0)}원</dd></div></dl>}
       {value.warehouses.length > 0 && <div className="erp-table-scroll"><table className="erp-table"><caption className="erp-sr-only">창고별 재고</caption><thead><tr><th>창고</th><th className="erp-number">수량</th>{canManage && <th className="erp-number">금액 (원)</th>}</tr></thead>
         <tbody>{value.warehouses.map(row => <tr key={row.warehouseId}><td>{row.warehouseName}<small className="erp-cell-note">{row.warehouseCode}{row.warehouseActive ? '' : ' · 사용 중지'}</small></td><td className="erp-number">{number(row.quantity)}</td>{canManage && <td className="erp-number">{number(row.value ?? 0)}</td>}</tr>)}</tbody></table></div>}
@@ -136,7 +137,9 @@ function ErpWorkspace({ companyId, companyName, canManage }: { companyId: string
   const [reportOpen, setReportOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
-  const [accountPanel, setAccountPanel] = useState<'finance' | 'custody' | null>(null);
+  const [accountPanel, setAccountPanel] = useState<'finance' | 'custody' | 'opening' | null>(null);
+  const [openingItemId,setOpeningItemId]=useState('');
+  function openOpening(itemId=''){setOpeningItemId(itemId);setAccountPanel('opening');setMovement(null);setImportOpen(false);setReportOpen(false);setDocumentsOpen(false);setTransferOpen(false);}
   const [movement, setMovement] = useState<{ direction: '입고' | '출고'; item: ErpRecord | null; key: string } | null>(null);
   const [documentSource, setDocumentSource] = useState('');
   const [kind, setKind] = useState<ErpKind>('items');
@@ -153,7 +156,7 @@ function ErpWorkspace({ companyId, companyName, canManage }: { companyId: string
     setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); setTransferOpen(false); setNotice('');
     setMovement({ direction, item, key: crypto.randomUUID() });
   }
-  function showInventory() { setMovement(null); setImportOpen(false); reset(); setKind('items'); setSearch(''); setSearchBy('name'); setReload(value => value + 1); }
+  function showInventory() { setAccountPanel(null); setMovement(null); setImportOpen(false); reset(); setKind('items'); setSearch(''); setSearchBy('name'); setReload(value => value + 1); }
 
   function choose(record: ErpRecord) { stockGeneration.current++; setSelected({ ...record }); setEditor(null); setStock(null); setStockError(''); }
   function reset() {
@@ -207,8 +210,9 @@ function ErpWorkspace({ companyId, companyName, canManage }: { companyId: string
       <p className="wf-muted">품목을 찾고 창고별 재고를 확인하세요.</p></div><span className="wf-status"><Boxes size={15} aria-hidden="true" />{canManage ? '회사 관리자' : '재고 조회'}</span></header>
     <nav className="erp-tabs" aria-label="ERP 업무">
       {([['items', PackageSearch], ['warehouses', Warehouse], ['partners', UsersRound]] as const).filter(([key]) => canManage || key !== 'partners').map(([key, Icon]) =>
-        <button key={key} type="button" aria-pressed={!accountPanel && !movement && !importOpen && !reportOpen && !documentsOpen && !transferOpen && kind === key} onClick={() => { setAccountPanel(null); setMovement(null); setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); setTransferOpen(false); if (kind !== key || movement || importOpen || reportOpen || documentsOpen || transferOpen) { reset(); setKind(key); setSearch(''); setSearchBy('name'); setReload(value => value + 1); } }}><Icon size={18} aria-hidden="true" />{names[key]}{key === 'items' ? '·재고현황' : ' 관리'}</button>)}
+        <button key={key} type="button" aria-pressed={!accountPanel && !movement && !importOpen && !reportOpen && !documentsOpen && !transferOpen && kind === key} onClick={() => { setAccountPanel(null); setMovement(null); setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); setTransferOpen(false); if (accountPanel || kind !== key || movement || importOpen || reportOpen || documentsOpen || transferOpen) { reset(); setKind(key); setSearch(''); setSearchBy('name'); setReload(value => value + 1); } }}><Icon size={18} aria-hidden="true" />{names[key]}{key === 'items' ? '·재고현황' : ' 관리'}</button>)}
       {canManage && <button type="button" aria-pressed={movement?.direction === '출고'} onClick={() => openMovement('출고')}>출고등록</button>}
+      {canManage&&<button type="button" aria-pressed={accountPanel==='opening'} onClick={()=>openOpening()}>기초재고 원가 확정</button>}
       {canManage && <button type="button" aria-pressed={importOpen} onClick={() => { setAccountPanel(null); setMovement(null); setImportOpen(true); setReportOpen(false); setDocumentsOpen(false); setTransferOpen(false); }}>Excel 업로드</button>}
       {canManage && <button type="button" aria-pressed={transferOpen} onClick={() => { setAccountPanel(null); setMovement(null); setTransferOpen(true); setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); }}>창고 이동</button>}
       <button type="button" aria-pressed={reportOpen} onClick={() => { setAccountPanel(null); setMovement(null); setReportOpen(true); setImportOpen(false); setDocumentsOpen(false); setTransferOpen(false); }}>입출고 총괄·원장</button>
@@ -216,7 +220,7 @@ function ErpWorkspace({ companyId, companyName, canManage }: { companyId: string
       {canManage && <><button type="button" aria-pressed={accountPanel === 'finance'} onClick={() => {setAccountPanel('finance'); setMovement(null); setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); setTransferOpen(false);}}>미수금·수금</button><button type="button" aria-pressed={accountPanel === 'custody'} onClick={() => {setAccountPanel('custody'); setMovement(null); setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); setTransferOpen(false);}}>보관·차용</button></>}
     </nav>
     {notice && <p role="status" className="erp-success">{notice}</p>}
-    {accountPanel && canManage ? <Suspense fallback={<p role="status">원장을 불러오고 있습니다.</p>}>{accountPanel === 'finance' ? <ErpFinancePanel companyId={companyId} /> : <ErpCustodyPanel companyId={companyId} />}</Suspense> : movement && canManage ? <Suspense fallback={<p role="status">입출고 등록을 불러오고 있습니다.</p>}><ErpMovementPanel key={movement.key} companyId={companyId} direction={movement.direction} initialItem={movement.item} onInventory={showInventory} onStatement={documentNo => { setMovement(null); setDocumentSource(documentNo); setDocumentsOpen(true); }} /></Suspense> : transferOpen && canManage ? <Suspense fallback={<p role="status">창고 이동을 불러오고 있습니다.</p>}><ErpTransferPanel key={companyId} companyId={companyId} /></Suspense> : documentsOpen && canManage ? <Suspense fallback={<p role="status">거래서류를 불러오고 있습니다.</p>}><ErpDocumentsPanel companyId={companyId} initialSourceDocumentNo={documentSource} /></Suspense> : reportOpen ? <ErpReportPanel companyId={companyId} canManage={canManage} /> : importOpen && canManage ? <ErpImportPanel companyId={companyId} onInventory={showInventory} /> : <div className={`erp-layout ${kind !== 'items' && !editor ? 'erp-layout-single' : ''}`}>
+    {accountPanel && canManage ? <Suspense fallback={<p role="status">원장을 불러오고 있습니다.</p>}>{accountPanel === 'finance' ? <ErpFinancePanel companyId={companyId} /> : accountPanel==='opening' ? <ErpOpeningPanel key={openingItemId} companyId={companyId} initialItemId={openingItemId} onInventory={showInventory} /> : <ErpCustodyPanel companyId={companyId} />}</Suspense> : movement && canManage ? <Suspense fallback={<p role="status">입출고 등록을 불러오고 있습니다.</p>}><ErpMovementPanel key={movement.key} companyId={companyId} direction={movement.direction} initialItem={movement.item} onInventory={showInventory} onStatement={documentNo => { setMovement(null); setDocumentSource(documentNo); setDocumentsOpen(true); }} /></Suspense> : transferOpen && canManage ? <Suspense fallback={<p role="status">창고 이동을 불러오고 있습니다.</p>}><ErpTransferPanel key={companyId} companyId={companyId} /></Suspense> : documentsOpen && canManage ? <Suspense fallback={<p role="status">거래서류를 불러오고 있습니다.</p>}><ErpDocumentsPanel companyId={companyId} initialSourceDocumentNo={documentSource} /></Suspense> : reportOpen ? <ErpReportPanel companyId={companyId} canManage={canManage} /> : importOpen && canManage ? <ErpImportPanel companyId={companyId} onInventory={showInventory} /> : <div className={`erp-layout ${kind !== 'items' && !editor ? 'erp-layout-single' : ''}`}>
       <section className="wf-panel erp-list" aria-label={`${names[kind]} 목록`}>
         <div className="erp-list-head"><h2 className="wf-section-title">{names[kind]} 목록</h2>{canManage && <button ref={addButton} className="wf-btn wf-btn-primary" onClick={() => { if (kind === 'items') openMovement('입고'); else { setEditor({ record: null }); setNotice(''); } }}><Plus size={16} aria-hidden="true" />{kind === 'items' ? '입고등록' : `${names[kind]} 등록`}</button>}</div>
         {kind === 'items' && canManage && <div className="erp-actions"><small className="wf-muted">코드 선택 → 입고등록 · 품목명 선택 → 재고현황</small><button className="wf-btn" onClick={() => { setEditor({ record: null }); setNotice(''); }}>품목 정보만 등록</button></div>}
@@ -234,7 +238,7 @@ function ErpWorkspace({ companyId, companyName, canManage }: { companyId: string
       </section>
       {editor && canManage ? <MasterEditor key={`${kind}:${editor.record?.id || 'new'}:${editor.record?.revision || 0}`} companyId={companyId} kind={kind} record={editor.record}
         onClose={() => { setEditor(null); requestAnimationFrame(() => addButton.current?.focus()); }} onSaved={saved} /> : kind === 'items' ? <InventoryPanel value={stock} loading={stockLoading} error={stockError} canManage={canManage}
-          onRetry={() => { if (selected) { stockGeneration.current++; setStock(null); setSelected({ ...selected }); } }} onEdit={() => { if (stock) setEditor({ record: stock.item }); }} /> : null}
+          onOpening={()=>openOpening(stock?.item.id||'')} onRetry={() => { if (selected) { stockGeneration.current++; setStock(null); setSelected({ ...selected }); } }} onEdit={() => { if (stock) setEditor({ record: stock.item }); }} /> : null}
     </div>}
   </main>;
 }

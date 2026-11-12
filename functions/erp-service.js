@@ -106,13 +106,13 @@ function createErpService({ db, now = () => new Date() }) {
         }
         const snapshots = await tx.get(query.limit(51)), scanned = snapshots.docs.slice(0,50);
         scanned.forEach(doc => verifyTenant(doc.data(), companyId));
-        const receipts = scanned.filter(doc => doc.data().type === 'OPENING' || doc.data().type === 'MOVEMENTS' && doc.data().direction === '입고');
+        const receipts = scanned.filter(doc => doc.data().operationType === 'OPENING_CONFIRM' || doc.data().type === 'OPENING' || doc.data().type === 'MOVEMENTS' && doc.data().direction === '입고');
         const links = receipts.length ? await tx.getAll(...receipts.map(doc => companyRef.collection('erpMovementLinks').doc(doc.id))) : [];
         const rows = receipts.map((doc, i) => {
           const row = doc.data(), link = links[i].data(); if (link) verifyTenant(link, companyId);
           return { id: doc.id, date: row.date, documentNo: row.documentNo || '기초재고', warehouseName: row.warehouseName,
             quantity: row.quantityScaled / 10000, price: row.priceScaled == null ? null : row.priceScaled / 10000, currency: row.currency,
-            priceBasis: row.priceBasis || '기초재고', value: row.value, costPerUnit: row.quantityScaled ? row.value * 10000 / row.quantityScaled : null,
+            priceBasis: row.operationType==='OPENING_CONFIRM'?'이관 원가 확정':row.priceBasis || '기초재고', value: row.value, costPerUnit: row.quantityScaled ? row.value * 10000 / row.quantityScaled : null,
             cancelled: !!link?.cancelledBy, returnedQuantity: (link?.returnedQuantityScaled || 0) / 10000 };
         });
         return { rows, nextCursor: snapshots.size > 50 ? scanned.at(-1).id : null };

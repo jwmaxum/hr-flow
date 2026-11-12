@@ -9,7 +9,7 @@ function settlementReport(data, to, partnerId = '') {
     if (!documents.has(event.documentId)) documents.set(event.documentId, {
       id: event.documentId, documentNo: event.documentNo, date: event.saleDate,
       partnerId: event.partnerId, partnerName: event.partnerName, currency: event.currency,
-      billed: 0, allocated: 0, dueDate: '', termsDate: '',
+      billed: 0, allocated: 0, dueDate: '', termsDate: '', expectedDate:'', assigneeId:'', assigneeName:'', followUpDate:'', followUpNotes:'',
     });
     const doc = documents.get(event.documentId);
     if (doc.partnerId !== event.partnerId || doc.currency !== event.currency || doc.date !== event.saleDate) fail('failed-precondition', '출고 문서 연결을 확인해 주세요.');
@@ -30,6 +30,11 @@ function settlementReport(data, to, partnerId = '') {
       if (!doc) fail('failed-precondition', '지급기일의 출고 문서를 확인해 주세요.');
       doc.dueDate = row.dueDate; doc.termsDate = row.date;
     }
+    if (row.type === 'FOLLOW_UP') {
+      const doc=documents.get(row.documentId);
+      if(!doc)fail('failed-precondition','회수 관리의 출고 문서를 확인해 주세요.');
+      Object.assign(doc,{expectedDate:row.expectedDate,assigneeId:row.assigneeId,assigneeName:row.assigneeName,followUpDate:row.date,followUpNotes:row.notes});
+    }
     if (row.type !== 'ALLOCATE') continue;
     const receipt = receipts.get(row.receiptId);
     if (!receipt) fail('failed-precondition', '배분한 원수금을 확인해 주세요.');
@@ -48,6 +53,7 @@ function settlementReport(data, to, partnerId = '') {
     doc.overdueDays = doc.balance > 0 && doc.dueDate ? Math.max(0, Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${doc.dueDate}T00:00:00Z`)) / 86400000)) : 0;
     doc.overdueAmount = doc.overdueDays ? doc.balance : 0;
     doc.credit = Math.max(0, -doc.balance);
+    doc.promiseOverdueDays=doc.balance>0&&doc.expectedDate?Math.max(0,Math.round((Date.parse(`${to}T00:00:00Z`)-Date.parse(`${doc.expectedDate}T00:00:00Z`))/86400000)):0;
   }
   const groups = new Map();
   for (const event of data.events.filter(included)) {
@@ -68,7 +74,7 @@ function settlementReport(data, to, partnerId = '') {
   return {
     asOf: to, documents:[...documents.values()].sort((a,b) => b.date.localeCompare(a.date) || a.documentNo.localeCompare(b.documentNo)),
     receipts:[...receipts.values()].sort((a,b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id)),
-    allocations:allocations.reverse(), terms:entries.filter(row => row.type === 'TERMS').reverse(),
+    allocations:allocations.reverse(), terms:entries.filter(row => row.type === 'TERMS').reverse(), followUps:entries.filter(row=>row.type==='FOLLOW_UP').reverse(),
     summaries:[...groups.values()].map(row => ({...row,unallocated:M.signed(row.netReceipts-row.allocated),balance:M.signed(row.documentBalance-row.netReceipts+row.allocated)})),
   };
 }
