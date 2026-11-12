@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Boxes, PackageSearch, Plus, RefreshCw, Warehouse, UsersRound, Pencil, X } from 'lucide-react';
+import { Boxes, PackageSearch, Plus, RefreshCw, Warehouse, UsersRound, Pencil, X, ChartColumn } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { erpService } from '../services/erpService';
 import { erpChoices } from '../services/erpAccountService';
@@ -14,6 +14,7 @@ const ErpDocumentsPanel = lazy(() => import('../components/ErpDocumentsPanel').t
 const ErpTransferPanel = lazy(() => import('../components/ErpTransferPanel').then(module => ({ default: module.ErpTransferPanel })));
 const ErpMovementPanel = lazy(() => import('../components/ErpMovementPanel').then(module => ({ default: module.ErpMovementPanel })));
 const ErpFinancePanel = lazy(() => import('../components/ErpFinancePanel').then(module => ({ default: module.ErpFinancePanel })));
+const ErpDashboardPanel=lazy(()=>import('../components/ErpDashboardPanel').then(module=>({default:module.ErpDashboardPanel})));
 const ErpOpeningPanel = lazy(() => import('../components/ErpOpeningPanel').then(module => ({ default: module.ErpOpeningPanel })));
 const ErpCustodyPanel = lazy(() => import('../components/ErpCustodyPanel').then(module => ({ default: module.ErpCustodyPanel })));
 
@@ -137,7 +138,7 @@ function ErpWorkspace({ companyId, companyName, canManage }: { companyId: string
   const [reportOpen, setReportOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
-  const [accountPanel, setAccountPanel] = useState<'finance' | 'custody' | 'opening' | null>(null);
+  const [accountPanel, setAccountPanel] = useState<'finance' | 'custody' | 'opening' | 'dashboard' | null>(null);
   const [openingItemId,setOpeningItemId]=useState('');
   function openOpening(itemId=''){setOpeningItemId(itemId);setAccountPanel('opening');setMovement(null);setImportOpen(false);setReportOpen(false);setDocumentsOpen(false);setTransferOpen(false);}
   const [movement, setMovement] = useState<{ direction: '입고' | '출고'; item: ErpRecord | null; key: string } | null>(null);
@@ -206,7 +207,7 @@ function ErpWorkspace({ companyId, companyName, canManage }: { companyId: string
     requestAnimationFrame(() => addButton.current?.focus());
   }
   return <main className="wf-page erp-page">
-    <header className="erp-page-head"><div><p className="erp-eyebrow">{companyName}</p><h1 className="wf-title">재고관리 ERP</h1>
+    <header className="erp-page-head"><div><p className="erp-eyebrow">{companyName}</p><div className="erp-title-row"><h1 className="wf-title">재고관리 ERP</h1>{canManage&&<button className="wf-btn erp-dashboard-toggle" aria-label="ERP 월별 대시보드" aria-pressed={accountPanel==='dashboard'} title="월별 재고·매출·매입·외상매출 대시보드" onClick={()=>{setAccountPanel('dashboard');setMovement(null);setImportOpen(false);setReportOpen(false);setDocumentsOpen(false);setTransferOpen(false);}}><ChartColumn size={21} aria-hidden="true"/><span>대시보드</span></button>}</div>
       <p className="wf-muted">품목을 찾고 창고별 재고를 확인하세요.</p></div><span className="wf-status"><Boxes size={15} aria-hidden="true" />{canManage ? '회사 관리자' : '재고 조회'}</span></header>
     <nav className="erp-tabs" aria-label="ERP 업무">
       {([['items', PackageSearch], ['warehouses', Warehouse], ['partners', UsersRound]] as const).filter(([key]) => canManage || key !== 'partners').map(([key, Icon]) =>
@@ -220,7 +221,7 @@ function ErpWorkspace({ companyId, companyName, canManage }: { companyId: string
       {canManage && <><button type="button" aria-pressed={accountPanel === 'finance'} onClick={() => {setAccountPanel('finance'); setMovement(null); setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); setTransferOpen(false);}}>미수금·수금</button><button type="button" aria-pressed={accountPanel === 'custody'} onClick={() => {setAccountPanel('custody'); setMovement(null); setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); setTransferOpen(false);}}>보관·차용</button></>}
     </nav>
     {notice && <p role="status" className="erp-success">{notice}</p>}
-    {accountPanel && canManage ? <Suspense fallback={<p role="status">원장을 불러오고 있습니다.</p>}>{accountPanel === 'finance' ? <ErpFinancePanel companyId={companyId} /> : accountPanel==='opening' ? <ErpOpeningPanel key={openingItemId} companyId={companyId} initialItemId={openingItemId} onInventory={showInventory} /> : <ErpCustodyPanel companyId={companyId} />}</Suspense> : movement && canManage ? <Suspense fallback={<p role="status">입출고 등록을 불러오고 있습니다.</p>}><ErpMovementPanel key={movement.key} companyId={companyId} direction={movement.direction} initialItem={movement.item} onInventory={showInventory} onStatement={documentNo => { setMovement(null); setDocumentSource(documentNo); setDocumentsOpen(true); }} /></Suspense> : transferOpen && canManage ? <Suspense fallback={<p role="status">창고 이동을 불러오고 있습니다.</p>}><ErpTransferPanel key={companyId} companyId={companyId} /></Suspense> : documentsOpen && canManage ? <Suspense fallback={<p role="status">거래서류를 불러오고 있습니다.</p>}><ErpDocumentsPanel companyId={companyId} initialSourceDocumentNo={documentSource} /></Suspense> : reportOpen ? <ErpReportPanel companyId={companyId} canManage={canManage} /> : importOpen && canManage ? <ErpImportPanel companyId={companyId} onInventory={showInventory} /> : <div className={`erp-layout ${kind !== 'items' && !editor ? 'erp-layout-single' : ''}`}>
+    {accountPanel && canManage ? <Suspense fallback={<p role="status">원장을 불러오고 있습니다.</p>}>{accountPanel==='dashboard'?<ErpDashboardPanel companyId={companyId} onFinance={()=>setAccountPanel('finance')} onLedger={()=>{setAccountPanel(null);setReportOpen(true);}} />:accountPanel === 'finance' ? <ErpFinancePanel companyId={companyId} /> : accountPanel==='opening' ? <ErpOpeningPanel key={openingItemId} companyId={companyId} initialItemId={openingItemId} onInventory={showInventory} /> : <ErpCustodyPanel companyId={companyId} />}</Suspense> : movement && canManage ? <Suspense fallback={<p role="status">입출고 등록을 불러오고 있습니다.</p>}><ErpMovementPanel key={movement.key} companyId={companyId} direction={movement.direction} initialItem={movement.item} onInventory={showInventory} onStatement={documentNo => { setMovement(null); setDocumentSource(documentNo); setDocumentsOpen(true); }} /></Suspense> : transferOpen && canManage ? <Suspense fallback={<p role="status">창고 이동을 불러오고 있습니다.</p>}><ErpTransferPanel key={companyId} companyId={companyId} /></Suspense> : documentsOpen && canManage ? <Suspense fallback={<p role="status">거래서류를 불러오고 있습니다.</p>}><ErpDocumentsPanel companyId={companyId} initialSourceDocumentNo={documentSource} /></Suspense> : reportOpen ? <ErpReportPanel companyId={companyId} canManage={canManage} /> : importOpen && canManage ? <ErpImportPanel companyId={companyId} onInventory={showInventory} /> : <div className={`erp-layout ${kind !== 'items' && !editor ? 'erp-layout-single' : ''}`}>
       <section className="wf-panel erp-list" aria-label={`${names[kind]} 목록`}>
         <div className="erp-list-head"><h2 className="wf-section-title">{names[kind]} 목록</h2>{canManage && <button ref={addButton} className="wf-btn wf-btn-primary" onClick={() => { if (kind === 'items') openMovement('입고'); else { setEditor({ record: null }); setNotice(''); } }}><Plus size={16} aria-hidden="true" />{kind === 'items' ? '입고등록' : `${names[kind]} 등록`}</button>}</div>
         {kind === 'items' && canManage && <div className="erp-actions"><small className="wf-muted">코드 선택 → 입고등록 · 품목명 선택 → 재고현황</small><button className="wf-btn" onClick={() => { setEditor({ record: null }); setNotice(''); }}>품목 정보만 등록</button></div>}

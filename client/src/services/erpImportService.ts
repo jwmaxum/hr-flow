@@ -1,3 +1,4 @@
+import type {PaymentOptions,PaymentSummary} from './erpAccountService';
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../firebase';
 import { useAuthStore } from '../store/authStore';
@@ -5,6 +6,7 @@ import { useAuthStore } from '../store/authStore';
 export type ErpImportType = 'OPENING' | 'MOVEMENTS';
 export interface ManualLine { code: string; name: string; specification: string; unit: string; taxType: string; quantity: string; price: string; notes: string; fulfillment?: 'DIRECT' | 'HOLD' | 'BORROW'; custodyLotId?: string; borrowValue?: string }
 export interface ManualMovement {
+  payment?:{status:'CREDIT'}|({status:'PAID'}&PaymentOptions);
   direction: '입고' | '출고'; date: string; warehouseId: string; partnerId?: string;
   partner?: { code: string; name: string; country: string; registrationNumber: string };
   currency: string; exchangeRate: string; priceBasis: string; lines: ManualLine[]; allowNewItems: boolean; allowNewPartners: boolean;
@@ -26,7 +28,7 @@ export interface ErpImport {
   id: string; companyId: string; type: ErpImportType; status: 'PENDING' | 'COMMITTED' | 'CANCELLED';
   basisDate: string; companyLabel: string; source: { kind?: 'XLSX' | 'MANUAL' | 'PENDING_OPENING'; name: string; size: number; sha256: string };
   createdAt: string; committedAt: string | null;
-  preview: { fingerprint: string; rows: ErpImportRow[]; errors: ErpImportIssue[]; warnings: ErpImportIssue[];
+  preview: { payment?:({status:'CREDIT'}|({status:'PAID'}&PaymentSummary))|null; fingerprint: string; rows: ErpImportRow[]; errors: ErpImportIssue[]; warnings: ErpImportIssue[];
     canCommit: boolean; newItems: number; newPartners: number;
     itemTotals?: { itemId: string; name?: string; beforeQuantity: number; beforeValue: number; quantity: number; value: number }[];
     balances: { itemId: string; warehouseId: string; beforeQuantity: number; beforeValue: number; quantity: number; value: number }[] };

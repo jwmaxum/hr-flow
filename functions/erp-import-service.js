@@ -7,6 +7,8 @@ const M = require('./erp-ledger-model');
 const { custodyContext } = require('./erp-custody-model');
 const { manualInput, parseManual } = require('./erp-manual-schema');
 const O = require('./erp-opening-model');
+const {loadFinance,salesEvents}=require('./erp-finance-model');
+const {planPayment,flushPayment}=require('./erp-payment-service');
 const issue = (row, message, type) => ({ sheet: SHEETS[type], row, message });
 const publicSource = source => ({ kind: source.kind || 'XLSX', name: source.name, size: source.size, sha256: source.sha256 });
 function optionsOf(value = {}) {
@@ -301,10 +303,16 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
       for (const b of balances.filter(row => row.itemId === itemId)) { quantity += BigInt(Math.round(b.quantity * 10000)) - BigInt(Math.round(b.beforeQuantity * 10000)); value += BigInt(b.value - b.beforeValue); }
       return { itemId, name:masters.get(`items:${itemId}`)?.name || '', beforeQuantity, beforeValue, quantity: safe(quantity, '수량') / 10000, value: safe(value) };
     }).sort((a,b) => a.itemId.localeCompare(b.itemId)) : [];
-    const fingerprint = hash({ schema: 3, state, rows: previews, masters: [...masterState], source: job.source.sha256, options, errors, itemTotals, balances, custody:custody.snapshot() });
-    return { preview: { fingerprint, rows: previews, errors, warnings, balances, itemTotals, canCommit: !errors.length && !!previews.length,
+    let payment=null;
+    if(job.payment?.status==='PAID'&&!errors.length){
+      const base=await loadFinance(tx,parent),staged=[...writes.values()].filter(w=>w.ref.parent.id==='erpMovements').map(w=>({...w.data,id:w.ref.id}));
+      const data={...base,movements:[...base.movements,...staged],events:[...base.events,...salesEvents(staged)]};
+      payment=planPayment(data,{...job.payment,date:job.rows[0].date,documentId:hash(master.normalize(job.rows[0].documentNo))},{id:job.id,kind:'SHIPMENT',companyId,createdAt:job.createdAt,createdBy:job.createdBy},{allowZero:true});
+    }
+    const fingerprint = hash({ schema: 3, payment:payment?.fingerprint||null, state, rows: previews, masters: [...masterState], source: job.source.sha256, options, errors, itemTotals, balances, custody:custody.snapshot() });
+    return { preview: { fingerprint, payment:payment?{status:'PAID',...payment.summary}:job.payment?.status==='CREDIT'?{status:'CREDIT'}:null, rows: previews, errors, warnings, balances, itemTotals, canCommit: !errors.length && !!previews.length,
       newItems: [...masters.values()].filter(r => r.isNew && r.unit).length, newPartners: [...masters.values()].filter(r => r.isNew && r.country).length },
-      writes, stocks, documents, state, stateRef, custody, posting, last: sorted.at(-1) };
+      writes, stocks, documents, state, stateRef, custody, posting, payment, last: sorted.at(-1) };
   }
   return async request => {
     const input = request.data;
@@ -350,7 +358,7 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
         const parsed = parseManual(movement, { basisDate, order, documentNo: `MAN-${id.length <= 76 ? id : master.hash(id)}`, companyLabel: '직접 입력' });
         const options = optionsOf({ defaultWarehouseId: movement.warehouseId, partnerByRow: Object.fromEntries(parsed.rows.filter(() => movement.partnerId).map(row => [row.sourceRow, movement.partnerId])), allowNewItems: movement.allowNewItems, allowNewPartners: movement.allowNewPartners });
         const job = { ...parsed, id, companyId: user.companyId, requestHash, initializeEmptyLedger: !state.basisDate && movement.direction === '입고',
-          status: 'PENDING', options, createdBy: user.uid, createdAt: now().toISOString(), source: { kind: 'MANUAL', name: `${movement.direction} 직접 등록`, size: 0, sha256: requestHash } };
+          payment:movement.payment||null, status: 'PENDING', options, createdBy: user.uid, createdAt: now().toISOString(), source: { kind: 'MANUAL', name: `${movement.direction} 직접 등록`, size: 0, sha256: requestHash } };
         job.preview = (await plan(tx, parent, job)).preview;
         if (Buffer.byteLength(JSON.stringify(job)) > 850000) fail('resource-exhausted', '입력 행을 나눠 주세요.');
         tx.create(ref, job); return { import: expose(id, job) };
@@ -406,6 +414,7 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
       const timestamp = now().toISOString();
       // All authorization, duplicate, master and balance reads are complete before any writes.
       fresh.custody.flush(timestamp);
+      if(fresh.payment)flushPayment(tx,parent,fresh.payment,timestamp);
       for (const entry of fresh.writes.values()) tx.set(entry.ref,entry.pendingRecord?{...entry.data,updatedAt:timestamp,updatedBy:user.uid,pendingOpening:{...entry.data.pendingOpening,confirmedAt:timestamp,confirmedBy:user.uid}}:entry.data);
       for (const entry of fresh.documents.values()) tx.create(entry.ref, entry.data);
       for (const balance of fresh.stocks.values()) if (!balance.virtual) tx.set(balance.ref, { companyId: user.companyId, itemId: balance.itemId, warehouseId: balance.warehouseId,

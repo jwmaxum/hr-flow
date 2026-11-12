@@ -9,7 +9,7 @@ function settlementReport(data, to, partnerId = '') {
     if (!documents.has(event.documentId)) documents.set(event.documentId, {
       id: event.documentId, documentNo: event.documentNo, date: event.saleDate,
       partnerId: event.partnerId, partnerName: event.partnerName, currency: event.currency,
-      billed: 0, allocated: 0, dueDate: '', termsDate: '', expectedDate:'', assigneeId:'', assigneeName:'', followUpDate:'', followUpNotes:'',
+      paymentTerms:event.paymentTerms||'UNCONFIRMED', billed: 0, allocated: 0, dueDate: '', termsDate: '', expectedDate:'', assigneeId:'', assigneeName:'', followUpDate:'', followUpNotes:'',
     });
     const doc = documents.get(event.documentId);
     if (doc.partnerId !== event.partnerId || doc.currency !== event.currency || doc.date !== event.saleDate) fail('failed-precondition', '출고 문서 연결을 확인해 주세요.');
@@ -53,6 +53,7 @@ function settlementReport(data, to, partnerId = '') {
     doc.overdueDays = doc.balance > 0 && doc.dueDate ? Math.max(0, Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${doc.dueDate}T00:00:00Z`)) / 86400000)) : 0;
     doc.overdueAmount = doc.overdueDays ? doc.balance : 0;
     doc.credit = Math.max(0, -doc.balance);
+    doc.paymentStatus=doc.balance<0?'REFUND_DUE':doc.balance===0?(doc.billed===0?'NO_BALANCE':'PAID'):doc.allocated>0?'PARTIAL':doc.paymentTerms==='CREDIT'?'CREDIT':'UNCONFIRMED';
     doc.promiseOverdueDays=doc.balance>0&&doc.expectedDate?Math.max(0,Math.round((Date.parse(`${to}T00:00:00Z`)-Date.parse(`${doc.expectedDate}T00:00:00Z`))/86400000)):0;
   }
   const groups = new Map();
@@ -71,11 +72,13 @@ function settlementReport(data, to, partnerId = '') {
     const group = groups.get(`${receipt.partnerId}:${receipt.currency}`);
     receipt.allocatable = Math.min(receipt.available,Math.max(0,group.netReceipts-group.allocated));
   }
+  const summaries=[...groups.values()].map(row=>({...row,unallocated:M.signed(row.netReceipts-row.allocated),balance:M.signed(row.documentBalance-row.netReceipts+row.allocated)}));
+  const totals=new Map();for(const row of summaries){if(!totals.has(row.currency))totals.set(row.currency,{currency:row.currency,balance:0,refundDue:0});const total=totals.get(row.currency);total.balance=M.signed(total.balance+Math.max(0,row.balance));total.refundDue=M.signed(total.refundDue+Math.max(0,-row.balance));}
   return {
-    asOf: to, documents:[...documents.values()].sort((a,b) => b.date.localeCompare(a.date) || a.documentNo.localeCompare(b.documentNo)),
+    totals:[...totals.values()],asOf: to, documents:[...documents.values()].sort((a,b) => b.date.localeCompare(a.date) || a.documentNo.localeCompare(b.documentNo)),
     receipts:[...receipts.values()].sort((a,b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id)),
     allocations:allocations.reverse(), terms:entries.filter(row => row.type === 'TERMS').reverse(), followUps:entries.filter(row=>row.type==='FOLLOW_UP').reverse(),
-    summaries:[...groups.values()].map(row => ({...row,unallocated:M.signed(row.netReceipts-row.allocated),balance:M.signed(row.documentBalance-row.netReceipts+row.allocated)})),
+    summaries,
   };
 }
 module.exports = { settlementReport };

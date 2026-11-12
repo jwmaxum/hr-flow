@@ -74,7 +74,7 @@ test('ERP PDF issuance, source allocation and private archive', async t => { try
   await t.test('bundle statements show the sale once and preserve the company seal without printing component stock rows', async () => {
     const existing = await reset();
     await masters(request({action:'save',kind:'items',id:'bundle',expectedRevision:0,values:{code:'SET',name:'조합상품',unit:'SET',specification:'',purchasePrice:0,salePrice:500,taxType:'과세',group:'',notes:'',active:true,itemType:'BUNDLE',components:[{itemId:existing.itemId,quantity:'2'}]}}));
-    const movement={direction:'출고',date:'2026-11-12',warehouseId:'warehouse',partnerId:existing.partnerId,currency:'KRW',exchangeRate:'1',priceBasis:'세금별도',allowNewItems:false,allowNewPartners:false,
+    const movement={direction:'출고',payment:{status:'CREDIT'},date:'2026-11-12',warehouseId:'warehouse',partnerId:existing.partnerId,currency:'KRW',exchangeRate:'1',priceBasis:'세금별도',allowNewItems:false,allowNewPartners:false,
       lines:[{code:'SET',name:'조합상품',specification:'',unit:'SET',taxType:'과세',quantity:'2',price:'500',notes:''}]};
     const job=(await imports(request({action:'manualPreview',id:'bundle-statement',movement}))).import;assert.equal(job.preview.canCommit,true);
     await imports(request({action:'commit',id:job.id,fingerprint:job.preview.fingerprint}));
@@ -84,7 +84,7 @@ test('ERP PDF issuance, source allocation and private archive', async t => { try
   });
   await t.test('a manual outgoing transaction issues a statement with its sales price and the registered seal', async () => {
     const existing = await reset();
-    const movement = { direction: '출고', date: '2026-11-12', warehouseId: 'warehouse', partnerId: existing.partnerId,
+    const movement = { direction: '출고', payment:{status:'CREDIT'}, date: '2026-11-12', warehouseId: 'warehouse', partnerId: existing.partnerId,
       currency: 'KRW', exchangeRate: '1', priceBasis: '세금포함', allowNewItems: false, allowNewPartners: false,
       lines: [{ code: '0001', name: '합성 품목', specification: '규격', unit: 'EA', taxType: '과세', quantity: '2', price: '440', notes: '' }] };
     const job = (await imports(request({ action: 'manualPreview', id: 'manual-statement', movement }))).import;

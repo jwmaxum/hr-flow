@@ -29,7 +29,7 @@ async function reset(initial=true){
   if(initial)await post('입고',[line('PART','10','100')]);
 }
 function line(code='PART',quantity='2',price='300',extra={}){return {code,name:code==='PART'?'일반품':code==='PART2'?'구성품2':'세트',specification:'',unit:'EA',taxType:'과세',quantity,price,notes:'검증용',...extra};}
-async function movementPreview(direction,lines,extra={}){return (await imports(req({action:'manualPreview',id:`move-${++seq}`,movement:{direction,date:'2026-11-12',warehouseId:'wh',partnerId:'buyer',currency:'KRW',exchangeRate:'1',priceBasis:'세금별도',allowNewItems:false,allowNewPartners:false,lines,...extra}}))).import;}
+async function movementPreview(direction,lines,extra={}){return (await imports(req({action:'manualPreview',id:`move-${++seq}`,movement:{direction,date:'2026-11-12',warehouseId:'wh',partnerId:'buyer',currency:'KRW',exchangeRate:'1',priceBasis:'세금별도',allowNewItems:false,allowNewPartners:false,lines,...(direction==='출고'?{payment:{status:'CREDIT'}}:{}),...extra}}))).import;}
 async function commitMovement(job){return imports(req({action:'commit',id:job.id,fingerprint:job.preview.fingerprint}));}
 async function post(direction,lines,extra={}){const job=await movementPreview(direction,lines,extra);assert.equal(job.preview.canCommit,true,JSON.stringify(job.preview.errors));await commitMovement(job);return (await records('erpMovements')).filter(r=>r.importId===job.id);}
 async function preview(service,input){return (await service(req({action:'preview',id:`job-${++seq}`,input:{date:'2026-11-12',notes:'합성 검증',...input}}))).job;}
@@ -45,11 +45,16 @@ const settle=job=>finance(req({action:'settlementCommit',id:job.id,fingerprint:j
 async function pendingItem(id='part',quantity=209){await parent().collection('erpItems').doc(id).update({pendingOpening:{status:'PENDING_COST',basisDate:'2026-11-11',quantity,unit:'EA',source:'합성 재고.xlsx 원본!C9'}});}
 async function openingPreview(lines=[{itemId:'part',quantity:'209',price:'10.1234'}],extra={}){return (await imports(req({action:'openingPreview',id:`opening-${++seq}`,opening:{date:'2026-11-11',warehouseId:'wh',reason:'매입 증빙 확인',zeroCostConfirmed:false,lines,...extra}}))).import;}
 
+const paidOptions={receiptMode:'REUSE_FIRST',confirmNew:false,notes:'자체 입금 확인'};
+const paidPreview=async(documentId,extra={})=>(await finance(req({action:'paymentPreview',id:'paid-'+(++seq),input:{documentId,date:'2026-11-12',...paidOptions,...extra}}))).job;
+const paidCommit=job=>finance(req({action:'paymentCommit',id:job.id,fingerprint:job.fingerprint}));
+const dashboard=month=>finance(req({action:'dashboard',month}));
+
 test('aging counts UTC calendar days across leap years and omits future financial events',()=>{
   const {settlementReport}=require('../erp-settlement-model');
   const event={id:'sale',documentId:'doc',documentNo:'OUT',saleDate:'2024-02-28',date:'2024-02-28',partnerId:'buyer',partnerName:'buyer',currency:'USD',gross:135,receipt:0};
   const data={events:[event,{...event,id:'later',date:'2024-03-02',gross:-35}],paid:[],settlements:[{id:'due',type:'TERMS',documentId:'doc',dueDate:'2024-02-28',date:'2024-02-28',partnerId:'buyer',sequence:1}]};
-  const r=settlementReport(data,'2024-03-01');assert.equal(r.documents[0].overdueDays,2);assert.equal(r.documents[0].overdueAmount,135);assert.equal(settlementReport(data,'2024-03-02').documents[0].overdueAmount,100);
+  const r=settlementReport(data,'2024-03-01');assert.deepEqual(r.totals,[{currency:'USD',balance:135,refundDue:0}]);assert.equal(r.documents[0].overdueDays,2);assert.equal(r.documents[0].overdueAmount,135);assert.equal(settlementReport(data,'2024-03-02').documents[0].overdueAmount,100);
 });
 test('receivables, bundles and customer custody remain atomic and tenant-scoped',async t=>{try{
   await t.test('gross receivables, partial receipts, refunds and reversals reconcile',async()=>{
@@ -280,5 +285,60 @@ test('receivables, bundles and customer custody remain atomic and tenant-scoped'
     await db.doc('UserProfile/member').update({status:'ACTIVE'});await settle(await settlementPreview(input));await db.doc('UserProfile/member').update({status:'RESIGNED'});
     const report=await settlements();assert.equal(report.documents[0].assigneeId,'member');assert.equal(report.documents[0].assigneeActive,false);assert.equal(report.assignees.some(p=>p.id==='member'),false);
     await reject(settlementPreview(input));await settle(await settlementPreview({...input,assigneeId:'admin'}));assert.equal((await settlements()).documents[0].assigneeActive,true);
+  });
+  await t.test('paid multi-line shipments atomically record one gross receipt and allocation with stock and sales',async()=>{
+    await reset();await post('입고',[line('PART2','4','50')]);
+    const job=await movementPreview('출고',[line('PART','2','300'),line('PART2','1','200')],{payment:{status:'PAID',...paidOptions}});
+    assert.equal(job.preview.payment.newReceipt,880);assert.equal((await records('erpReceipts')).length,0);assert.equal((await stock('part')).quantity,10);
+    const result=await Promise.all([commitMovement(job),commitMovement(job)]);assert.equal(result.filter(r=>r.idempotent).length,1);
+    assert.equal((await stock('part')).quantity,8);assert.equal((await stock('part2')).quantity,3);assert.equal((await records('erpReceipts')).length,1);assert.equal((await records('erpSettlements')).length,1);
+    const doc=(await settlements()).documents[0];assert.equal(doc.paymentTerms,'PAID');assert.equal(doc.paymentStatus,'PAID');assert.equal(doc.allocated,880);assert.equal(doc.balance,0);assert.equal((await report()).rows[0].balance,0);
+    await reject(paidPreview(doc.id));const after=await imports(req({action:'commit',id:job.id,fingerprint:job.preview.fingerprint}));assert.equal(after.idempotent,true);
+  });
+  await t.test('credit shipments reuse existing partial receipts and only create the unpaid remainder once',async()=>{
+    await reset();await post('출고',[line('PART','2','100')],{payment:{status:'CREDIT'}});assert.equal((await records('erpReceipts')).length,0);
+    const doc=(await settlements()).documents[0];assert.equal(doc.paymentStatus,'CREDIT');await commit(finance,await preview(finance,payment({amount:'100'})));
+    const a=await paidPreview(doc.id),b=await paidPreview(doc.id);assert.equal(a.summary.reused,100);assert.equal(a.summary.newReceipt,120);
+    await paidCommit(a);await reject(paidCommit(b));assert.equal((await paidCommit(a)).idempotent,true);assert.equal((await records('erpReceipts')).reduce((sum,r)=>sum+r.amountMinor,0),220);assert.equal((await records('erpSettlements')).length,2);assert.equal((await settlements()).documents[0].paymentStatus,'PAID');
+    const auto=(await records('erpReceipts')).find(r=>r.sourceKind==='MANUAL_PAYMENT_CONFIRM');await commit(finance,await preview(finance,{type:'CANCEL',sourceId:auto.id}));assert.equal((await settlements()).documents[0].paymentStatus,'PARTIAL');assert.equal((await settlements()).documents[0].balance,120);
+    await paidCommit(await paidPreview(doc.id));assert.equal((await report()).rows[0].balance,0);
+  });
+  await t.test('paid shipment previews recheck finance revisions and cancellation preserves actual receipts',async()=>{
+    await reset();await post('출고',[line('PART','1','100')],{payment:{status:'CREDIT'}});
+    const invalid=await movementPreview('출고',[line('PART','100','200')],{payment:{status:'PAID',...paidOptions}});assert.equal(invalid.preview.canCommit,false);assert.equal(invalid.preview.payment,null);assert.match(invalid.preview.errors[0].message,/재고 부족/);await reject(commitMovement(invalid));assert.equal((await records('erpReceipts')).length,0);
+    const pending=await movementPreview('출고',[line('PART','1','200')],{payment:{status:'PAID',...paidOptions}});
+    await commit(finance,await preview(finance,payment({amount:'50'})));await reject(commitMovement(pending));assert.equal((await stock('part')).quantity,9);
+    const [sale]=await post('출고',[line('PART','1','200')],{payment:{status:'PAID',...paidOptions}});await correct('CANCEL',sale.id);
+    assert.equal((await records('erpReceipts')).length,2);assert.equal((await stock('part')).quantity,9);assert.equal((await settlements()).documents.find(d=>d.documentNo===sale.documentNo).paymentStatus,'REFUND_DUE');
+    await reject(movementPreview('출고',[line()],{payment:undefined}),'invalid-argument');
+    await reject(movementPreview('입고',[line()],{payment:{status:'PAID',...paidOptions}}),'invalid-argument');
+    await reject(movementPreview('출고',[line()],{payment:{status:'PAID',...paidOptions,receiptMode:'NEW'}}),'invalid-argument');
+  });
+  await t.test('paid bundles count one sale and free shipments create no zero-value financial rows',async()=>{
+    await reset();await save('items','bundle',{...itemValues('SET','세트'),itemType:'BUNDLE',components:[{itemId:'part',quantity:2}]});
+    await post('출고',[line('SET','1','200')],{payment:{status:'PAID',...paidOptions}});assert.equal((await stock('part')).quantity,8);assert.equal((await records('erpReceipts'))[0].amountMinor,220);assert.equal((await settlements()).documents.length,1);
+    await post('출고',[line('PART','1','0')],{payment:{status:'PAID',...paidOptions}});assert.equal((await records('erpReceipts')).length,1);assert.equal((await settlements()).documents.some(d=>d.paymentStatus==='NO_BALANCE'),true);
+  });
+  await t.test('manual paid confirmations enforce exact scope, active partners, cutoff dates and review job kinds',async()=>{
+    await reset();await post('출고',[line('PART','1','100')]);const doc=(await settlements()).documents[0];
+    for(const uid of [null,'member','manager','root','foreign'])for(const action of ['dashboard','paymentPreview'])await reject(finance(req({action,month:'2026-11',id:'deny',input:{}},uid)),uid?'permission-denied':'unauthenticated');
+    await reject(paidPreview(doc.id,{companyId:'b'}),'invalid-argument');await reject(paidPreview(doc.id,{date:'2026-11-11'}));await reject(paidPreview('foreign-doc'));
+    const job=await paidPreview(doc.id);await reject(settle(job));const terms=await settlementPreview({type:'TERMS',documentId:doc.id,dueDate:'2026-11-13'});await reject(paidCommit(terms),'already-exists');
+    await save('partners','buyer',{code:'buyer',name:'buyer',country:'KR',type:'BOTH',active:false,notes:''},1);await reject(paidCommit(job));assert.equal((await records('erpReceipts')).length,0);
+    await reject(dashboard('2026-13'),'invalid-argument');await reject(dashboard('2026-12'),'invalid-argument');
+  });
+  await t.test('monthly dashboard uses original purchase refund prices instead of moving-average stock removal',async()=>{
+    await reset();const original=(await records('erpMovements'))[0];await post('입고',[line('PART','10','300')]);await correct('PURCHASE_RETURN',original.id,'1');
+    const d=await dashboard('2026-11');assert.equal(d.inventoryValue,3800);assert.equal(d.purchasesKRW,3900);assert.equal(d.currencies[0].purchases,3900);assert.equal(d.assets[0].closingQuantity,19);assert.equal(d.asOf,'2026-11-12');assert.equal(d.partialMonth,true);
+    const returned=(await records('erpMovements')).find(r=>r.operationType==='PURCHASE_RETURN');await correct('CANCEL',returned.id);assert.equal((await dashboard('2026-11')).purchasesKRW,4000);assert.equal((await dashboard('2026-11')).inventoryValue,4000);
+  });
+  await t.test('monthly snapshots preserve old receivables after later payment and keep foreign currencies separate',async()=>{
+    await reset(false);await post('입고',[line('PART','10','100')],{date:'2026-10-31'});await post('출고',[line('PART','2','200')],{payment:{status:'CREDIT'}});
+    await post('출고',[line('PART','1','2')],{currency:'USD',exchangeRate:'1300',payment:{status:'CREDIT'}});
+    let d=await dashboard('2026-11');assert.equal(d.inventoryValue,700);assert.equal(d.salesKRW,3000);assert.equal(d.currencies.find(r=>r.currency==='KRW').outstanding,440);assert.equal(d.currencies.find(r=>r.currency==='USD').outstanding,220);assert.equal(d.trend.find(r=>r.month==='2026-10').inventoryValue,1000);
+    const doc=(await settlements()).documents.find(d=>d.currency==='KRW');await paidCommit(await paidPreview(doc.id,{date:'2026-12-01'}));
+    const future=()=>new Date('2026-12-02T00:00:00Z'),api=createErpFinanceService({db,now:future});const q=month=>api({data:{action:'dashboard',companyId:'a',month},auth:{uid:'admin',token:{auth_time:future().getTime()/1000}}});
+    d=await q('2026-11');assert.equal(d.partialMonth,false);assert.equal(d.asOf,'2026-11-30');assert.equal(d.currencies.find(r=>r.currency==='KRW').outstanding,440);assert.equal((await q('2026-12')).currencies.find(r=>r.currency==='KRW').outstanding,0);
+    assert.equal((await dashboard('2026-10')).inventoryValue,1000);
   });
 }finally{await deleteApp(app);}});

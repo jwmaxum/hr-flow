@@ -40,3 +40,15 @@ test('document allocation uses the reviewed job and preserves company session ch
   assert.deepEqual(JSON.parse(JSON.stringify(f.state.calls[1].data)),{companyId:'a',action:'settlementCommit',id:job.id,fingerprint:job.fingerprint});
   f.state.hook=()=>{f.state.scope='foreign:b';};await assert.rejects(f.erpFinance.settlements('a','2026-11-13'),/권한/);
 });
+
+test('monthly dashboards reject replies after company change and foreign financial data',async()=>{
+  const f=fixture();await f.erpFinance.dashboard('a','2026-11');assert.deepEqual(JSON.parse(JSON.stringify(f.state.calls[0].data)),{companyId:'a',action:'dashboard',month:'2026-11'});
+  f.state.reply={companyId:'b'};await assert.rejects(f.erpFinance.dashboard('a','2026-11'),/소속/);
+  f.state.reply={companyId:'a'};f.state.hook=()=>{f.state.scope='other';};await assert.rejects(f.erpFinance.dashboard('a','2026-11'),/권한/);
+});
+test('manual paid confirmation preserves reviewed amount decisions and idempotent identifiers',async()=>{
+  const f=fixture(),input={documentId:'doc',date:'2026-11-13',receiptMode:'REUSE_FIRST',confirmNew:false,notes:'자체 확인'},job={id:'paid',companyId:'a',fingerprint:'checked'};f.state.reply={job};
+  await f.erpFinance.previewPayment('a','paid',input);assert.deepEqual(JSON.parse(JSON.stringify(f.state.calls[0].data)),{companyId:'a',action:'paymentPreview',id:'paid',input});
+  await f.erpFinance.commitPayment('a',job);assert.deepEqual(JSON.parse(JSON.stringify(f.state.calls[1].data)),{companyId:'a',action:'paymentCommit',id:'paid',fingerprint:'checked'});
+  f.state.reply={job:{...job,companyId:'b'}};await assert.rejects(f.erpFinance.commitPayment('a',job),/소속/);
+});

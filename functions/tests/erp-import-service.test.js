@@ -25,7 +25,7 @@ const commit = (job, uid = 'admin', companyId = 'a') => call('commit', { id: job
 const opts = { allowNewItems: true, allowNewPartners: true };
 const manual = (patch = {}) => ({ direction: '입고', date: '2026-11-02', warehouseId: 'warehouse',
   partner: { code: 'PT-01', name: '합성 거래처', country: 'KR', registrationNumber: '123-45-67890' }, currency: 'KRW', exchangeRate: '1', priceBasis: '세금별도',
-  allowNewItems: true, allowNewPartners: true, lines: [{ code: '0001', name: '합성 품목', specification: '규격', unit: 'EA', taxType: '과세', quantity: '10', price: '200', notes: '' }], ...patch });
+  allowNewItems: true, allowNewPartners: true, lines: [{ code: '0001', name: '합성 품목', specification: '규격', unit: 'EA', taxType: '과세', quantity: '10', price: '200', notes: '' }], ...(patch.direction==='출고'?{payment:{status:'CREDIT'}}:{}), ...patch });
 const manualPreview = async (input = manual(), id = `manual-${++sequence}`) => (await call('manualPreview', { id, movement: input })).import;
 const reject = (promise, code) => assert.rejects(promise, error => error.code === code);
 async function preview(type = 'OPENING', rows = [opening()], options = opts, uid = 'admin', companyId = 'a', extra = {}) {
@@ -100,7 +100,7 @@ test('ERP imports validate and atomically post to the authenticated company', as
       const mapped = manual({ partnerId: partner.id, allowNewPartners: false }); delete mapped.partner;
       assert.equal((await manualPreview(mapped)).preview.canCommit, true);
       await db.doc(partner.ref.path).update({ type: 'SUPPLIER' });
-      assert.equal((await manualPreview({ ...mapped, direction: '출고' })).preview.canCommit, false);
+      assert.equal((await manualPreview({ ...mapped, direction: '출고', payment:{status:'CREDIT'} })).preview.canCommit, false);
       assert.equal((await manualPreview({ ...mapped, warehouseId: 'foreign-only' })).preview.canCommit, false);
       const pending = await manualPreview(mapped); await db.doc('UserProfile/admin').update({ mustChangePassword: true });
       await reject(commit(pending), 'failed-precondition'); assert.equal((await stock())[0].quantity, 20);

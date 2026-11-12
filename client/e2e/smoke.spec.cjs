@@ -550,6 +550,11 @@ test('ERP manual inbound and outbound preserve receipt prices, value inventory a
   await actor.page.getByRole('combobox', { name: '단가기준 *', exact: true }).selectOption('세금포함');
   await actor.page.getByLabel('출고수량 *', { exact: true }).fill('5');
   await actor.page.getByLabel('판매단가 (KRW) *', { exact: true }).fill('330');
+  await actor.page.getByRole('combobox',{name:'출고 입금상태 *',exact:true}).selectOption('PAID');
+  await actor.page.getByLabel('입금 확인 메모 *',{exact:true}).fill('자체 확인한 입금 후 출고');
+  await actor.page.getByLabel('출고수량 *',{exact:true}).fill('100');await actor.page.getByRole('button',{name:'검증·미리보기',exact:true}).click();
+  await expect(preview.getByRole('alert').filter({hasText:'재고 부족'})).toBeVisible({timeout:65000});await expect(preview.getByLabel('입금완료 금액 확인',{exact:true})).toHaveCount(0);
+  await actor.page.getByLabel('출고수량 *',{exact:true}).fill('5');
   await actor.page.getByRole('button', { name: '검증·미리보기', exact: true }).click();
   await expect(preview.getByText('매출액 (공급가액)', { exact: true })).toBeVisible({ timeout: 65000 });
   await expect(preview.getByRole('cell', { name: '3,000 → 2,250', exact: true })).toBeVisible();
@@ -562,6 +567,15 @@ test('ERP manual inbound and outbound preserve receipt prices, value inventory a
   await expect(actor.page.getByRole('heading', { name: '거래명세표 · 초안', exact: true })).toBeVisible({ timeout: 65000 });
   await expect(actor.page.getByLabel('확정 출고 문서번호 *', { exact: true })).toHaveValue(/^MAN-/);
   await actor.page.screenshot({ path: testInfo.outputPath('erp-manual-statement.png'), fullPage: true });
+  const paid=(await call('manageErpFinance',{action:'settlementReport',to:'2026-11-12'})).documents[0];expect(paid).toMatchObject({paymentTerms:'PAID',paymentStatus:'PAID',allocated:1650,balance:0});
+  await actor.page.getByRole('button',{name:'ERP 월별 대시보드',exact:true}).click();
+  const dashboard=actor.page.getByRole('region',{name:'ERP 월별 대시보드',exact:true});
+  await dashboard.getByLabel('대시보드 조회 월',{exact:true}).fill('2026-11');await dashboard.getByRole('button',{name:'월별 조회',exact:true}).click();
+  await expect(dashboard.getByRole('article').filter({hasText:'재고자산'}).getByText('2,250원',{exact:true})).toBeVisible({timeout:65000});
+  await expect(dashboard.getByRole('article').filter({hasText:'당월 순매출'}).getByText('1,500원',{exact:true})).toBeVisible();
+  await expect(dashboard.getByRole('article').filter({hasText:'당월 순매입'}).getByText('2,000원',{exact:true})).toBeVisible();
+  await dashboard.getByRole('heading',{name:'월별 경영 대시보드',exact:true}).scrollIntoViewIfNeeded();await actor.page.screenshot({path:testInfo.outputPath('erp-monthly-dashboard.png'),fullPage:true});
+
   expect(await actor.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
 });
@@ -588,6 +602,7 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   await page.getByRole('button', {name: 'SET 출고등록', exact: true}).click();
   await page.getByRole('combobox', {name: '출고 창고 *', exact: true}).selectOption('warehouse'); await page.getByLabel('거래일 *', {exact: true}).fill('2026-11-12');
   await page.getByRole('combobox', {name: '거래처 *', exact: true}).selectOption('buyer'); await page.getByLabel('출고수량 *', {exact: true}).fill('2'); await page.getByLabel('판매단가 (KRW) *', {exact: true}).fill('500');
+  await page.getByRole('combobox',{name:'출고 입금상태 *',exact:true}).selectOption('CREDIT');
   await page.getByRole('button', {name: '검증·미리보기', exact: true}).click();
   const movement = page.getByRole('region', {name: '입출고 미리보기', exact: true}); await expect(movement.getByText('검증 조합 판매 당시 조합 구성', {exact: true})).toBeVisible({timeout: 65000});
   await movement.getByRole('checkbox', {name: '수량·단가·거래처와 재고 변동을 확인했습니다.', exact: true}).check(); await movement.getByRole('button', {name: '출고 확정', exact: true}).click();
@@ -651,6 +666,7 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   await page.getByRole('button', {name: '출고등록', exact: true}).click(); await page.getByRole('combobox', {name: '등록 품목 선택 *', exact: true}).selectOption(part.id);
   await page.getByRole('combobox', {name: '출고 창고 *', exact: true}).selectOption('warehouse'); await page.getByLabel('거래일 *', {exact: true}).fill('2026-11-12'); await page.getByRole('combobox', {name: '거래처 *', exact: true}).selectOption('buyer');
   await page.getByLabel('출고수량 *', {exact: true}).fill('2'); await page.getByLabel('판매단가 (KRW) *', {exact: true}).fill('200'); await page.getByRole('combobox', {name: '출고 방식', exact: true}).selectOption('BORROW'); await page.getByRole('combobox', {name: '차용할 보관품 *', exact: true}).selectOption(lot.id); await page.getByLabel('이번 차용 전체 평가금액 (원) *', {exact: true}).fill('100');
+  await page.getByRole('combobox',{name:'출고 입금상태 *',exact:true}).selectOption('CREDIT');
   await page.getByRole('button', {name: '검증·미리보기', exact: true}).click(); await expect(movement.getByRole('checkbox', {name: '수량·단가·거래처와 재고 변동을 확인했습니다.', exact: true})).toBeEnabled({timeout: 65000});
   await movement.getByRole('checkbox', {name: '수량·단가·거래처와 재고 변동을 확인했습니다.', exact: true}).check(); await movement.getByRole('button', {name: '출고 확정', exact: true}).click(); await expect(movement.getByRole('heading', {name: '출고 확정 완료', exact: true})).toBeVisible({timeout: 65000});
   expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{quantity: 6, value: 600}]);
@@ -659,6 +675,16 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   await custody.getByRole('checkbox', {name: '소유 거래처·수량·재고 변동을 확인했습니다.', exact: true}).check(); await custody.getByRole('button', {name: '보관 처리 확정', exact: true}).click(); await expect(custody.getByText('보관 원장 반영 완료', {exact: true})).toBeVisible({timeout: 65000});
   expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{quantity: 5, value: 500}]);
   const ar = await call('manageErpFinance', {action: 'report', from: '2026-01-01', to: '2026-12-31'}); expect(ar.rows[0].balance).toBe(1240);
+  await page.getByRole('button',{name:'미수금·수금',exact:true}).click();
+  const manual=page.getByRole('region',{name:'수동 외상매출 관리',exact:true}),table=manual.getByRole('table',{name:'출고 문서 입금상태',exact:true});
+  await table.getByRole('row').filter({hasText:saleNumber}).getByRole('button',{name:'입금완료 처리',exact:true}).click();
+  await manual.getByLabel('입금완료 반영일 *',{exact:true}).fill('2026-11-12');await manual.getByLabel('입금 확인 메모 *',{exact:true}).fill('자체 입금 확인 후 잔액 완료');
+  await manual.getByRole('button',{name:'입금완료 검증·미리보기',exact:true}).click();await expect(manual.getByText('문서 미수잔액: 800 → 0 KRW',{exact:true})).toBeVisible({timeout:65000});
+  await manual.getByRole('checkbox',{name:'실제 입금과 기등록 수금·새 수금액을 확인했습니다.',exact:true}).check();await manual.getByRole('button',{name:'입금완료 확정',exact:true}).click();
+  await expect(manual.getByText('입금완료 상태와 미수잔액을 반영했습니다.',{exact:true})).toBeVisible({timeout:65000});
+  await manual.getByRole('checkbox',{name:'미입금 문서만 보기',exact:true}).uncheck();await expect(table.getByRole('row').filter({hasText:saleNumber}).getByText('입금완료',{exact:true})).toBeVisible();
+  const updated=await call('manageErpFinance',{action:'report',from:'2026-01-01',to:'2026-12-31'});expect(updated.rows[0].balance).toBe(440);
+  await table.scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-manual-paid-status.png')});
   await page.screenshot({path: testInfo.outputPath('erp-custody.png'), fullPage: true}); expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
 });
 

@@ -1,3 +1,4 @@
+import {ErpPaymentPanel} from './ErpPaymentPanel';
 import { ErpSettlementPanel } from './ErpSettlementPanel';
 import { useEffect, useRef, useState } from 'react';
 import { erpChoices, erpFinance as api, erpMoney as money, erpToday } from '../services/erpAccountService';
@@ -18,6 +19,7 @@ export function ErpFinancePanel({companyId}: {companyId: string}) {
   async function query() {const result = await api.report(companyId, from, to, filter); if (live.current) setReport(result);}
   const done = job?.status === 'COMMITTED';
   return <div className="erp-movement" aria-busy={busy}>
+    <ErpPaymentPanel companyId={companyId} refreshKey={settlementVersion} onPosted={async()=>{setSettlementVersion(v=>v+1);await query();}} />
     <section className="wf-panel" aria-label="거래처별 미수금"><h2 className="wf-section-title">거래처별 미수금·수금</h2>
       <p className="wf-muted">출고·반품·취소를 반영한 부가세 포함 잔액입니다. 통화별로 구분하며, PDF 발행은 매출을 중복 생성하지 않습니다. 이전에 받은 돈은 수금 원장에 등록해야 반영됩니다.</p>
       <form onSubmit={e => {e.preventDefault(); void run(query);}}><fieldset disabled={busy} className="erp-form-fields">

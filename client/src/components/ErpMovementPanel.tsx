@@ -1,3 +1,5 @@
+import {ErpPaymentOptions,ErpPaymentSummary} from './ErpPaymentControls';
+import type {PaymentOptions} from '../services/erpAccountService';
 import { useEffect, useRef, useState } from 'react';
 import { erpService } from '../services/erpService';
 import type { ErpCursor, ErpRecord, InventoryResult, PurchaseHistory } from '../services/erpService';
@@ -59,6 +61,8 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
   const [items, setItems] = useState<ErpRecord[]>(initialItem ? [initialItem] : []), [warehouses, setWarehouses] = useState<ErpRecord[]>([]), [partners, setPartners] = useState<ErpRecord[]>([]);
   const [cursors, setCursors] = useState<Partial<Record<'items' | 'warehouses' | 'partners', ErpCursor | null>>>({});
   const [allowNewItems, setAllowNewItems] = useState(false), [allowNewPartners, setAllowNewPartners] = useState(false);
+  const [paymentStatus,setPaymentStatus]=useState<''|'CREDIT'|'PAID'>('');
+  const [paymentOptions,setPaymentOptions]=useState<PaymentOptions>({receiptMode:'REUSE_FIRST',confirmNew:false,notes:''});
   const [lots, setLots] = useState<CustodyLot[]>([]);
   const [job, setJob] = useState<ErpImport | null>(null), [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(true), [error, setError] = useState('');
   const live = useRef(true), lock = useRef(false), attempt = useRef(crypto.randomUUID()), title = useRef<HTMLHeadingElement>(null);
@@ -86,7 +90,9 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
     setter(current => [...current, ...result.records.filter(row => !current.some(old => old.id === row.id))]); setCursors(current => ({ ...current, [kind]: result.nextCursor }));
   }
   async function preview() {
+    if(direction==='출고'&&!paymentStatus)throw new Error('외상출고 또는 입금완료 후 출고를 선택해 주세요.');
     const movement: ManualMovement = { direction, date, warehouseId, ...(partnerId === 'NEW' ? { partner: newPartner } : { partnerId }), currency, exchangeRate, priceBasis,
+      ...(direction==='출고'?{payment:paymentStatus==='PAID'?{status:'PAID',...paymentOptions}:{status:'CREDIT'}}:{}),
       lines: lines.map(({ code, name, specification, unit, taxType, quantity, price, notes, fulfillment, custodyLotId, borrowValue }) => ({ code, name, specification, unit, taxType, quantity, price, notes, fulfillment: fulfillment || 'DIRECT', ...(fulfillment === 'BORROW' ? {custodyLotId, borrowValue} : {}) })), allowNewItems, allowNewPartners };
     const result = await api.manualPreview(companyId, attempt.current, movement); if (live.current) { setJob(result.import); setConfirmed(false); }
   }
@@ -100,6 +106,7 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
           <label className="wf-field"><span>거래처 *</span><select className="wf-input" required value={partnerId} onChange={e => { changed(); setPartnerId(e.target.value); }}><option value="">거래처 선택</option><option value="NEW">새 거래처 입력</option>{partners.filter(row => row.active && (direction !== '출고' || row.type !== 'SUPPLIER')).map(row => <option key={row.id} value={row.id}>{row.code} · {row.name}</option>)}</select></label>
           <label className="wf-field"><span>단가기준 *</span><select className="wf-input" value={priceBasis} onChange={e => { changed(); setPriceBasis(e.target.value); }}><option>세금별도</option><option>세금포함</option></select></label>
           {partnerId === 'NEW' && <>{(['code','name','country','registrationNumber'] as const).map((key, i) => <label className="wf-field" key={key}><span>{['거래처 코드','거래처명 *','국가코드 *','사업자 등록번호'][i]}</span><input className="wf-input" required={key === 'name' || key === 'country'} maxLength={[60,120,2,80][i]} value={newPartner[key]} onChange={e => { changed(); setNewPartner(current => ({ ...current, [key]: e.target.value })); }} /></label>)}</>}
+          {direction==='출고'&&<><label className="wf-field"><span>출고 입금상태 *</span><select className="wf-input" required value={paymentStatus} onChange={e=>{changed();setPaymentStatus(e.target.value as typeof paymentStatus);}}><option value="">입금상태 선택</option><option value="CREDIT">외상출고</option><option value="PAID">입금완료 후 출고</option></select></label>{paymentStatus==='PAID'&&<><p className="wf-muted">출고일을 기준으로 입금완료를 기록하고 해당 출고 문서에 배분합니다.</p><ErpPaymentOptions value={paymentOptions} onChange={patch=>{changed();setPaymentOptions(v=>({...v,...patch}));}} /></>}</>}
           <label className="wf-field"><span>통화</span><select className="wf-input" value={currency} onChange={e => { changed(); setCurrency(e.target.value); setExchangeRate(e.target.value === 'KRW' ? '1' : ''); }}>{['KRW','USD','EUR','JPY','CNY'].map(value => <option key={value}>{value}</option>)}</select></label>
           <label className="wf-field"><span>적용환율 (원/통화단위) *</span><input className="wf-input" required readOnly={currency === 'KRW'} inputMode="decimal" value={exchangeRate} onChange={e => { changed(); setExchangeRate(e.target.value); }} /></label>
         </fieldset>
@@ -128,6 +135,7 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
     {error && <p role="alert" className="erp-error">{error}</p>}
     {!done && selected?.itemId && selected.itemId !== 'NEW' && <PriceHistory key={selected.itemId} companyId={companyId} itemId={selected.itemId} price={selected.price} currency={currency} priceBasis={priceBasis} />}
     {job && <section className="wf-panel" aria-label="입출고 미리보기"><h3 className="wf-section-title">{done ? `${direction} 확정 완료` : `${direction} 미리보기`}</h3>
+      {job.preview.payment?.status==='PAID'?<ErpPaymentSummary value={job.preview.payment} />:job.preview.payment?.status==='CREDIT'?<p className="erp-notice">외상출고 · 입금 확인 후 미수금·수금에서 입금완료로 전환하세요.</p>:null}
       <p className="erp-code">거래번호: {job.preview.rows[0]?.documentNo || '검증 필요'}</p>
       {job.preview.errors.map((issue, i) => <p role="alert" className="erp-error" key={i}>{issue.row >= 10 ? `${issue.row - 9}번 품목: ` : ''}{issue.message}</p>)}
       {job.preview.warnings.map((issue, i) => <p className="erp-notice" key={i}>{issue.message}</p>)}
