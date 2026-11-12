@@ -1,8 +1,12 @@
 const { fail } = require('./security-context');
 const { decimal, round, safe } = require('./erp-import-schema');
 const { erpMaster: master } = require('./erp-service');
-const EFFECT_KEYS = ['openingQuantityScaled','openingValue','inQuantityScaled','inValue','outQuantityScaled','outValue','adjustQuantityScaled','adjustValue','salesKRW','cogsKRW'];
-const hash = value => master.hash(JSON.stringify(value));
+const TRANSFER_KEYS = ['transferInQuantityScaled','transferInValue','transferOutQuantityScaled','transferOutValue'];
+const EFFECT_KEYS = ['openingQuantityScaled','openingValue','inQuantityScaled','inValue','outQuantityScaled','outValue','adjustQuantityScaled','adjustValue','salesKRW','cogsKRW', ...TRANSFER_KEYS];
+// Firestore can reorder map keys between preview and commit.
+const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
+  ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+const hash = value => master.hash(JSON.stringify(canonical(value)));
 const zeroEffect = () => Object.fromEntries(EFFECT_KEYS.map(key => [key, 0]));
 function signed(value, label = '원장 금액') {
   if (!Number.isSafeInteger(value) || Math.abs(value) > 9e12) fail('failed-precondition', `${label}의 정밀도·허용 범위를 확인해 주세요.`);
@@ -24,7 +28,7 @@ function date(value) {
   return value;
 }
 function effectOf(row) {
-  if (row.effect) return Object.fromEntries(EFFECT_KEYS.map(key => [key, signed(row.effect[key])]));
+  if (row.effect) return Object.fromEntries(EFFECT_KEYS.map(key => [key, signed(row.effect[key] === undefined && TRANSFER_KEYS.includes(key) ? 0 : row.effect[key])]));
   const result = zeroEffect();
   if (!Number.isSafeInteger(row.quantityScaled) || row.quantityScaled < 0) fail('failed-precondition', '원장 수량을 확인해 주세요.');
   if (row.type === 'OPENING') { result.openingQuantityScaled = row.quantityScaled; result.openingValue = row.value; }
@@ -35,8 +39,8 @@ function effectOf(row) {
   for (const key of EFFECT_KEYS) signed(result[key]);
   return result;
 }
-const quantityDelta = effect => signed(effect.openingQuantityScaled + effect.inQuantityScaled - effect.outQuantityScaled + effect.adjustQuantityScaled, '원장 수량');
-const valueDelta = effect => signed(effect.openingValue + effect.inValue - effect.outValue + effect.adjustValue);
+const quantityDelta = effect => signed(effect.openingQuantityScaled + effect.inQuantityScaled - effect.outQuantityScaled + effect.adjustQuantityScaled + (effect.transferInQuantityScaled || 0) - (effect.transferOutQuantityScaled || 0), '원장 수량');
+const valueDelta = effect => signed(effect.openingValue + effect.inValue - effect.outValue + effect.adjustValue + (effect.transferInValue || 0) - (effect.transferOutValue || 0));
 const reverse = effect => Object.fromEntries(EFFECT_KEYS.map(key => [key, -effect[key]]));
 const compare = (a,b) => a.date.localeCompare(b.date) || a.order - b.order || a.rowNo - b.rowNo || a.id.localeCompare(b.id);
 function allocation(total, before, amount, original) {

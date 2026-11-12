@@ -492,6 +492,73 @@ test('ERP Excel opening and transactions preview then commit once with exact inv
   expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
 });
 
+test('ERP warehouse transfers allocate to three warehouses, validate stock, commit and cancel without company-wide changes', async ({ browser }, testInfo) => {
+  test.setTimeout(360000);
+  await clearErpFixture(fixtures.companyA);
+  const foreignBefore = await readErpInventory(fixtures.companyB);
+  const owner = await actorFor(browser, testInfo); await login(owner, fixtures.accounts.adminA);
+  async function erpCall(name, data) {
+    const response = await probe(owner, `http://${HOSTS.functions}/${PROJECT_ID}/us-central1/${name}`, { method: 'POST', body: { data: { companyId: fixtures.companyA, ...data } } });
+    expect(response.status, `Synthetic ${name} request failed`).toBe(200);
+    return JSON.parse(Buffer.from(response.bytes).toString('utf8')).result;
+  }
+  for (const [id, code, name] of [['opening', 'WH-01', '기초재고 통합'], ['head', 'HEAD', '본사'], ['lab', 'LAB', '연구소'], ['pack', 'PACK', '상품구성']]) {
+    await erpCall('manageErp', { action: 'save', kind: 'warehouses', id, expectedRevision: 0, values: { code, name, active: true, address: '', notes: '' } });
+  }
+  const source = await erpWorkbook('OPENING', [erpOpening({ 9: '기초재고 통합' })]);
+  const pending = await erpCall('manageErpImport', { action: 'preview', id: randomUUID(), type: 'OPENING', source, options: { allowNewItems: true, allowNewPartners: false } });
+  expect(pending.import.preview.canCommit).toBe(true);
+  await erpCall('manageErpImport', { action: 'commit', id: pending.import.id, fingerprint: pending.import.preview.fingerprint });
+  await owner.page.goto('/#/erp'); await owner.page.getByRole('button', { name: '창고 이동', exact: true }).click();
+  const panel = owner.page.getByRole('region', { name: '창고 간 재고 이동', exact: true });
+  await expect(panel.getByRole('combobox', { name: '출발 창고', exact: true }).locator('option')).toHaveCount(5, { timeout: 65000 });
+  await panel.getByRole('combobox', { name: '출발 창고', exact: true }).selectOption('opening');
+  for (const name of ['본사', '연구소', '상품구성']) await panel.getByRole('checkbox', { name, exact: true }).check();
+  await panel.getByLabel('이동일', { exact: true }).fill('2026-11-02');
+  await panel.getByLabel('이동 사유', { exact: true }).fill('합성 기초재고 창고별 배분');
+  await panel.getByRole('button', { name: '출발 재고 불러오기', exact: true }).click();
+  const head = panel.getByRole('textbox', { name: '0001 본사 이동수량', exact: true });
+  await expect(head).toBeVisible({ timeout: 65000 }); await head.fill('11');
+  const previewButton = panel.getByRole('button', { name: '창고 이동 미리보기', exact: true });
+  await expect(previewButton).toBeDisabled(); await expect(panel.getByText('현재고 초과', { exact: true })).toBeVisible();
+  await head.fill('4'); await panel.getByRole('textbox', { name: '0001 연구소 이동수량', exact: true }).fill('3');
+  await panel.getByRole('textbox', { name: '0001 상품구성 이동수량', exact: true }).fill('2');
+  await previewButton.click(); await expect(panel.getByRole('heading', { name: '이동 전후 재고 · 3개 배분', exact: true })).toBeVisible({ timeout: 65000 });
+  expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{ quantity: 10, value: 1000 }]);
+  const commit = panel.getByRole('button', { name: '창고 이동 확정', exact: true }); await expect(commit).toBeDisabled();
+  await panel.getByRole('checkbox', { name: '출발·도착 창고와 전체 이동 수량·금액을 확인했습니다.', exact: true }).check();
+  // Editing invalidates the preview and requires review again.
+  await head.fill('5'); await expect(commit).toHaveCount(0); await previewButton.click();
+  await expect(panel.getByRole('heading', { name: '이동 전후 재고 · 3개 배분', exact: true })).toBeVisible({ timeout: 65000 });
+  await panel.getByRole('checkbox', { name: '출발·도착 창고와 전체 이동 수량·금액을 확인했습니다.', exact: true }).check();
+  await commit.click(); await expect(panel.getByRole('status').filter({ hasText: '창고 이동 완료' })).toBeVisible({ timeout: 65000 });
+  const stock = await readErpInventory(fixtures.companyA);
+  expect(stock.balances.map(row => row.quantity).sort((a,b) => a-b)).toEqual([0,2,3,5]);
+  expect(stock.balances.reduce((sum,row) => sum+row.value,0)).toBe(1000);
+  await owner.page.screenshot({ path: testInfo.outputPath('erp-warehouse-transfer.png'), fullPage: true });
+  expect(await owner.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await owner.page.getByRole('button', { name: '입출고 총괄·원장', exact: true }).click();
+  await expect(owner.page.getByText(/기초재고 마감일 2026-11-01/)).toBeVisible({ timeout: 65000 });
+  await owner.page.getByLabel('조회 시작일', { exact: true }).fill('2026-11-02'); await owner.page.getByLabel('조회 종료일', { exact: true }).fill('2026-11-30');
+  await owner.page.getByRole('button', { name: '원장 조회', exact: true }).click();
+  const summary = owner.page.getByRole('region', { name: '입출고 총괄 결과', exact: true });
+  await expect(summary.getByRole('columnheader', { name: '이동입고수량', exact: true })).toBeVisible({ timeout: 65000 });
+  await owner.page.getByRole('button', { name: '상세 원장', exact: true }).click(); await owner.page.getByRole('button', { name: '원장 조회', exact: true }).click();
+  const detail = owner.page.getByRole('region', { name: '품목별 상세 원장 결과', exact: true });
+  await detail.getByRole('button', { name: /행 문서 취소$/ }).first().click();
+  const form = owner.page.getByRole('region', { name: '취소 반품 조정 처리', exact: true });
+  await form.getByLabel('처리일', { exact: true }).fill('2026-11-03'); await form.getByLabel('처리 사유', { exact: true }).fill('합성 창고 배분 취소');
+  await form.getByRole('button', { name: '변동 미리보기', exact: true }).click();
+  await expect(form.getByRole('heading', { name: '변동 미리보기 · 6행', exact: true })).toBeVisible({ timeout: 65000 });
+  await form.getByRole('checkbox', { name: '사유와 전체 변동 내역을 확인했습니다.', exact: true }).check();
+  await form.getByRole('button', { name: '취소·반품·조정 확정', exact: true }).click();
+  await expect(form.getByRole('status').filter({ hasText: '처리 완료' })).toBeVisible({ timeout: 65000 });
+  expect((await readErpInventory(fixtures.companyA)).balances.map(row => row.quantity).sort((a,b) => a-b)).toEqual([0,0,0,10]);
+  const member = await actorFor(browser, testInfo); await login(member, fixtures.accounts.memberA); await member.page.goto('/#/erp');
+  await expect(member.page.getByRole('button', { name: '창고 이동', exact: true })).toHaveCount(0);
+  expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
+});
+
 test('ERP period reports, returns, count/value adjustments and immutable cancellation reconcile with Excel', async ({ browser }, testInfo) => {
   test.setTimeout(360000);
   await clearErpFixture(fixtures.companyA);
@@ -543,7 +610,7 @@ test('ERP period reports, returns, count/value adjustments and immutable cancell
   const download=owner.page.waitForEvent('download');await summary.getByRole('button',{name:'전체 Excel 내려받기',exact:true}).click();const file=await download;
   expect(file.suggestedFilename()).toBe('입출고총괄_2026-11-02_2026-11-30.xlsx');const stream=await file.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);
   const readExcel=require('read-excel-file/node').default,workbook=await readExcel(Buffer.concat(chunks));
-  expect(workbook[0].data[1][10]).toBe(14);expect(workbook[0].data[1][16]).toBe(2000);expect(workbook[0].data[1][19]).toBe(450);
+  expect(workbook[0].data[1][12]).toBe(14);expect(workbook[0].data[1][20]).toBe(2000);expect(workbook[0].data[1][23]).toBe(450);
   await summary.locator('.erp-table-scroll').scrollIntoViewIfNeeded();await owner.page.screenshot({path:testInfo.outputPath('erp-period-report.png'),fullPage:true});
   expect(await owner.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   const member=await actorFor(browser,testInfo);await login(member,fixtures.accounts.memberA);await member.page.goto('/#/erp');await member.page.getByRole('button',{name:'입출고 총괄·원장',exact:true}).click();
@@ -551,7 +618,7 @@ test('ERP period reports, returns, count/value adjustments and immutable cancell
   const memberSummary=member.page.getByRole('region',{name:'입출고 총괄 결과',exact:true});await expect(memberSummary.getByRole('cell',{name:'14',exact:true})).toBeVisible();await expect(member.page.getByRole('button',{name:'재고 조정',exact:true})).toHaveCount(0);
   await expect(memberSummary.getByRole('columnheader',{name:'기말금액',exact:true})).toHaveCount(0);
   const memberDownload=member.page.waitForEvent('download');await memberSummary.getByRole('button',{name:'전체 Excel 내려받기',exact:true}).click();const memberFile=await memberDownload,memberStream=await memberFile.createReadStream(),memberChunks=[];for await(const chunk of memberStream)memberChunks.push(chunk);
-  const memberWorkbook=await readExcel(Buffer.concat(memberChunks));expect(memberWorkbook[0].data[0]).toHaveLength(11);expect(JSON.stringify(memberWorkbook)).not.toContain('2000');
+  const memberWorkbook=await readExcel(Buffer.concat(memberChunks));expect(memberWorkbook[0].data[0]).toHaveLength(13);expect(JSON.stringify(memberWorkbook)).not.toContain('2000');
   expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
 });
 

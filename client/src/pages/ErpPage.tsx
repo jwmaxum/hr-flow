@@ -10,6 +10,7 @@ import '../styles/Erp.css';
 import { ErpImportPanel } from '../components/ErpImportPanel';
 import { ErpReportPanel } from '../components/ErpReportPanel';
 const ErpDocumentsPanel = lazy(() => import('../components/ErpDocumentsPanel').then(module => ({ default: module.ErpDocumentsPanel })));
+const ErpTransferPanel = lazy(() => import('../components/ErpTransferPanel').then(module => ({ default: module.ErpTransferPanel })));
 
 const names: Record<ErpKind, string> = { items: '품목', warehouses: '창고', partners: '거래처' };
 const number = (value: number) => value.toLocaleString('ko-KR', { maximumFractionDigits: 4 });
@@ -121,6 +122,7 @@ function ErpWorkspace({ companyId, companyName, canManage }: { companyId: string
   const [importOpen, setImportOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const [kind, setKind] = useState<ErpKind>('items');
   const [search, setSearch] = useState(''), [searchBy, setSearchBy] = useState<'name' | 'code'>('name');
   const [records, setRecords] = useState<ErpRecord[]>([]), [cursor, setCursor] = useState<ErpCursor | null>(null);
@@ -183,13 +185,14 @@ function ErpWorkspace({ companyId, companyName, canManage }: { companyId: string
       <p className="wf-muted">품목을 찾고 창고별 재고를 확인하세요.</p></div><span className="wf-status"><Boxes size={15} aria-hidden="true" />{canManage ? '회사 관리자' : '재고 조회'}</span></header>
     <nav className="erp-tabs" aria-label="ERP 업무">
       {([['items', PackageSearch], ['warehouses', Warehouse], ['partners', UsersRound]] as const).filter(([key]) => canManage || key !== 'partners').map(([key, Icon]) =>
-        <button key={key} type="button" aria-pressed={!importOpen && !reportOpen && !documentsOpen && kind === key} onClick={() => { setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); if (kind !== key || importOpen || reportOpen || documentsOpen) { reset(); setKind(key); setSearch(''); setSearchBy('name'); setReload(value => value + 1); } }}><Icon size={18} aria-hidden="true" />{names[key]}{key === 'items' ? '·재고현황' : ' 관리'}</button>)}
-      {canManage && <button type="button" aria-pressed={importOpen} onClick={() => { setImportOpen(true); setReportOpen(false); setDocumentsOpen(false); }}>Excel 업로드</button>}
-      <button type="button" aria-pressed={reportOpen} onClick={() => { setReportOpen(true); setImportOpen(false); setDocumentsOpen(false); }}>입출고 총괄·원장</button>
-      {canManage && <button type="button" aria-pressed={documentsOpen} onClick={() => { setDocumentsOpen(true); setImportOpen(false); setReportOpen(false); }}>거래서류 발행</button>}
+        <button key={key} type="button" aria-pressed={!importOpen && !reportOpen && !documentsOpen && !transferOpen && kind === key} onClick={() => { setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); setTransferOpen(false); if (kind !== key || importOpen || reportOpen || documentsOpen || transferOpen) { reset(); setKind(key); setSearch(''); setSearchBy('name'); setReload(value => value + 1); } }}><Icon size={18} aria-hidden="true" />{names[key]}{key === 'items' ? '·재고현황' : ' 관리'}</button>)}
+      {canManage && <button type="button" aria-pressed={importOpen} onClick={() => { setImportOpen(true); setReportOpen(false); setDocumentsOpen(false); setTransferOpen(false); }}>Excel 업로드</button>}
+      {canManage && <button type="button" aria-pressed={transferOpen} onClick={() => { setTransferOpen(true); setImportOpen(false); setReportOpen(false); setDocumentsOpen(false); }}>창고 이동</button>}
+      <button type="button" aria-pressed={reportOpen} onClick={() => { setReportOpen(true); setImportOpen(false); setDocumentsOpen(false); setTransferOpen(false); }}>입출고 총괄·원장</button>
+      {canManage && <button type="button" aria-pressed={documentsOpen} onClick={() => { setDocumentsOpen(true); setImportOpen(false); setReportOpen(false); setTransferOpen(false); }}>거래서류 발행</button>}
     </nav>
     {notice && <p role="status" className="erp-success">{notice}</p>}
-    {documentsOpen && canManage ? <Suspense fallback={<p role="status">거래서류를 불러오고 있습니다.</p>}><ErpDocumentsPanel companyId={companyId} /></Suspense> : reportOpen ? <ErpReportPanel companyId={companyId} canManage={canManage} /> : importOpen && canManage ? <ErpImportPanel companyId={companyId} onInventory={() => { setImportOpen(false); reset(); setKind('items'); setSearch(''); setSearchBy('name'); setReload(value => value + 1); }} /> : <div className={`erp-layout ${kind !== 'items' && !editor ? 'erp-layout-single' : ''}`}>
+    {transferOpen && canManage ? <Suspense fallback={<p role="status">창고 이동을 불러오고 있습니다.</p>}><ErpTransferPanel key={companyId} companyId={companyId} /></Suspense> : documentsOpen && canManage ? <Suspense fallback={<p role="status">거래서류를 불러오고 있습니다.</p>}><ErpDocumentsPanel companyId={companyId} /></Suspense> : reportOpen ? <ErpReportPanel companyId={companyId} canManage={canManage} /> : importOpen && canManage ? <ErpImportPanel companyId={companyId} onInventory={() => { setImportOpen(false); reset(); setKind('items'); setSearch(''); setSearchBy('name'); setReload(value => value + 1); }} /> : <div className={`erp-layout ${kind !== 'items' && !editor ? 'erp-layout-single' : ''}`}>
       <section className="wf-panel erp-list" aria-label={`${names[kind]} 목록`}>
         <div className="erp-list-head"><h2 className="wf-section-title">{names[kind]} 목록</h2>{canManage && <button ref={addButton} className="wf-btn wf-btn-primary" onClick={() => { setEditor({ record: null }); setNotice(''); }}><Plus size={16} aria-hidden="true" />{names[kind]} 등록</button>}</div>
         <div className="erp-search"><label className="wf-field"><span>검색 기준</span><select className="wf-input" value={searchBy} onChange={e => { reset(); setSearchBy(e.target.value as 'name' | 'code'); }}><option value="name">{names[kind]}명</option><option value="code">코드</option></select></label>

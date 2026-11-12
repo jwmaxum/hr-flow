@@ -1,13 +1,27 @@
 const { authorizeContext, fail } = require('./security-context');
+const { FieldPath } = require('firebase-admin/firestore');
 const { erpMaster: master } = require('./erp-service');
 const M = require('./erp-ledger-model');
-const TYPES = ['CANCEL','SALES_RETURN','PURCHASE_RETURN','COUNT','VALUE'];
+const TYPES = ['CANCEL','SALES_RETURN','PURCHASE_RETURN','COUNT','VALUE','TRANSFER'];
 function inputOf(value) {
-  M.exactObject(value, ['type','date','reason','sourceId','itemId','warehouseId','quantity','value']);
+  M.exactObject(value, ['type','date','reason','sourceId','itemId','warehouseId','quantity','value','allocations']);
   if (!TYPES.includes(value.type)) fail('invalid-argument', '취소·반품·조정 유형을 선택해 주세요.');
   const result = { type: value.type, date: M.date(value.date), reason: M.text(value.reason, '처리 사유', 500, true) };
   if (result.reason.length < 3) fail('invalid-argument', '처리 사유를 3자 이상 입력해 주세요.');
-  if (['COUNT','VALUE'].includes(value.type)) {
+  if (value.type === 'TRANSFER') {
+    if (['sourceId','itemId','quantity','value'].some(key => value[key] !== undefined)) fail('invalid-argument', '창고 이동은 출발 창고와 품목별 도착 창고·수량만 지정합니다.');
+    result.warehouseId = master.identifier(value.warehouseId);
+    if (!Array.isArray(value.allocations) || !value.allocations.length || value.allocations.length > 75) fail('invalid-argument', '배분 내역은 1~75개로 입력해 주세요.');
+    const seen = new Set();
+    result.allocations = value.allocations.map(entry => {
+      M.exactObject(entry, ['itemId','warehouseId','quantity']);
+      const row = { itemId: master.identifier(entry.itemId), warehouseId: master.identifier(entry.warehouseId), quantityScaled: M.decimal(entry.quantity, 4, '이동 수량', 1e12) };
+      const key = `${row.itemId}:${row.warehouseId}`;
+      if (!row.quantityScaled || row.warehouseId === result.warehouseId || seen.has(key)) fail('invalid-argument', '양수 수량과 서로 다른 출발·도착 창고를 선택하고 같은 품목·도착 창고를 중복 입력하지 마세요.');
+      seen.add(key); return row;
+    }).sort((a,b) => a.itemId.localeCompare(b.itemId) || a.warehouseId.localeCompare(b.warehouseId));
+  } else if (value.allocations !== undefined) fail('invalid-argument', '배분 내역은 창고 이동에만 입력합니다.');
+  else if (['COUNT','VALUE'].includes(value.type)) {
     if (value.sourceId) fail('invalid-argument', '재고 조정에는 원거래 ID를 지정하지 않습니다.');
     result.itemId = master.identifier(value.itemId); result.warehouseId = master.identifier(value.warehouseId);
     if (value.type === 'COUNT') result.quantityScaled = M.decimal(value.quantity, 4, '실사 수량', 9e12);
@@ -30,6 +44,34 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
     const user = await authorizeContext({ db, request, reader, now, roles: ['ADMIN'] });
     if (user.companyId !== request.data.companyId) fail('permission-denied', '로그인한 회사에서 처리해 주세요.');
     return user;
+  }
+  async function transferStock(request) {
+    const warehouseId = master.identifier(request.data.warehouseId);
+    const cursor = request.data.cursor == null ? null : master.identifier(request.data.cursor);
+    return db.runTransaction(async tx => {
+      const user = await context(request, tx), parent = db.collection('companies').doc(user.companyId);
+      const warehouse = await tx.get(parent.collection('erpWarehouses').doc(warehouseId));
+      if (!warehouse.exists) fail('not-found', '출발 창고를 찾을 수 없습니다.');
+      master.verifyTenant(warehouse.data(), user.companyId);
+      if (!warehouse.data().active) fail('failed-precondition', '활성 출발 창고를 선택해 주세요.');
+      let query = parent.collection('erpInventory').where('warehouseId','==',warehouseId).orderBy(FieldPath.documentId());
+      if (cursor) query = query.startAfter(cursor);
+      const stock = await tx.get(query.limit(51)), selected = stock.docs.slice(0,50);
+      const refs = selected.map(doc => parent.collection('erpItems').doc(master.identifier(doc.data().itemId)));
+      const items = refs.length ? await tx.getAll(...refs) : [];
+      const records = selected.map((doc,index) => {
+        const value = doc.data(), item = items[index]; master.verifyTenant(value, user.companyId);
+        if (!item.exists) fail('failed-precondition', '재고의 품목 기준정보를 확인해 주세요.');
+        master.verifyTenant(item.data(), user.companyId);
+        const quantityScaled = Math.round(value.quantity * 10000);
+        if (!Number.isFinite(value.quantity) || Math.abs(value.quantity * 10000 - quantityScaled) > 0.001 || value.currency !== 'KRW') fail('failed-precondition', '현재고 형식을 확인해 주세요.');
+        M.signed(quantityScaled); M.signed(value.value);
+        if (quantityScaled < 0 || value.value < 0 || !quantityScaled && value.value) fail('failed-precondition', '현재고 수량·금액을 확인해 주세요.');
+        return { id: doc.id, itemId: item.id, code: item.data().code, name: item.data().name, unit: item.data().unit,
+          active: item.data().active, quantity: value.quantity, value: value.value };
+      });
+      return { records, nextCursor: stock.size > 50 ? selected.at(-1).id : null };
+    });
   }
   async function plan(tx, parent, job) {
     const companyId = parent.id, input = job.input, readState = [], balances = new Map(), links = new Map(), readCache = new Map(), balanceCache = new Map();
@@ -60,7 +102,7 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
       const snap = matches.docs[0], data = snap?.data(); if (data) master.verifyTenant(data, companyId);
       const quantityScaled = Math.round((data?.quantity || 0) * 10000), value = data?.value || 0;
       if (data && (data.currency !== 'KRW' || !Number.isFinite(data.quantity) || Math.abs(data.quantity * 10000 - quantityScaled) > 0.001)) fail('failed-precondition', '기존 현재고 형식을 확인해 주세요.');
-      M.signed(quantityScaled); M.signed(value); if (quantityScaled < 0 || value < 0) fail('failed-precondition', '기존 음수 재고를 확인해 주세요.');
+      M.signed(quantityScaled); M.signed(value); if (quantityScaled < 0 || value < 0 || !quantityScaled && value) fail('failed-precondition', '기존 재고수량·금액을 확인해 주세요.');
       readState.push([snap?.ref.path || key, data || null]);
       const result = { ref: snap?.ref || parent.collection('erpInventory').doc(M.hash([itemId,warehouseId])), itemId, warehouseId,
         item: item.data(), warehouse: warehouse.data(), beforeQuantityScaled: quantityScaled, beforeValue: value, quantityScaled, value, openingImportId: data?.openingImportId || null };
@@ -102,12 +144,13 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
     async function add(source, stock, effect, extra = {}) {
       const after = M.applyEffect(stock, effect), rowNo = rows.length + 1;
       rows.push({ companyId, type: 'CORRECTION', operationType: input.type, operationId: job.id, sourceId: source?.id || null,
-        date: input.date, order, rowNo, documentNo: `COR-${job.id}`, direction: ({ CANCEL:'취소', SALES_RETURN:'판매반품', PURCHASE_RETURN:'매입반품', COUNT:'실사조정', VALUE:'금액조정' })[input.type],
+        date: input.date, order, rowNo, documentNo: `COR-${job.id}`, direction: ({ CANCEL:'취소', SALES_RETURN:'판매반품', PURCHASE_RETURN:'매입반품', COUNT:'실사조정', VALUE:'금액조정', TRANSFER:'창고이동' })[input.type],
         itemId: stock.itemId, warehouseId: stock.warehouseId, code: source?.code || stock.item.code, name: source?.name || stock.item.name,
         specification: source?.specification || stock.item.specification || '', unit: source?.unit || stock.item.unit,
         warehouseName: stock.warehouse.name, warehouseCode: stock.warehouse.code, partnerId: source?.partnerId || null,
         partnerName: source?.partnerName || source?.partner?.name || '', sourceDocumentNo: source?.documentNo || '',
         currency: source?.currency || 'KRW', priceScaled: source?.priceScaled ?? null, effect,
+        transferWarehouseId: source?.transferWarehouseId || '', transferWarehouseName: source?.transferWarehouseName || '',
         beforeQuantity: stock.quantityScaled / 10000, beforeValue: stock.value, afterQuantity: after.quantityScaled / 10000, afterValue: after.value,
         reason: input.reason, createdAt: job.createdAt, createdBy: job.createdBy, ...extra });
       Object.assign(stock, after);
@@ -139,7 +182,35 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
         usage.returnedQuantityScaled += qty;
       }
     }
-    if (!input.sourceId) {
+    if (input.type === 'TRANSFER') {
+      const pairs = [...new Map(input.allocations.flatMap(row => [[`${row.itemId}:${input.warehouseId}`, { itemId: row.itemId, warehouseId: input.warehouseId }], [`${row.itemId}:${row.warehouseId}`, row]])).entries()];
+      await prefetch(pairs.flatMap(([,row]) => [parent.collection('erpItems').doc(row.itemId), parent.collection('erpWarehouses').doc(row.warehouseId)]));
+      for (let i=0;i<pairs.length;i+=20) await Promise.all(pairs.slice(i,i+20).map(async ([key,row]) => {
+        balanceCache.set(key, await tx.get(parent.collection('erpInventory').where('itemId','==',row.itemId).where('warehouseId','==',row.warehouseId).limit(2)));
+      }));
+      const groups = new Map();
+      for (const row of input.allocations) { if (!groups.has(row.itemId)) groups.set(row.itemId, []); groups.get(row.itemId).push(row); }
+      for (const [itemId, destinations] of groups) {
+        const source = await balance(itemId, input.warehouseId);
+        if (!source.item.active || !source.warehouse.active) fail('failed-precondition', '활성 품목·창고를 선택해 주세요.');
+        const totalQuantity = destinations.reduce((sum,row) => M.signed(sum + row.quantityScaled, '이동 수량'), 0);
+        const totalValue = M.averageCost(source.value, source.quantityScaled, totalQuantity);
+        let allocated = 0;
+        for (const destination of destinations) {
+          const target = await balance(itemId, destination.warehouseId);
+          if (!target.item.active || !target.warehouse.active) fail('failed-precondition', '활성 도착 창고를 선택해 주세요.');
+          const value = M.allocation(totalValue, allocated, destination.quantityScaled, totalQuantity);
+          const out = M.zeroEffect(), incoming = M.zeroEffect();
+          out.transferOutQuantityScaled = incoming.transferInQuantityScaled = destination.quantityScaled;
+          out.transferOutValue = incoming.transferInValue = value;
+          await add(null, source, out, { direction: '이동출고', transferWarehouseId: target.warehouseId, transferWarehouseName: target.warehouse.name });
+          await add(null, target, incoming, { direction: '이동입고', transferWarehouseId: source.warehouseId, transferWarehouseName: source.warehouse.name });
+          allocated += destination.quantityScaled;
+        }
+      }
+      if (rows.reduce((sum,row)=>sum+M.quantityDelta(row.effect),0) !== 0 || rows.reduce((sum,row)=>sum+M.valueDelta(row.effect),0) !== 0) fail('failed-precondition', '이동 전후 수량·금액 합계가 일치하지 않습니다.');
+    }
+    if (!input.sourceId && input.type !== 'TRANSFER') {
       const stock = await balance(input.itemId, input.warehouseId), effect = M.zeroEffect();
       if (!stock.item.active || !stock.warehouse.active) fail('failed-precondition', '활성 품목·창고를 선택해 주세요.');
       if (input.type === 'COUNT') {
@@ -157,9 +228,14 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
     return { rows, balances, links, stateRef, state, documentRef, order, fingerprint };
   }
   return async request => {
-    const input = M.exactObject(request.data, ['action','companyId','id','input','fingerprint']);
-    if (!['preview','commit','get'].includes(input.action)) fail('invalid-argument', '지원하지 않는 처리입니다.');
+    const input = M.exactObject(request.data, ['action','companyId','id','input','fingerprint','warehouseId','cursor']);
+    if (!['preview','commit','get','transferStock'].includes(input.action)) fail('invalid-argument', '지원하지 않는 처리입니다.');
     if (input.action !== 'preview' && input.input !== undefined || input.action !== 'commit' && input.fingerprint !== undefined) fail('invalid-argument', '처리에 맞는 요청 항목을 사용해 주세요.');
+    if (input.action === 'transferStock') {
+      if (input.id !== undefined) fail('invalid-argument', '현재고 조회에는 처리 ID를 지정하지 않습니다.');
+      await context(request); return transferStock(request);
+    }
+    if (input.warehouseId !== undefined || input.cursor !== undefined) fail('invalid-argument', '처리에 맞는 요청 항목을 사용해 주세요.');
     const user = await context(request), id = master.identifier(input.id), parent = db.collection('companies').doc(user.companyId), ref = parent.collection('erpCorrections').doc(id);
     const normalized = input.action === 'preview' ? inputOf(input.input) : null;
     return db.runTransaction(async tx => {

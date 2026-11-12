@@ -1,8 +1,8 @@
 const { authorizeContext, fail } = require('./security-context');
 const { erpMaster: master } = require('./erp-service');
 const M = require('./erp-ledger-model');
-const MONEY = ['openingValue','inValue','outValue','adjustValue','closingValue','salesKRW','cogsKRW','marginKRW','averageInPrice'];
-const QUANTITY = ['openingQuantity','inQuantity','outQuantity','adjustQuantity','closingQuantity'];
+const MONEY = ['openingValue','inValue','outValue','transferInValue','transferOutValue','adjustValue','closingValue','salesKRW','cogsKRW','marginKRW','averageInPrice'];
+const QUANTITY = ['openingQuantity','inQuantity','outQuantity','transferInQuantity','transferOutQuantity','adjustQuantity','closingQuantity'];
 const LIMIT = 20000, PAGE = 100;
 function filtersOf(value) {
   M.exactObject(value, ['from','to','itemId','warehouseId','search']);
@@ -22,16 +22,19 @@ function projectDetail(row, canManage) {
   const effect = M.effectOf(row), output = { id: row.id, date: row.date, order: row.order, rowNo: row.rowNo, type: row.type,
     operationType: row.operationType || '', direction: row.direction, documentNo: row.documentNo || '기초재고', sourceId: row.sourceId || null,
     sourceDocumentNo: row.sourceDocumentNo || '', importId: row.importId || null, operationId: row.operationId || null,
+    transferWarehouseName: row.transferWarehouseName || '',
     itemId: row.itemId, code: row.code, name: row.name, specification: row.specification || '', unit: row.unit,
     warehouseId: row.warehouseId, warehouseName: row.warehouseName || '', warehouseCode: row.warehouseCode || '',
     quantityDelta: M.quantityDelta(effect) / 10000, balanceQuantity: row.reportQuantityScaled / 10000,
     inQuantity: effect.inQuantityScaled / 10000, outQuantity: effect.outQuantityScaled / 10000,
+    transferInQuantity: effect.transferInQuantityScaled / 10000, transferOutQuantity: effect.transferOutQuantityScaled / 10000,
     adjustQuantity: (effect.adjustQuantityScaled + effect.openingQuantityScaled) / 10000 };
   // Notes, supplier identity, raw effect and any monetary amount are not sent to quantity-only users.
   if (canManage) Object.assign(output, { partnerName: row.partnerName || row.partner?.name || '', reason: row.reason || row.notes || '',
     currency: row.currency || 'KRW', price: row.priceScaled == null ? null : row.priceScaled / 10000,
     supply: row.supply ?? null, tax: row.tax ?? null, total: row.total ?? null, valueDelta: M.valueDelta(effect), balanceValue: row.reportValue,
     inValue: effect.inValue, outValue: effect.outValue, adjustValue: effect.adjustValue + effect.openingValue,
+    transferInValue: effect.transferInValue, transferOutValue: effect.transferOutValue,
     salesKRW: effect.salesKRW, cogsKRW: effect.cogsKRW, marginKRW: M.signed(effect.salesKRW - effect.cogsKRW),
     refundKRW: row.refundKRW ?? null, refundSupply: row.refundSupply ?? null, refundTax: row.refundTax ?? null,
     returnQuantity: row.returnQuantityScaled == null ? null : row.returnQuantityScaled / 10000,
@@ -59,6 +62,8 @@ function buildReport(movements, filters, masters = new Map()) {
     else {
       group.inQuantity = M.signed(group.inQuantity + effect.inQuantityScaled); group.inValue = M.signed(group.inValue + effect.inValue);
       group.outQuantity = M.signed(group.outQuantity + effect.outQuantityScaled); group.outValue = M.signed(group.outValue + effect.outValue);
+      group.transferInQuantity = M.signed(group.transferInQuantity + effect.transferInQuantityScaled); group.transferInValue = M.signed(group.transferInValue + effect.transferInValue);
+      group.transferOutQuantity = M.signed(group.transferOutQuantity + effect.transferOutQuantityScaled); group.transferOutValue = M.signed(group.transferOutValue + effect.transferOutValue);
       group.adjustQuantity = M.signed(group.adjustQuantity + effect.adjustQuantityScaled + effect.openingQuantityScaled);
       group.adjustValue = M.signed(group.adjustValue + effect.adjustValue + effect.openingValue);
       group.salesKRW = M.signed(group.salesKRW + effect.salesKRW); group.cogsKRW = M.signed(group.cogsKRW + effect.cogsKRW);
