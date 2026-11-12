@@ -3,13 +3,19 @@ import { auth, functions } from '../firebase';
 import { useAuthStore } from '../store/authStore';
 
 export type ErpImportType = 'OPENING' | 'MOVEMENTS';
+export interface ManualLine { code: string; name: string; specification: string; unit: string; taxType: string; quantity: string; price: string; notes: string }
+export interface ManualMovement {
+  direction: '입고' | '출고'; date: string; warehouseId: string; partnerId?: string;
+  partner?: { code: string; name: string; country: string; registrationNumber: string };
+  currency: string; exchangeRate: string; priceBasis: string; lines: ManualLine[]; allowNewItems: boolean; allowNewPartners: boolean;
+}
 export interface ErpImportOptions {
   defaultWarehouseId: string; warehouseByRow: Record<string, string>; partnerByRow: Record<string, string>;
   allowNewItems: boolean; allowNewPartners: boolean; acceptExistingItems: boolean;
 }
 export interface ErpImportIssue { row: number; sheet: string; message: string }
 export interface ErpImportRow {
-  sourceRow: number; code: string; name: string; direction: string; date: string; documentNo: string;
+  sourceRow: number; itemId?: string; code: string; name: string; direction: string; date: string; documentNo: string;
   quantity: number; unit: string; currency: string; price: number | null; warehouseName: string; partnerName: string;
   newItem?: boolean; newPartner?: boolean; value?: number; supply?: number; tax?: number; total?: number; cost?: number;
   beforeQuantity?: number; beforeValue?: number; afterQuantity?: number; afterValue?: number;
@@ -17,13 +23,14 @@ export interface ErpImportRow {
 }
 export interface ErpImport {
   id: string; companyId: string; type: ErpImportType; status: 'PENDING' | 'COMMITTED' | 'CANCELLED';
-  basisDate: string; companyLabel: string; source: { name: string; size: number; sha256: string };
+  basisDate: string; companyLabel: string; source: { kind?: 'XLSX' | 'MANUAL'; name: string; size: number; sha256: string };
   createdAt: string; committedAt: string | null;
   preview: { fingerprint: string; rows: ErpImportRow[]; errors: ErpImportIssue[]; warnings: ErpImportIssue[];
     canCommit: boolean; newItems: number; newPartners: number;
+    itemTotals?: { itemId: string; beforeQuantity: number; beforeValue: number; quantity: number; value: number }[];
     balances: { itemId: string; warehouseId: string; beforeQuantity: number; beforeValue: number; quantity: number; value: number }[] };
 }
-export interface ErpImportSummary { id: string; type: ErpImportType; status: ErpImport['status']; name: string; createdAt: string; rowCount: number; errorCount: number }
+export interface ErpImportSummary { id: string; type: ErpImportType; sourceKind?: 'XLSX' | 'MANUAL'; status: ErpImport['status']; name: string; createdAt: string; rowCount: number; errorCount: number }
 export interface ErpSourceFile { name: string; mimeType: string; base64: string }
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpImport', { timeout: 120000 });
 function scope(companyId: string) {
@@ -43,6 +50,7 @@ async function jobCall(companyId: string, action: string, data: Record<string, u
   return result;
 }
 export const erpImportService = {
+  manualPreview: (companyId: string, id: string, movement: ManualMovement) => jobCall(companyId, 'manualPreview', { id, movement }),
   preview: (companyId: string, id: string, type: ErpImportType, source: ErpSourceFile, options: ErpImportOptions) => jobCall(companyId, 'preview', { id, type, source, options }),
   get: (companyId: string, id: string) => jobCall(companyId, 'get', { id }),
   commit: (companyId: string, job: ErpImport) => jobCall(companyId, 'commit', { id: job.id, fingerprint: job.preview.fingerprint }),

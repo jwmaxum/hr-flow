@@ -36,13 +36,13 @@ function ProfileEditor({ meta, busy, save }: { meta: DocumentMeta; busy: boolean
   </details>;
 }
 
-function DraftEditor({ companyId, document, items, partners, busy, onSave, onIssue, onPdf, onDirty, moreItems, morePartners }: {
+function DraftEditor({ companyId, document, items, partners, busy, onSave, onIssue, onPdf, onDirty, moreItems, morePartners, initialSource }: {
   companyId: string; document: TradeDocument; items: ErpRecord[]; partners: ErpRecord[]; busy: boolean;
   onSave: (value: DocumentInput) => void; onIssue: () => void; onPdf: () => void; onDirty: (value: boolean) => void;
-  moreItems?: () => void; morePartners?: () => void;
+  moreItems?: () => void; morePartners?: () => void; initialSource?: SourceDocument | null;
 }) {
   const [form, setForm] = useState<DocumentInput>(document.input!), [dirty, setDirty] = useState(false), [confirmed, setConfirmed] = useState(false);
-  const [source, setSource] = useState<SourceDocument | null>(null), [sourceBusy, setSourceBusy] = useState(false), [error, setError] = useState('');
+  const [source, setSource] = useState<SourceDocument | null>(initialSource && initialSource.documentNo === document.input?.sourceDocumentNo ? initialSource : null), [sourceBusy, setSourceBusy] = useState(false), [error, setError] = useState('');
   const alive = useRef(true), errorRef = useRef<HTMLParagraphElement>(null), proforma = form.kind === 'PROFORMA';
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   function change(patch: Partial<DocumentInput>) { setForm(current => ({ ...current, ...patch })); setDirty(true); setConfirmed(false); onDirty(true); }
@@ -112,7 +112,8 @@ function DraftEditor({ companyId, document, items, partners, busy, onSave, onIss
   </form>;
 }
 
-export function ErpDocumentsPanel({ companyId }: { companyId: string }) {
+export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '' }: { companyId: string; initialSourceDocumentNo?: string }) {
+  const [initialSource, setInitialSource] = useState<SourceDocument | null>(null);
   const [meta, setMeta] = useState<DocumentMeta | null>(null), [documents, setDocuments] = useState<TradeDocument[]>([]), [cursor, setCursor] = useState<DocumentCursor | null>(null);
   const [items, setItems] = useState<ErpRecord[]>([]), [partners, setPartners] = useState<ErpRecord[]>([]), [itemCursor, setItemCursor] = useState<ErpCursor | null>(null), [partnerCursor, setPartnerCursor] = useState<ErpCursor | null>(null);
   const [selected, setSelected] = useState<TradeDocument | null>(null), [busy, setBusy] = useState(true), [dirty, setDirty] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
@@ -120,11 +121,17 @@ export function ErpDocumentsPanel({ companyId }: { companyId: string }) {
   const live = useRef(true), pending = useRef(false), errorRef = useRef<HTMLParagraphElement>(null), revisionIds = useRef(new Map<string, string>());
   useEffect(() => {
     live.current = true;
-    void Promise.all([api.meta(companyId), api.list(companyId), erpService.list(companyId, 'items', '', 'name'), erpService.list(companyId, 'partners', '', 'name')]).then(([m, list, i, p]) => {
+    void Promise.all([api.meta(companyId), api.list(companyId), erpService.list(companyId, 'items', '', 'name'), erpService.list(companyId, 'partners', '', 'name'), initialSourceDocumentNo ? api.sources(companyId, initialSourceDocumentNo, 'STATEMENT') : Promise.resolve(null)]).then(([m, list, i, p, source]) => {
       if (!live.current) return; setMeta(m); setDocuments(list.documents); setCursor(list.cursor); setItems(i.records); setItemCursor(i.nextCursor); setPartners(p.records); setPartnerCursor(p.nextCursor);
+      if (source) {
+        const draft = blank(companyId, 'STATEMENT');
+        draft.input = { ...draft.input!, sourceDocumentNo: source.documentNo, currency: source.currency, partnerId: source.partnerId,
+          lines: source.rows.filter(row => row.available > 0).map(row => ({ sourceId: row.id, quantity: String(row.available), notes: '' })) };
+        setInitialSource(source); setSelected(draft); setNotice('확정 출고를 불러왔습니다. 초안을 저장하고 금액을 확인한 뒤 발행해 주세요.');
+      }
     }).catch(failure => { if (live.current) setError(getErrorMessage(failure)); }).finally(() => { if (live.current) setBusy(false); });
     return () => { live.current = false; };
-  }, [companyId]);
+  }, [companyId, initialSourceDocumentNo]);
   async function run(action: () => Promise<void>) {
     if (pending.current || busy) return; pending.current = true; setBusy(true); setError(''); setNotice('');
     try { await action(); } catch (failure) { if (live.current) { setError(getErrorMessage(failure)); setTimeout(() => errorRef.current?.focus(), 0); } }
@@ -150,7 +157,7 @@ export function ErpDocumentsPanel({ companyId }: { companyId: string }) {
     {error && <p role="alert" tabIndex={-1} ref={errorRef} className="erp-error">{error}</p>}{notice && <p role="status" className="erp-success">{notice}</p>}
     {meta && <ProfileEditor key={meta.profile.version} meta={meta} busy={busy} save={value => void run(async () => { await api.saveProfile(companyId, value); const next = await api.meta(companyId); if (live.current) { setMeta(next); setNotice('공급자 출력 설정을 저장했습니다. 기존 초안은 다시 저장해 주세요.'); } })} />}
     {selected && <section className="wf-panel erp-document-editor" aria-label="거래서류 편집"><div className="erp-list-head"><div><h2 className="wf-section-title">{labels[selected.kind]} · {statusLabel[selected.status]}</h2><p className="wf-muted">{selected.number || '발행 시 번호 자동 부여'}{selected.replacesNumber && ` · 정정 ${selected.edition}차 / 원본 ${selected.replacesNumber}`}</p></div><button className="wf-btn" disabled={busy} onClick={() => setSelected(null)}>닫기</button></div>
-      {selected.status === 'DRAFT' ? <DraftEditor key={`${selected.id}:${selected.revision}`} companyId={companyId} document={selected} items={items} partners={partners} busy={busy}
+      {selected.status === 'DRAFT' ? <DraftEditor key={`${selected.id}:${selected.revision}`} companyId={companyId} document={selected} items={items} partners={partners} busy={busy} initialSource={initialSource}
         onDirty={setDirty} onSave={input => void run(() => result(api.save(companyId, selected.id, selected.revision, input), '초안을 저장했습니다. 금액을 확인한 뒤 발행해 주세요.'))}
         onIssue={() => void run(() => result(api.issue(companyId, selected), '발행이 완료되었습니다. PDF를 내려받을 수 있습니다.'))} onPdf={() => void run(() => download(selected, true))}
         moreItems={itemCursor ? () => void run(async () => { const next = await erpService.list(companyId, 'items', '', 'name', itemCursor); if (live.current) { setItems(current => [...current, ...next.records]); setItemCursor(next.nextCursor); } }) : undefined}

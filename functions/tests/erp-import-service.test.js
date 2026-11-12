@@ -23,6 +23,10 @@ const request = (data, uid = 'admin', companyId = 'a') => ({ data: { companyId, 
 const call = (action, data = {}, uid = 'admin', companyId = 'a') => service(request({ action, ...data }, uid, companyId));
 const commit = (job, uid = 'admin', companyId = 'a') => call('commit', { id: job.id, fingerprint: job.preview.fingerprint }, uid, companyId);
 const opts = { allowNewItems: true, allowNewPartners: true };
+const manual = (patch = {}) => ({ direction: '입고', date: '2026-11-02', warehouseId: 'warehouse',
+  partner: { code: 'PT-01', name: '합성 거래처', country: 'KR', registrationNumber: '123-45-67890' }, currency: 'KRW', exchangeRate: '1', priceBasis: '세금별도',
+  allowNewItems: true, allowNewPartners: true, lines: [{ code: '0001', name: '합성 품목', specification: '규격', unit: 'EA', taxType: '과세', quantity: '10', price: '200', notes: '' }], ...patch });
+const manualPreview = async (input = manual(), id = `manual-${++sequence}`) => (await call('manualPreview', { id, movement: input })).import;
 const reject = (promise, code) => assert.rejects(promise, error => error.code === code);
 async function preview(type = 'OPENING', rows = [opening()], options = opts, uid = 'admin', companyId = 'a', extra = {}) {
   const source = await workbook(type, rows, extra);
@@ -43,6 +47,79 @@ async function initialized() { const job = await preview(); assert.equal(job.pre
 
 test('ERP imports validate and atomically post to the authenticated company', async t => {
   try {
+    await t.test('manual receipts retain old and new prices, sum all warehouses, reuse IDs and allow identical later receipts', async () => {
+      await reset(); await initialized();
+      const job = await manualPreview(); assert.equal(job.source.kind, 'MANUAL'); assert.equal(job.preview.canCommit, true, JSON.stringify(job.preview.errors));
+      assert.deepEqual(job.preview.itemTotals.map(({ itemId, ...totals }) => totals), [{ beforeQuantity: 10, beforeValue: 1000, quantity: 20, value: 3000 }]);
+      assert.equal((await stock())[0].value, 1000);
+      assert.equal((await manualPreview(manual(), job.id)).id, job.id);
+      await reject(manualPreview(manual({ date: '2026-11-03' }), job.id), 'already-exists');
+      const results = await Promise.all([commit(job), commit(job)]); assert.equal(results.filter(r => r.idempotent).length, 1);
+      await reject(call('downloadSource', { id: job.id }), 'failed-precondition');
+      const next = await manualPreview(); assert.equal(next.preview.canCommit, true); await commit(next);
+      assert.equal((await stock())[0].value, 5000); assert.equal((await stock())[0].quantity, 30);
+      assert.equal((await db.collection('companies/a/erpImportReceipts').get()).size, 1);
+      const itemId = (await db.collection('companies/a/erpItems').get()).docs[0].id;
+      const history = await masters(request({ action: 'purchaseHistory', itemId })); assert.deepEqual(history.rows.map(row => row.price), [200,200,100]);
+      const inventory = await masters(request({ action: 'inventory', itemId })); assert.equal(inventory.averagePrice, 5000 / 30);
+      assert.equal(inventory.item.purchasePrice, 0); assert.equal((await call('list')).imports[0].sourceKind, 'MANUAL');
+    });
+    await t.test('manual outgoing sales and taxes are independent from inventory cost; invalid and stale jobs never post', async () => {
+      await reset(); await initialized(); await commit(await manualPreview());
+      const input = manual({ direction: '출고', lines: [{ ...manual().lines[0], quantity: '5', price: '330' }], priceBasis: '세금포함' });
+      const out = await manualPreview(input), concurrent = await manualPreview(input);
+      assert.equal(out.preview.rows[0].supply, 1500); assert.equal(out.preview.rows[0].tax, 150); assert.equal(out.preview.rows[0].cost, 750);
+      await commit(out); await reject(commit(concurrent), 'failed-precondition');
+      assert.equal((await stock())[0].value, 2250); assert.equal((await stock())[0].quantity, 15);
+      const invalid = await manualPreview({ ...input, lines: [{ ...input.lines[0], quantity: '16' }, { ...input.lines[0], code: 'NEW', name: '신규' }] });
+      assert.equal(invalid.preview.canCommit, false); await reject(commit(invalid), 'failed-precondition');
+      assert.equal((await db.collection('companies/a/erpItems').get()).size, 1);
+      const past = await manualPreview(manual({ date: '2026-11-01' })); assert.equal(past.preview.canCommit, false);
+      await reject(manualPreview(manual({ direction: 'ADJUST' })), 'invalid-argument');
+      await reject(manualPreview(manual({ companyId: 'b' })), 'invalid-argument');
+      await reject(manualPreview(manual({ lines: [{ ...input.lines[0], cost: 0 }] })), 'invalid-argument');
+      await reject(manualPreview(manual({ date: '2026-02-30' })), 'invalid-argument');
+    });
+    await t.test('first manual inbound can establish a zero baseline only for an empty company', async () => {
+      await reset(); const job = await manualPreview(); assert.equal(job.basisDate, '2026-11-01'); assert.equal(job.preview.canCommit, true, JSON.stringify(job.preview.errors));
+      assert.ok(job.preview.warnings.some(row => /재고 0/.test(row.message))); await commit(job);
+      assert.equal((await stock())[0].quantity, 10); assert.equal((await db.doc('companies/a/erpState/ledger').get()).data().basisDate, '2026-11-01');
+      await reset(); const out = await manualPreview(manual({ direction: '출고' })); assert.equal(out.preview.canCommit, false);
+      await db.doc('companies/a/erpInventory/legacy').set({ companyId: 'a', itemId: 'legacy', warehouseId: 'warehouse', quantity: 1, value: 1, currency: 'KRW' });
+      const unsafe = await manualPreview(); assert.equal(unsafe.preview.canCommit, false); await reject(commit(unsafe), 'failed-precondition');
+    });
+    await t.test('manual inputs and price history enforce company admin, mapped partner and session boundaries', async () => {
+      await reset(); await initialized(); const first = await manualPreview(); await commit(first);
+      const itemId = (await db.collection('companies/a/erpItems').get()).docs[0].id, partner = (await db.collection('companies/a/erpPartners').get()).docs[0];
+      for (const uid of [null,'member','manager','root']) {
+        await reject(call('manualPreview', { id: `denied-${uid}`, movement: manual() }, uid), uid ? 'permission-denied' : 'unauthenticated');
+        await reject(masters(request({ action: 'purchaseHistory', itemId }, uid)), uid ? 'permission-denied' : 'unauthenticated');
+      }
+      await reject(call('manualPreview', { id: 'foreign', movement: manual() }, 'foreign', 'a'), 'permission-denied');
+      await reject(masters(request({ action: 'purchaseHistory', itemId }, 'foreign', 'a')), 'permission-denied');
+      const mapped = manual({ partnerId: partner.id, allowNewPartners: false }); delete mapped.partner;
+      assert.equal((await manualPreview(mapped)).preview.canCommit, true);
+      await db.doc(partner.ref.path).update({ type: 'SUPPLIER' });
+      assert.equal((await manualPreview({ ...mapped, direction: '출고' })).preview.canCommit, false);
+      assert.equal((await manualPreview({ ...mapped, warehouseId: 'foreign-only' })).preview.canCommit, false);
+      const pending = await manualPreview(mapped); await db.doc('UserProfile/admin').update({ mustChangePassword: true });
+      await reject(commit(pending), 'failed-precondition'); assert.equal((await stock())[0].quantity, 20);
+    });
+    await t.test('whole-item valuation includes untouched warehouses and history paginates without duplicates', async () => {
+      await reset(); await initialized();
+      await masters(request({ action: 'save', kind: 'warehouses', id: 'second', expectedRevision: 0, values: { code: 'WH-02', name: '연구소', active: true, notes: '', address: '' } }));
+      await commit(await preview('OPENING', [opening({ 8: 'WH-02', 9: '연구소', 10: 5, 12: 300 })]));
+      const job = await manualPreview(); assert.equal(job.preview.itemTotals[0].beforeValue, 2500); assert.equal(job.preview.itemTotals[0].value, 4500); await commit(job);
+      const itemId = job.preview.itemTotals[0].itemId, snapshot = (await db.collection('companies/a/erpMovements').where('type','==','MOVEMENTS').get()).docs[0];
+      const batch = db.batch(); for (let i = 0; i < 52; i++) batch.set(db.doc(`companies/a/erpMovements/history-${i}`), { ...snapshot.data(), order: i + 100 });
+      batch.set(db.doc(`companies/a/erpMovementLinks/history-51`), { companyId: 'a', cancelledBy: 'cancelled', returnedQuantityScaled: 0 });
+      batch.set(db.doc(`companies/a/erpMovementLinks/history-50`), { companyId: 'a', cancelledBy: null, returnedQuantityScaled: 10000 }); await batch.commit();
+      const first = await masters(request({ action: 'purchaseHistory', itemId })); assert.equal(first.rows.length, 50); assert.equal(first.rows[0].cancelled, true); assert.equal(first.rows[1].returnedQuantity, 1);
+      const second = await masters(request({ action: 'purchaseHistory', itemId, cursor: first.nextCursor })); assert.equal(second.rows.length, 5); assert.equal(second.nextCursor, null);
+      assert.equal(new Set([...first.rows, ...second.rows].map(row => row.id)).size, 55);
+      await reject(masters(request({ action: 'purchaseHistory', itemId, cursor: 'missing' })), 'invalid-argument');
+      const member = await masters(request({ action: 'inventory', itemId }, 'member')); assert.equal(Object.hasOwn(member, 'averagePrice'), false);
+    });
     await t.test('preview only saves review/source; confirmation creates masters, opening ledger and balances exactly once', async () => {
       await reset(); const job = await preview(); assert.equal(job.preview.canCommit, true, JSON.stringify(job.preview.errors));
       assert.equal((await stock()).length, 0); assert.equal((await db.collection('companies/a/erpItems').get()).size, 0);

@@ -75,10 +75,37 @@ function createErpService({ db, now = () => new Date() }) {
     const data = request.data;
     if (!object(data)) fail('invalid-argument', '요청 형식을 확인해 주세요.');
     const action = data.action;
-    if (!['list', 'save', 'inventory'].includes(action)) fail('invalid-argument', '지원하지 않는 ERP 요청입니다.');
-    const user = await context(request, db, action === 'save');
+    if (!['list', 'save', 'inventory', 'purchaseHistory'].includes(action)) fail('invalid-argument', '지원하지 않는 ERP 요청입니다.');
+    const user = await context(request, db, action === 'save' || action === 'purchaseHistory');
     const companyId = user.companyId, canManage = user.role === 'ADMIN';
     const companyRef = db.collection('companies').doc(companyId);
+    if (action === 'purchaseHistory') {
+      if (Object.keys(data).some(key => !['action','companyId','itemId','cursor'].includes(key))) fail('invalid-argument', '입고 이력 요청을 확인해 주세요.');
+      const itemId = identifier(data.itemId);
+      return db.runTransaction(async tx => {
+        await context(request, tx, true);
+        const item = await tx.get(companyRef.collection('erpItems').doc(itemId));
+        if (!item.exists) fail('not-found', '품목을 찾을 수 없습니다.'); verifyTenant(item.data(), companyId);
+        let query = companyRef.collection('erpMovements').where('itemId', '==', itemId).orderBy('date','desc').orderBy('order','desc').orderBy('rowNo','desc').orderBy(FieldPath.documentId(),'desc');
+        if (data.cursor) {
+          const cursor = await tx.get(companyRef.collection('erpMovements').doc(identifier(data.cursor)));
+          if (!cursor.exists || cursor.data().itemId !== itemId) fail('invalid-argument', '이력 조회 위치를 확인해 주세요.');
+          verifyTenant(cursor.data(), companyId); query = query.startAfter(cursor);
+        }
+        const snapshots = await tx.get(query.limit(51)), scanned = snapshots.docs.slice(0,50);
+        scanned.forEach(doc => verifyTenant(doc.data(), companyId));
+        const receipts = scanned.filter(doc => doc.data().type === 'OPENING' || doc.data().type === 'MOVEMENTS' && doc.data().direction === '입고');
+        const links = receipts.length ? await tx.getAll(...receipts.map(doc => companyRef.collection('erpMovementLinks').doc(doc.id))) : [];
+        const rows = receipts.map((doc, i) => {
+          const row = doc.data(), link = links[i].data(); if (link) verifyTenant(link, companyId);
+          return { id: doc.id, date: row.date, documentNo: row.documentNo || '기초재고', warehouseName: row.warehouseName,
+            quantity: row.quantityScaled / 10000, price: row.priceScaled == null ? null : row.priceScaled / 10000, currency: row.currency,
+            priceBasis: row.priceBasis || '기초재고', value: row.value, costPerUnit: row.quantityScaled ? row.value * 10000 / row.quantityScaled : null,
+            cancelled: !!link?.cancelledBy, returnedQuantity: (link?.returnedQuantityScaled || 0) / 10000 };
+        });
+        return { rows, nextCursor: snapshots.size > 50 ? scanned.at(-1).id : null };
+      });
+    }
     if (action === 'inventory') {
       const itemId = identifier(data.itemId);
       return db.runTransaction(async tx => {
@@ -108,7 +135,7 @@ function createErpService({ db, now = () => new Date() }) {
         const value = current.role === 'ADMIN' && rows.length ? rows.reduce((sum, row) => sum + row.value, 0) : null;
         if (quantity !== null && !Number.isSafeInteger(Math.round(quantity * 10000)) || value !== null && !Number.isSafeInteger(value)) fail('failed-precondition', '재고 합계 범위를 확인해 주세요.');
         return { item: view('items', item.id, item.data(), current.role === 'ADMIN'), status: rows.length ? 'RECORDED' : 'UNINITIALIZED',
-          quantity, ...(current.role === 'ADMIN' ? { value, currency: 'KRW' } : {}), warehouses: rows, checkedAt: now().toISOString() };
+          quantity, ...(current.role === 'ADMIN' ? { value, averagePrice: quantity > 0 ? value / quantity : null, currency: 'KRW' } : {}), warehouses: rows, checkedAt: now().toISOString() };
       });
     }
     const kind = data.kind;

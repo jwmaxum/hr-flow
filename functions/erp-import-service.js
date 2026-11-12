@@ -2,9 +2,10 @@ const { authorizeContext, fail } = require('./security-context');
 const { erpMaster: master } = require('./erp-service');
 const { parseErpFile } = require('./erp-import-files');
 const { amounts, safe, round, SHEETS } = require('./erp-import-schema');
-const hash = value => master.hash(JSON.stringify(value));
+const { hash } = require('./erp-ledger-model');
+const { manualInput, parseManual } = require('./erp-manual-schema');
 const issue = (row, message, type) => ({ sheet: SHEETS[type], row, message });
-const publicSource = source => ({ name: source.name, size: source.size, sha256: source.sha256 });
+const publicSource = source => ({ kind: source.kind || 'XLSX', name: source.name, size: source.size, sha256: source.sha256 });
 function optionsOf(value = {}) {
   const names = ['defaultWarehouseId','warehouseByRow','partnerByRow','allowNewItems','allowNewPartners','acceptExistingItems'];
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !names.includes(key))) fail('invalid-argument', '매핑 설정을 확인해 주세요.');
@@ -46,10 +47,18 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
     const stateRef = parent.collection('erpState').doc('ledger'), stateDoc = await get(stateRef), state = stateDoc.data() || {};
     if (stateDoc.exists) scope(state);
     if (state.basisDate && state.basisDate !== job.basisDate) errors.push(issue(6, `회사에 확정된 기준일은 ${state.basisDate}입니다.`, job.type));
-    if (job.type === 'MOVEMENTS' && !state.basisDate) errors.push(issue(6, '먼저 기초재고를 확정해 회사의 기준일을 설정해 주세요.', job.type));
+    if (job.type === 'MOVEMENTS' && !state.basisDate) {
+      if (job.initializeEmptyLedger && job.source.kind === 'MANUAL' && job.rows.every(row => row.direction === '입고')) {
+        const [inventory, movements] = await Promise.all([tx.get(parent.collection('erpInventory').limit(1)), tx.get(parent.collection('erpMovements').limit(1))]);
+        if (!inventory.empty || !movements.empty) errors.push(issue(0, '기존 재고의 기준일을 먼저 확인해 주세요.', job.type));
+        else warnings.push(issue(0, `기존 재고가 없는 회사입니다. ${job.basisDate} 기준 재고 0에서 시작합니다. 이후 기초재고 추가는 제한됩니다.`, job.type));
+      } else errors.push(issue(6, '먼저 기초재고를 확정해 회사의 기준일을 설정해 주세요.', job.type));
+    }
     if (job.type === 'OPENING' && state.lastDate) errors.push(issue(6, '입출고가 시작된 회사는 기초재고를 추가할 수 없습니다.', job.type));
-    const receipt = await get(parent.collection('erpImportReceipts').doc(job.source.sha256));
-    if (receipt.exists) errors.push(issue(0, '이미 확정한 파일입니다. 업로드 이력에서 확인해 주세요.', job.type));
+    if (job.source.kind !== 'MANUAL') {
+      const receipt = await get(parent.collection('erpImportReceipts').doc(job.source.sha256));
+      if (receipt.exists) errors.push(issue(0, '이미 확정한 파일입니다. 업로드 이력에서 확인해 주세요.', job.type));
+    }
     const masters = new Map(), masterState = new Map(), stocks = new Map(), itemBalances = new Map(), candidatesByName = new Map(), documents = new Map(), seenOpening = new Set();
     const reserve = async (kind, id, values) => {
       for (const key of master.keys(kind, values)) {
@@ -183,6 +192,7 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
       previews.push(preview);
       try {
         const item = await itemFor(row), warehouse = await warehouseFor(row), partner = row.partner ? await partnerFor(row, preview) : null;
+        if (job.source.kind === 'MANUAL' && row.direction === '출고' && partner?.type === 'SUPPLIER') fail('invalid-argument', '출고 거래처는 매출처 또는 매입·매출처를 선택해 주세요.');
         const balance = await stockFor(item.id, warehouse.id), amount = amounts(row), key = `${item.id}:${warehouse.id}`;
         Object.assign(preview, { itemId: item.id, warehouseId: warehouse.id, warehouseName: warehouse.name, partnerName: partner?.name || '',
           partnerId: partner?.id || null, newItem: !!item.isNew, newPartner: !!partner?.isNew, beforeQuantity: balance.quantityScaled / 10000, beforeValue: balance.value, ...amount });
@@ -215,20 +225,31 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
         if (oldMovement.exists) fail('invalid-argument', '이미 반영된 원장 행입니다.');
         Object.assign(preview, { cost, afterQuantity: balance.quantityScaled / 10000, afterValue: balance.value });
         writes.set(movementRef.path, { ref: movementRef, data: { companyId, importId: job.id, ...row, itemId: item.id, warehouseId: warehouse.id,
-          partnerId: partner?.id || null, partnerName: partner?.name || '', warehouseName: warehouse.name, warehouseCode: warehouse.code,
+          sourceKind: job.source.kind || 'XLSX', partnerId: partner?.id || null, partnerName: partner?.name || '', warehouseName: warehouse.name, warehouseCode: warehouse.code,
           ...amount, cost, afterQuantity: preview.afterQuantity, afterValue: preview.afterValue, createdAt: job.createdAt, createdBy: job.createdBy } });
       } catch (error) { if (!['invalid-argument', 'failed-precondition'].includes(error.code)) throw error; errors.push(issue(row.sourceRow, error.message, job.type)); }
     }
     const balances = [...stocks.values()].map(b => ({ itemId: b.itemId, warehouseId: b.warehouseId, beforeQuantity: b.beforeQuantity, beforeValue: b.beforeValue, quantity: b.quantityScaled / 10000, value: b.value }));
-    const fingerprint = hash({ schema: 1, state, rows: previews, masters: [...masterState], source: job.source.sha256, options, errors });
-    return { preview: { fingerprint, rows: previews, errors, warnings, balances, canCommit: !errors.length && !!previews.length,
+    const itemTotals = job.source.kind === 'MANUAL' ? [...itemBalances].map(([itemId, snapshots]) => {
+      let quantity = 0n, value = 0n; const seen = new Set();
+      for (const snapshot of snapshots.docs) {
+        const b = snapshot.data(); scope(b);
+        if (seen.has(b.warehouseId) || !Number.isFinite(b.quantity) || b.quantity < 0 || !Number.isSafeInteger(Math.round(b.quantity * 10000)) || Math.abs(b.quantity * 10000 - Math.round(b.quantity * 10000)) > 0.001 || !Number.isSafeInteger(b.value) || b.value < 0 || b.currency !== 'KRW') fail('failed-precondition', '품목 전체 재고 집계를 확인해 주세요.');
+        seen.add(b.warehouseId); quantity += BigInt(Math.round(b.quantity * 10000)); value += BigInt(b.value);
+      }
+      const beforeQuantity = safe(quantity, '수량') / 10000, beforeValue = safe(value);
+      for (const b of balances.filter(row => row.itemId === itemId)) { quantity += BigInt(Math.round(b.quantity * 10000)) - BigInt(Math.round(b.beforeQuantity * 10000)); value += BigInt(b.value - b.beforeValue); }
+      return { itemId, beforeQuantity, beforeValue, quantity: safe(quantity, '수량') / 10000, value: safe(value) };
+    }) : [];
+    const fingerprint = hash({ schema: 2, state, rows: previews, masters: [...masterState], source: job.source.sha256, options, errors, itemTotals });
+    return { preview: { fingerprint, rows: previews, errors, warnings, balances, itemTotals, canCommit: !errors.length && !!previews.length,
       newItems: [...masters.values()].filter(r => r.isNew && r.unit).length, newPartners: [...masters.values()].filter(r => r.isNew && r.country).length },
       writes, stocks, documents, state, stateRef, last: sorted.at(-1) };
   }
   return async request => {
     const input = request.data;
-    if (!input || typeof input !== 'object' || !['preview','get','list','commit','cancel','downloadSource','template'].includes(input.action)) fail('invalid-argument', '업로드 요청을 확인해 주세요.');
-    const fields = { preview: ['id','type','source','options'], get: ['id'], list: [], commit: ['id','fingerprint'], cancel: ['id'], downloadSource: ['id'], template: ['type'] };
+    if (!input || typeof input !== 'object' || !['manualPreview','preview','get','list','commit','cancel','downloadSource','template'].includes(input.action)) fail('invalid-argument', '업로드 요청을 확인해 주세요.');
+    const fields = { manualPreview: ['id','movement'], preview: ['id','type','source','options'], get: ['id'], list: [], commit: ['id','fingerprint'], cancel: ['id'], downloadSource: ['id'], template: ['type'] };
     if (Object.keys(input).some(key => !['action','companyId',...fields[input.action]].includes(key))) fail('invalid-argument', '허용된 업로드 요청 필드만 사용해 주세요.');
     const user = await context(request), parent = db.collection('companies').doc(user.companyId), collection = parent.collection('erpImports');
     if (input.action === 'template') {
@@ -239,9 +260,31 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
     }
     if (input.action === 'list') return db.runTransaction(async tx => {
       await context(request, tx); const snapshots = await tx.get(collection.orderBy('createdAt', 'desc').limit(50));
-      return { imports: snapshots.docs.map(doc => { const job = doc.data(); master.verifyTenant(job, user.companyId); return { id: doc.id, type: job.type, status: job.status, name: job.source.name, createdAt: job.createdAt, rowCount: job.rows.length, errorCount: job.preview.errors.length }; }) };
+      return { imports: snapshots.docs.map(doc => { const job = doc.data(); master.verifyTenant(job, user.companyId); return { id: doc.id, type: job.type, sourceKind: job.source.kind || 'XLSX', status: job.status, name: job.source.name, createdAt: job.createdAt, rowCount: job.rows.length, errorCount: job.preview.errors.length }; }) };
     });
     const id = master.identifier(input.id), ref = collection.doc(id);
+    if (input.action === 'manualPreview') {
+      const requestHash = manualInput(input.movement), movement = input.movement;
+      return db.runTransaction(async tx => {
+        await context(request, tx); const existing = await tx.get(ref);
+        if (existing.exists) {
+          const old = existing.data(); master.verifyTenant(old, user.companyId);
+          if (old.source.kind !== 'MANUAL' || old.requestHash !== requestHash) fail('already-exists', '입력 내용이 변경되었습니다. 새로 검증해 주세요.');
+          return { import: expose(id, old) };
+        }
+        const stateDoc = await tx.get(parent.collection('erpState').doc('ledger')), state = stateDoc.data() || {};
+        if (stateDoc.exists) master.verifyTenant(state, user.companyId);
+        const basisDate = state.basisDate || new Date(new Date(`${movement.date}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0,10);
+        const order = state.lastDate === movement.date ? state.lastOrder + 1 : 1;
+        const parsed = parseManual(movement, { basisDate, order, documentNo: `MAN-${id.length <= 76 ? id : master.hash(id)}`, companyLabel: '직접 입력' });
+        const options = optionsOf({ defaultWarehouseId: movement.warehouseId, partnerByRow: Object.fromEntries(parsed.rows.filter(() => movement.partnerId).map(row => [row.sourceRow, movement.partnerId])), allowNewItems: movement.allowNewItems, allowNewPartners: movement.allowNewPartners });
+        const job = { ...parsed, id, companyId: user.companyId, requestHash, initializeEmptyLedger: !state.basisDate && movement.direction === '입고',
+          status: 'PENDING', options, createdBy: user.uid, createdAt: now().toISOString(), source: { kind: 'MANUAL', name: `${movement.direction} 직접 등록`, size: 0, sha256: requestHash } };
+        job.preview = (await plan(tx, parent, job)).preview;
+        if (Buffer.byteLength(JSON.stringify(job)) > 850000) fail('resource-exhausted', '입력 행을 나눠 주세요.');
+        tx.create(ref, job); return { import: expose(id, job) };
+      });
+    }
     if (input.action === 'preview') {
       const options = optionsOf(input.options), parsed = await parseFile(input.source, input.type);
       const { buffer, ...data } = parsed;
@@ -258,7 +301,7 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
         await context(request, tx); const existing = await tx.get(ref);
         if (existing.exists) {
           const old = existing.data(); master.verifyTenant(old, user.companyId);
-          if (old.source.sha256 !== job.source.sha256 || JSON.stringify(old.options) !== JSON.stringify(options) || old.type !== job.type) fail('already-exists', '업로드 식별값이 이미 사용 중입니다. 새로 검증해 주세요.');
+          if (old.source.kind === 'MANUAL' || old.source.sha256 !== job.source.sha256 || hash(old.options) !== hash(options) || old.type !== job.type) fail('already-exists', '업로드 식별값이 이미 사용 중입니다. 새로 검증해 주세요.');
           return { import: expose(id, old) };
         }
         job.preview = (await plan(tx, parent, job)).preview;
@@ -269,6 +312,7 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
     if (input.action === 'downloadSource') {
       const snap = await ref.get(), job = snap.data(); if (!snap.exists) fail('not-found', '업로드 자료를 찾을 수 없습니다.');
       master.verifyTenant(job, user.companyId);
+      if (job.source.kind === 'MANUAL') fail('failed-precondition', '직접 등록한 거래는 원본 Excel 파일이 없습니다. 등록 이력과 원장에서 확인해 주세요.');
       if (job.source.storagePath !== `companies/${user.companyId}/erp-sources/${id}/${job.source.sha256}.xlsx` || !/^[a-f0-9]{64}$/.test(job.source.sha256) || !/^\d+$/.test(job.source.generation)) fail('failed-precondition', '원본 파일의 회사 경로를 확인해 주세요.');
       const [bytes] = await bucket.file(job.source.storagePath, { generation: job.source.generation }).download();
       if (bytes.length !== job.source.size || master.hash(bytes) !== job.source.sha256) fail('failed-precondition', '원본 파일의 무결성을 확인하지 못했습니다.');
@@ -296,8 +340,8 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
         quantity: balance.quantityScaled / 10000, value: balance.value, currency: 'KRW', openingImportId: balance.openingImportId, updatedAt: timestamp, importId: id });
       tx.set(fresh.stateRef, { companyId: user.companyId, basisDate: job.basisDate, revision: (fresh.state.revision || 0) + 1,
         lastDate: job.type === 'MOVEMENTS' ? fresh.last.date : null, lastOrder: job.type === 'MOVEMENTS' ? fresh.last.order : null, updatedAt: timestamp });
-      tx.create(parent.collection('erpImportReceipts').doc(job.source.sha256), { companyId: user.companyId, importId: id, at: timestamp });
-      tx.create(parent.collection('erpAudit').doc(), { companyId: user.companyId, actorId: user.uid, action: 'IMPORT_COMMIT', importId: id, type: job.type, rowCount: job.rows.length, at: timestamp });
+      if (job.source.kind !== 'MANUAL') tx.create(parent.collection('erpImportReceipts').doc(job.source.sha256), { companyId: user.companyId, importId: id, at: timestamp });
+      tx.create(parent.collection('erpAudit').doc(), { companyId: user.companyId, actorId: user.uid, action: job.source.kind === 'MANUAL' ? 'MANUAL_MOVEMENT_COMMIT' : 'IMPORT_COMMIT', importId: id, type: job.type, rowCount: job.rows.length, at: timestamp });
       const patch = { status: 'COMMITTED', committedAt: timestamp, committedBy: user.uid };
       tx.update(ref, patch); return { import: expose(id, { ...job, ...patch }), idempotent: false };
     });

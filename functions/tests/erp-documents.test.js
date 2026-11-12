@@ -71,6 +71,22 @@ async function inventory() {
 }
 
 test('ERP PDF issuance, source allocation and private archive', async t => { try {
+  await t.test('a manual outgoing transaction issues a statement with its sales price and the registered seal', async () => {
+    const existing = await reset();
+    const movement = { direction: '출고', date: '2026-11-12', warehouseId: 'warehouse', partnerId: existing.partnerId,
+      currency: 'KRW', exchangeRate: '1', priceBasis: '세금포함', allowNewItems: false, allowNewPartners: false,
+      lines: [{ code: '0001', name: '합성 품목', specification: '규격', unit: 'EA', taxType: '과세', quantity: '2', price: '440', notes: '' }] };
+    const job = (await imports(request({ action: 'manualPreview', id: 'manual-statement', movement }))).import;
+    assert.equal(job.preview.canCommit, true, JSON.stringify(job.preview.errors));
+    await imports(request({ action: 'commit', id: job.id, fingerprint: job.preview.fingerprint }));
+    const source = await call('sources', { documentNo: job.preview.rows[0].documentNo, kind: 'STATEMENT' });
+    const before = await inventory();
+    const draft = await save(input({ ...source, sourceId: source.rows[0].id }, 'STATEMENT', '2'));
+    const issued = (await issue(draft)).document;
+    assert.equal(issued.status, 'ISSUED'); assert.equal(issued.totalMinor, 880); assert.equal(issued.pdfReady, true);
+    const stored = (await parent().collection('erpIssuedDocuments').doc(issued.id).get()).data();
+    assert.ok(stored.snapshot.branding.assets.seal); assert.deepEqual(await inventory(), before);
+  });
   await t.test('three document types reserve independent numbers, freeze the registered seal and never mutate inventory', async () => {
     const source = await reset(), before = await inventory();
     for (const [kind, prefix] of [['PROFORMA', 'PI'], ['INVOICE', 'INV'], ['STATEMENT', 'TS']]) {
