@@ -12,7 +12,7 @@ export function ErpSettlementPanel({companyId, refreshKey}: {companyId: string; 
   const [input,setInput] = useState<SettlementInput>({type:'ALLOCATE',date:erpToday(),notes:'',receiptId:'',lines:[]});
   const [job,setJob] = useState<SettlementJob | null>(null), [confirmed,setConfirmed] = useState(false);
   const live=useRef(true),lock=useRef(false),attempt=useRef(crypto.randomUUID());
-  useEffect(()=>{live.current=true;setBusy(true);void api.settlements(companyId,erpToday()).then(r=>{if(live.current){setReport(r);setAsOf(r.asOf);setJob(null);setConfirmed(false);attempt.current=crypto.randomUUID();}}).catch(e=>{if(live.current)setError(getErrorMessage(e));}).finally(()=>{if(live.current)setBusy(false);});return()=>{live.current=false;};},[companyId,refreshKey]);
+  useEffect(()=>{let active=true;live.current=true;setBusy(true);void api.settlements(companyId,erpToday()).then(r=>{if(active){setReport(r);setAsOf(r.asOf);setJob(null);setConfirmed(false);attempt.current=crypto.randomUUID();}}).catch(e=>{if(active)setError(getErrorMessage(e));}).finally(()=>{if(active)setBusy(false);});return()=>{active=false;live.current=false;};},[companyId,refreshKey]);
   function change(patch: Partial<SettlementInput>) {setInput(v=>({...v,...patch}));setJob(null);setConfirmed(false);setError('');attempt.current=crypto.randomUUID();}
   async function run(work:()=>Promise<void>){if(busy||lock.current)return;lock.current=true;setBusy(true);setError('');try{await work();}catch(e){if(live.current)setError(getErrorMessage(e));}finally{lock.current=false;if(live.current)setBusy(false);}}
   async function query(){const r=await api.settlements(companyId,asOf);if(live.current)setReport(r);}

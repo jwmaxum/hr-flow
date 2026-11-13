@@ -10,7 +10,7 @@ export function ErpPaymentPanel({companyId,refreshKey,onPosted}:{companyId:strin
   const [data,setData]=useState<SettlementReport|null>(null),[input,setInput]=useState<PaymentInput|null>(null),[job,setJob]=useState<PaymentJob|null>(null);
   const [busy,setBusy]=useState(true),[error,setError]=useState(''),[confirm,setConfirm]=useState(false);
   const live=useRef(true),lock=useRef(false),attempt=useRef(crypto.randomUUID()),editor=useRef<HTMLHeadingElement>(null);
-  useEffect(()=>{live.current=true;setBusy(true);void api.settlements(companyId,dateRef.current).then(r=>{if(live.current)setData(r);}).catch(e=>{if(live.current)setError(getErrorMessage(e));}).finally(()=>{if(live.current)setBusy(false);});return()=>{live.current=false;};},[companyId,refreshKey]);
+  useEffect(()=>{let active=true;live.current=true;setBusy(true);void api.settlements(companyId,dateRef.current).then(r=>{if(active)setData(r);}).catch(e=>{if(active)setError(getErrorMessage(e));}).finally(()=>{if(active)setBusy(false);});return()=>{active=false;live.current=false;};},[companyId,refreshKey]);
   function change(patch:Partial<PaymentInput>){setInput(v=>v?{...v,...patch}:null);setJob(null);setConfirm(false);setError('');attempt.current=crypto.randomUUID();}
   async function run(work:()=>Promise<void>){if(busy||lock.current)return;setBusy(true);lock.current=true;setError('');try{await work();}catch(e){if(live.current)setError(getErrorMessage(e));}finally{lock.current=false;if(live.current)setBusy(false);}}
   async function query(){const r=await api.settlements(companyId,dateRef.current);if(live.current)setData(r);}

@@ -653,6 +653,9 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   const docNo = (await call('manageErpImport', {action: 'list'})).imports.find(j => j.sourceKind === 'MANUAL').id;
   const saleJob = await call('manageErpImport', {action: 'get', id: docNo}); const sources = await call('manageErpDocuments', {action: 'sources', documentNo: saleJob.import.preview.rows[0].documentNo, kind: 'STATEMENT'});
   expect(sources.rows).toHaveLength(1); expect(sources.rows[0].name).toBe('검증 조합');
+  // A report from before collection must not clear a later terms preview.
+  let releaseOldSettlement,holdInitialReports=true;const heldReports=[],oldSettlement=new Promise(resolve=>{releaseOldSettlement=resolve;});
+  await page.route('**/manageErpFinance',async route=>{const action=route.request().postDataJSON()?.data?.action;if(action==='commit')holdInitialReports=false;if(action==='settlementReport'&&holdInitialReports){const work=(async()=>{const response=await route.fetch();await oldSettlement;await route.fulfill({response});})();heldReports.push(work);await work;}else await route.fallback();});
   await page.getByRole('button', {name: '미수금·수금', exact: true}).click();
   const receivables = page.getByRole('region', {name: '거래처별 미수금', exact: true}); await expect(receivables.getByRole('cell', {name: '1,100', exact: true}).first()).toBeVisible({timeout: 65000});
   await receivables.getByRole('button', {name: '수금 등록', exact: true}).click(); const collection = page.getByRole('region', {name: '수금 등록', exact: true});
@@ -676,7 +679,8 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   await settlements.getByLabel('배분·기일 처리 사유 *', {exact: true}).fill('약정 지급기일 확인');
   await settlements.getByRole('button', {name: '배분·기일 검증·미리보기', exact: true}).click();
   await settlements.getByRole('checkbox', {name:'문서·금액·적용일을 확인했습니다.',exact:true}).check();
-  await settlements.getByRole('button', {name:'배분·기일 확정',exact:true}).click();
+  expect(heldReports.length).toBeGreaterThan(0);releaseOldSettlement();await Promise.all(heldReports);await expect(settlements.getByRole('checkbox',{name:'문서·금액·적용일을 확인했습니다.',exact:true})).toBeChecked();
+  await settlements.getByRole('button', {name:'배분·기일 확정',exact:true}).click({timeout:30000});
   await expect(settlements.getByText('배분·지급기일 반영 완료',{exact:true})).toBeVisible({timeout:65000});
   await settlements.getByLabel('연체 조회 기준일',{exact:true}).fill('2026-11-13');
   await settlements.getByRole('button',{name:'문서 잔액 조회',exact:true}).click();
