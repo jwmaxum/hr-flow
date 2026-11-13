@@ -18,8 +18,10 @@ import { getRoleDisplayName } from '../utils/roleDisplay';
 import { getErrorCode, getErrorMessage } from '../utils/errors';
 import { calculateLeaveEntitlement } from '../utils/leaveCalculator';
 import './EmployeeManagement.css';
+import {ErpEmployeeAccess} from '../components/ErpEmployeeAccess';
 
 interface Employee {
+  erpAccess?: string;
   uid: string;
   name: string;
   email: string;
@@ -617,6 +619,7 @@ export const EmployeeManagement: React.FC = () => {
             </div>
 
             <div className="personnel-modal-body">
+              {(()=>{const employee=employees.find(e=>e.uid===selectedEmpRecords.emp.uid);return employee&&userData?.companyId?<ErpEmployeeAccess key={`${userData.companyId}:${employee.uid}:${employee.erpAccess}:${employee.role}:${employee.status}`} companyId={userData.companyId} uid={employee.uid} role={employee.role} currentAccess={employee.erpAccess} active={(employee.status||'ACTIVE')==='ACTIVE'} canManage={isAdmin}/>:null;})()}
               <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-300">
                   <div className="personnel-form-grid">
                     <div className="space-y-2">

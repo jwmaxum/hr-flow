@@ -8,6 +8,7 @@ import {
 } from '../services/officialNotificationService';
 import type { OfficialNotification } from '../services/officialNotificationService';
 import {ErpApprovalAlert} from './ErpApprovalAlert';
+import {ErpClosingAlert} from './ErpClosingAlert';
 
 interface NotificationBellProps {
   currentUserId: string;
@@ -262,5 +263,5 @@ export function NotificationBell(props: NotificationBellProps) {
   const companyId = userData?.uid === props.currentUserId && recipientRole && userData.status !== 'RESIGNED'
     ? userData.companyId : '';
   // A different company/account/role gets a new state tree before effects run.
-  return <>{sessionReady&&recipientRole==='ADMIN'&&companyId&&<ErpApprovalAlert key={`${props.currentUserId}:${companyId}`} companyId={companyId} onNavigate={props.onNavigate}/>}<NotificationInbox key={`${props.currentUserId}:${companyId}:${recipientRole}`} {...props} companyId={companyId} recipientRole={recipientRole || 'MEMBER'} /></>;
+  return <>{sessionReady&&companyId&&(recipientRole==='ADMIN'||['VIEW','INBOUND','OUTBOUND','BOTH'].includes(userData?.erpAccess||''))&&<ErpClosingAlert key={`closing:${props.currentUserId}:${companyId}:${userData?.erpAccess}`} companyId={companyId} onNavigate={props.onNavigate}/>} {sessionReady&&recipientRole==='ADMIN'&&companyId&&<ErpApprovalAlert key={`${props.currentUserId}:${companyId}`} companyId={companyId} onNavigate={props.onNavigate}/>}<NotificationInbox key={`${props.currentUserId}:${companyId}:${recipientRole}`} {...props} companyId={companyId} recipientRole={recipientRole || 'MEMBER'} /></>;
 }

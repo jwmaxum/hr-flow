@@ -28,7 +28,7 @@ export interface PurchaseHistory {
 }
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErp');
 async function call<T>(companyId: string, action: string, data: Record<string, unknown>): Promise<T> {
-  const write = 'operator' as const;
+  const write = action === 'save' ? 'operator' as const : false;
   const expected = erpScope(companyId, write), result = await callable({ ...data, companyId, action });
   if (erpScope(companyId, write) !== expected) throw new Error('로그인 사용자 또는 회사 권한이 변경되었습니다.');
   return result.data as T;

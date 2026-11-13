@@ -2,7 +2,11 @@ const { authorizeContext, fail } = require('./security-context');
 const { createHash } = require('node:crypto');
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
 const digest = value => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-const accessOf = user => user.role === 'ADMIN' ? 'ADMIN' : ['INBOUND','OUTBOUND','BOTH'].includes(user.erpAccess) ? user.erpAccess : 'NONE';
+const accessOf = user => user.role === 'ADMIN' ? 'ADMIN' : ['VIEW','INBOUND','OUTBOUND','BOTH'].includes(user.erpAccess) ? user.erpAccess : 'NONE';
+function requireAction(user,domain,action){
+  const reads={master:['list','inventory','purchaseHistory'],report:['meta','report','export']};
+  if(accessOf(user)==='VIEW'&&!reads[domain]?.includes(action))fail('permission-denied','ERP 조회 전용 권한입니다. 등록·수정·취소는 담당 권한과 ADMIN 승인이 필요합니다.');
+}
 function requireDirection(user, direction) {
   const access = accessOf(user);
   if (access !== 'ADMIN' && access !== 'BOTH' && access !== (direction === '입고' ? 'INBOUND' : direction === '출고' ? 'OUTBOUND' : 'INVALID')) fail('permission-denied','지정된 입고·출고 담당 업무만 처리할 수 있습니다.');
@@ -14,6 +18,7 @@ async function authorizeErp(args) {
 }
 async function checkImport(user, input, job) {
   if (user.role === 'ADMIN') return;
+  if(accessOf(user)==='VIEW')fail('permission-denied','조회 전용 사용자는 입출고를 등록할 수 없습니다.');
   if (!['manualPreview','commit','get','cancel'].includes(input.action)) fail('permission-denied','담당자는 입고·출고 직접 등록을 이용해 주세요. Excel·기초재고 관리는 ADMIN 업무입니다.');
   if (input.action === 'manualPreview') {
     requireDirection(user,input.movement?.direction);
@@ -26,6 +31,7 @@ async function checkImport(user, input, job) {
 }
 async function checkCorrection(user, input, tx, parent) {
   if (user.role === 'ADMIN') return;
+  if(accessOf(user)==='VIEW')fail('permission-denied','조회 전용 사용자는 변경을 요청할 수 없습니다.');
   if (input.type === 'TRANSFER') {if(accessOf(user)!=='BOTH')fail('permission-denied','창고 이동은 입출고 전체 담당 권한이 필요합니다.');return;}
   if (['COUNT','VALUE'].includes(input.type)) return; // Always queued for ADMIN approval.
   const source = await tx.get(parent.collection('erpMovements').doc(input.sourceId));
@@ -41,11 +47,12 @@ const timed = new Set(['erpMovements','erpReceipts','erpSettlements','erpDocumen
 function governedService(factory, domain) {
   return dependencies => async request => {
     const {db, now=()=>new Date()}=dependencies;
-    await authorizeErp({db,request,now});
+    requireAction(await authorizeErp({db,request,now}),domain,request.data?.action);
     const proxy = new Proxy(db, {get(target,key) {
       if(key !== 'runTransaction') {const value=target[key];return typeof value==='function'?value.bind(target):value;}
       return callback => db.runTransaction(async tx=>{
         const user=await authorizeErp({db,request,reader:tx,now});
+        requireAction(user,domain,request.data?.action);
         const parent=db.collection('companies').doc(user.companyId), stateRef=parent.collection('erpGovernance').doc('control');
         const stateDoc=await tx.get(stateRef),state=stateDoc.data()||{companyId:parent.id,revision:0,closedThrough:'',lastClosedMonth:''};
         if(state.companyId!==parent.id)fail('failed-precondition','회사 마감 상태를 확인해 주세요.');
@@ -85,7 +92,7 @@ function governedService(factory, domain) {
           const doc=await tx.get(approvalRef),a=doc.data();
           if(!a||a.companyId!==parent.id||a.status!=='PENDING'||digest(a.request)!==digest(request.data))fail('failed-precondition','승인 대기 요청을 다시 조회해 주세요.');
           const requester=await tx.get(db.collection('UserProfile').doc(a.requestedBy));
-          if(!requester.exists||requester.data().companyId!==parent.id||(requester.data().status||'ACTIVE')!=='ACTIVE'||accessOf(requester.data())==='NONE')fail('permission-denied','요청자의 ERP 권한이 해제되었습니다. 요청을 반려해 주세요.');
+          if(!requester.exists||requester.data().companyId!==parent.id||(requester.data().status||'ACTIVE')!=='ACTIVE'||['NONE','VIEW'].includes(accessOf(requester.data())))fail('permission-denied','요청자의 ERP 업무 권한이 해제되었습니다. 요청을 반려해 주세요.');
           if(domain==='correction')await checkCorrection({...requester.data(),uid:a.requestedBy},result.correction.input,tx,parent);
           tx.update(approvalRef,{status:'APPROVED',decidedAt:at,decidedBy:user.uid,decisionReason:approval.reason});
         }

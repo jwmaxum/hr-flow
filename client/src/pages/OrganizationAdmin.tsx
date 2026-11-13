@@ -17,6 +17,7 @@ import { getEmployeeLoginDomain, getEmployeeLoginEmail } from '../utils/employee
 import { getRoleDisplayName } from '../utils/roleDisplay';
 import { getErrorMessage } from '../utils/errors';
 import './OrganizationAdmin.css';
+import {ErpEmployeeAccess} from '../components/ErpEmployeeAccess';
 
 interface Division {
   id: string;
@@ -32,6 +33,8 @@ interface Team {
 }
 
 interface Employee {
+  erpAccess?: string;
+  status?: string;
   uid: string;
   name: string;
   email: string;
@@ -830,7 +833,7 @@ export const OrganizationAdmin: React.FC = () => {
       {/* 역할/팀 수정 모달 */}
       {showEditModal && editingEmployee && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
-          <div role="dialog" aria-modal="true" aria-label={`${editingEmployee.name} 정보 수정`} className="bg-white rounded-[3rem] p-12 w-full max-w-lg shadow-2xl animate-modal-pop">
+          <div role="dialog" aria-modal="true" aria-label={`${editingEmployee.name} 정보 수정`} className="bg-white rounded-[3rem] p-5 sm:p-8 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-2xl animate-modal-pop">
             <h2 className="text-2xl font-black text-slate-900 mb-6">{editingEmployee.name} 정보 수정</h2>
             <div className="space-y-6">
                <div className="space-y-2">
@@ -858,6 +861,7 @@ export const OrganizationAdmin: React.FC = () => {
                     <option value="ADMIN" disabled={editingEmployee.uid === companyData?.adminUid}>{editingEmployee.uid === companyData?.adminUid ? '회사 대표 가입자 (SUPER_ADMIN)' : '회사 관리자 (ADMIN)'}</option>
                   </select>
                 </div>
+               {(()=>{const employee=employees.find(e=>e.uid===editingEmployee.uid);return employee&&userData?.companyId?<><p className="text-sm text-slate-500">HR 역할 변경 시 먼저 상태를 저장한 뒤 ERP 옵션을 지정해 주세요.</p><ErpEmployeeAccess key={`${userData.companyId}:${employee.uid}:${employee.erpAccess}:${employee.role}:${employee.status}`} companyId={userData.companyId} uid={employee.uid} role={employee.role} currentAccess={employee.erpAccess} active={(employee.status||'ACTIVE')==='ACTIVE'} canManage={userData.role==='ADMIN'&&employee.role===editingEmployee.role}/></>:null;})()}
                <button onClick={() => handleUpdateRole(editingEmployee, editingEmployee.teamId || '', editingEmployee.role)} className="w-full p-5 text-white bg-indigo-600 rounded-2xl font-black shadow-lg">상태 저장하기</button>
                <button onClick={() => setShowEditModal(false)} className="w-full p-4 text-slate-400 font-bold">닫기</button>
             </div>

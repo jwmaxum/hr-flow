@@ -185,3 +185,8 @@
 .erp-archived-checklist { margin-top:12px;overflow-wrap:anywhere; }
 .erp-archived-checklist summary { cursor:pointer; }
 .erp-archived-checklist li { margin:8px 0; }
+.erp-plan-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.erp-plan-list button { white-space: normal; text-align: left; }
+.erp-plan-overdue { border-color: #be123c; color: #9f1239; }
+.erp-plan-tasks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.erp-plan-tasks article { overflow-wrap: anywhere; }

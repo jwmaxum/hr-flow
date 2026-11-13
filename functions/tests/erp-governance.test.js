@@ -126,4 +126,41 @@ test('ERP monthly close, approval and delegation invariants',async t=>{try{
     const original=bucket.file;bucket.file=(path,version)=>{const file=original(path,version),download=file.download;file.download=async()=>{const result=await download();await db.doc('UserProfile/admin').update({role:'MEMBER'});return result;};return file;};
     try{await deny(call('evidenceDownload',{month,id}));}finally{bucket.file=original;await db.doc('UserProfile/admin').update({role:'ADMIN'});}
   });
+
+  const planInput=(extra={})=>({month:'2026-11',revision:0,dueDate:'2026-12-19',ownerUid:'member',notes:'월말 대사',reason:'마감 담당자 지정',items:require('../erp-close-checklist').CHECKS.map(([key])=>({key,assigneeUid:'member'})),...extra});
+  async function uncheck(){const d=(await call('checklistGet',{month:'2026-11'})).checklist;await call('checklistSave',{month:d.month,revision:d.revision,items:d.items.map(({key,note})=>({key,note,checked:false})),noEvidenceReason:'자체 대사 완료 후 확인 예정'});}
+  await t.test('VIEW grants are independent of HR role and deny all writes including stale approval requests',async()=>{
+    await reset();await grant('member','VIEW');assert.equal((await db.doc('UserProfile/member').get()).data().role,'MEMBER');assert.equal((await call('status',{},'member')).access,'VIEW');assert.equal((await masters(req({action:'inventory',itemId:'item'},'member'))).quantity,2);
+    const reports=require('../erp-report-service').createErpReportService(deps);assert.ok(await reports(req({action:'meta'},'member')));
+    await deny(masters(req({action:'save',kind:'items',id:'new',expectedRevision:0,values},'member')));await deny(correction('VALUE','member'));await deny(previewMove('입고','member'));await deny(call('approvalAlerts',{},'member'));await deny(call('directory',{},'member'));
+    await grant('member','BOTH');const job=await previewMove('입고','member'),edit=await masters(req({action:'save',kind:'items',id:'item',expectedRevision:1,values:{...values,purchasePrice:333}},'member'));
+    await grant('member','VIEW');await deny(commitMove(job,'member'));await deny(call('decide',{id:edit.approvalId,decision:'APPROVE',reason:'조회 전용 변경 이후 승인 시도'}));assert.equal((await docs('erpInventory'))[0].quantity,2);
+    await db.doc('UserProfile/admin').update({erpAccess:'NONE'});assert.equal((await call('status')).access,'ADMIN');
+  });
+  await t.test('closing plans validate active same-company ERP assignees and use audited revisions',async()=>{
+    await reset();await uncheck();await deny(call('closePlanSave',planInput()),'failed-precondition');await grant('member','VIEW');
+    await deny(call('closePlanSave',planInput(),'member'));await deny(call('closePlanSave',planInput({ownerUid:'foreign'})),'failed-precondition');await deny(call('closePlanSave',planInput({dueDate:'2026-11-30'})),'invalid-argument');await deny(call('closePlanSave',planInput({items:[null,null,null,null,null]})),'invalid-argument');
+    const p=(await call('closePlanSave',planInput())).plan;assert.equal(p.revision,1);assert.equal(p.overdue,true);assert.equal(p.pendingCount,5);await deny(call('closePlanSave',planInput()),'aborted');
+    assert.equal((await call('closePlanGet',{month:p.month},'member')).plan.ownerUid,'member');await deny(call('closePlanGet',{month:p.month},'foreign','a'));assert.equal((await call('closePlans',{},'foreign','b')).plans.length,0);
+    const changed=(await call('closePlanSave',planInput({revision:p.revision,notes:'일정 메모 정정'}))).plan;assert.equal(changed.revision,2);assert.ok((await docs('erpChangeHistory')).some(h=>h.action==='CLOSE_PLAN_SAVED'&&h.changes[0].before?.revision===1&&h.changes[0].after.revision===2));
+    await db.doc('UserProfile/member').update({status:'RESIGNED'});await deny(call('closePlanSave',planInput({revision:changed.revision})),'failed-precondition');
+  });
+  await t.test('assigned users append completion reports without final checklist changes and only ADMIN can reset',async()=>{
+    await reset();await uncheck();await grant('member','VIEW');await grant('manager','BOTH');let p=(await call('closePlanSave',planInput())).plan;
+    assert.deepEqual((await call('closeAlerts',{},'member')).pendingCount,1);assert.equal((await call('closeAlerts',{},'member')).overdueCount,1);assert.equal((await call('closeAlerts',{},'manager')).pendingCount,0);
+    await deny(call('closeTaskSubmit',{month:p.month,revision:p.revision,key:'INVENTORY',note:'다른 담당자 보고'},'manager'));
+    p=(await call('closeTaskSubmit',{month:p.month,revision:p.revision,key:'INVENTORY',note:'재고 실사 대사 완료'},'member')).plan;assert.equal(p.myPendingCount,4);assert.equal(p.items[0].submission.by,'member');assert.equal((await call('checklistGet',{month:p.month})).checklist.items[0].checked,false);const submitted=(await docs('erpChangeHistory')).find(r=>r.action==='CLOSE_TASK_SUBMITTED');assert.equal(submitted.actorId,'member');assert.equal(submitted.approvedBy,null);
+    await deny(call('closeTaskSubmit',{month:p.month,revision:p.revision,key:'INVENTORY',note:'보고 내용 수정'},'member'),'failed-precondition');await deny(call('closeTaskReset',{month:p.month,revision:p.revision,key:'INVENTORY',reason:'직원 직접 초기화'},'member'));
+    p=(await call('closeTaskReset',{month:p.month,revision:p.revision,key:'INVENTORY',reason:'ADMIN 재검토 요청'})).plan;assert.equal(p.items[0].submission,null);assert.equal(p.myPendingCount,0);
+    for(const item of p.items){p=(await call('closeTaskSubmit',{month:p.month,revision:p.revision,key:item.key,note:'담당자 점검 완료'},'member')).plan;}
+    assert.equal((await call('closeAlerts',{},'member')).pendingCount,0);assert.equal((await call('closeAlerts')).pendingCount,1);await completeChecklist();assert.equal((await call('closePlanGet',{month:p.month})).plan.actionCount,1);
+    await grant('member','NONE');await deny(call('closeAlerts',{},'member'));
+  });
+  await t.test('close archives freeze plans, reopen resets reports, and changes during rendering abort atomically',async()=>{
+    await reset();await uncheck();await grant('member','BOTH');let p=(await call('closePlanSave',planInput())).plan;p=(await call('closeTaskSubmit',{month:p.month,revision:p.revision,key:'INVENTORY',note:'창고 실사 완료'},'member')).plan;await completeChecklist();
+    const archive=(await close(await closePreview())).archive;assert.equal(archive.plan.items[0].submission.by,'member');assert.equal((await call('closeAlerts')).pendingCount,0);await deny(call('closePlanSave',planInput({revision:p.revision})),'failed-precondition');
+    const book=await require('read-excel-file/node').default(Buffer.from((await call('download',{id:archive.id,fileIndex:0})).base64,'base64'));assert.equal(book.find(s=>s.sheet==='마감 일정 담당자').data[1][1],'member');
+    await call('reopen',{month:p.month,revision:(await call('status')).state.revision,reason:'마감 일정 재검토'});p=(await call('closePlanGet',{month:p.month})).plan;assert.equal(p.status,'OPEN');assert.ok(p.items.every(r=>r.submission===null));assert.equal((await call('archives')).archives[0].plan.items[0].submission.by,'member');assert.equal((await call('closeAlerts',{},'member')).pendingCount,1);
+    await completeChecklist();renderHook=async()=>{renderHook=null;const current=(await call('closePlanGet',{month:p.month})).plan;await call('closePlanSave',planInput({revision:current.revision,notes:'생성 중 일정 변경'}));};await deny(close(await closePreview()),'aborted');assert.equal((await docs('erpMonthCloses')).length,1);
+  });
 }finally{await deleteApp(app);}});

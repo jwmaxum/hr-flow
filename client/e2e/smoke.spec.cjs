@@ -1021,6 +1021,40 @@ test('ERP delegated approvals and immutable monthly archives work on desktop and
   await call('manageErpControl',{action:'grant',uid:fixtures.accounts.memberA.uid,access:'NONE',expectedAccess:'INBOUND',reason:'시범 권한 회수'});await expect(member.page.getByRole('heading',{name:'ERP 접근 권한이 없습니다.'})).toBeVisible({timeout:30000});
 });
 
+test('ERP closing plans and independent employee ERP options preserve ADMIN approval on desktop and mobile', async ({browser},testInfo)=>{
+  test.setTimeout(240000);await clearErpFixture(fixtures.companyA);
+  const owner=await actorFor(browser,testInfo);await login(owner,fixtures.accounts.adminA);
+  async function call(action,data={}){const r=await probe(owner,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/manageErpControl`,{method:'POST',body:{data:{companyId:fixtures.companyA,action,...data}}});expect(r.status).toBe(200);return JSON.parse(Buffer.from(r.bytes).toString()).result;}
+  async function employeeOption(access){
+    await owner.page.goto('/#/admin/employees');await owner.page.getByLabel('직원 이름 또는 로그인 ID 검색',{exact:true}).fill(fixtures.accounts.memberA.name);
+    await owner.page.getByRole('button',{name:testInfo.project.name.includes('mobile')?'상세 정보 및 인사 수정':'상세보기',exact:true}).click();
+    const option=owner.page.getByRole('region',{name:'직원 ERP 접근 옵션',exact:true});await option.getByLabel('ERP 접근 허용',{exact:true}).check();await option.getByLabel('ERP 담당 업무 옵션',{exact:true}).selectOption(access);await option.getByLabel('ERP 권한 변경 사유',{exact:true}).fill('HR 역할 유지하고 ERP 업무 별도 지정');await option.getByRole('button',{name:'ERP 접근 옵션 저장',exact:true}).click();
+    await expect(option.getByText('현재: '+(access==='VIEW'?'조회 전용':'입출고 전체'),{exact:true})).toBeVisible({timeout:65000});await owner.page.getByRole('button',{name:'인사 상세 닫기',exact:true}).click();
+    expect((await call('directory')).users.find(u=>u.uid===fixtures.accounts.memberA.uid).role).toBe('MEMBER');
+  }
+  await employeeOption('VIEW');
+  const member=await actorFor(browser,testInfo);await login(member,fixtures.accounts.memberA);await member.page.goto('/#/erp');await expect(member.page.getByRole('heading',{name:'재고관리 ERP',exact:true})).toBeVisible();await expect(member.page.getByRole('button',{name:'입고등록',exact:true})).toHaveCount(0);await expect(member.page.getByRole('button',{name:'품목 정보만 등록',exact:true})).toHaveCount(0);await expect(member.page.getByRole('button',{name:'출고등록',exact:true})).toHaveCount(0);
+  await expect(member.page.locator('.wf-status').filter({hasText:'조회 전용'})).toBeVisible();await member.page.getByRole('button',{name:'창고 관리',exact:true}).click();await expect(member.page.getByRole('button',{name:'창고 등록',exact:true})).toHaveCount(0);
+  const denied=await probe(member,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/manageErp`,{method:'POST',body:{data:{companyId:fixtures.companyA,action:'save',kind:'items',id:'not-allowed',values:{}}}});expect(denied.status).toBe(403);
+  await owner.page.goto('/#/erp');await owner.page.getByRole('button',{name:'월마감 일정',exact:true}).click();const plan=owner.page.getByRole('region',{name:'월마감 일정 및 담당자',exact:true});
+  const month=await plan.getByLabel('일정 조회 월',{exact:true}).inputValue(),today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul'}).format(new Date()),dueDate=today.slice(0,7)+'-01';
+  await plan.getByLabel('마감 예정일',{exact:true}).fill(dueDate);await plan.getByLabel('총괄 담당자',{exact:true}).selectOption(fixtures.accounts.adminA.uid);
+  const labels=['품목·창고별 재고수량과 재고금액 대사','매출·매입 및 취소·반품 내역 확인','외상매출·수금·미수잔액 자체 확인','승인 대기·가격 조정 내역 검토','원가 미확정 품목의 자산 제외 확인'];
+  for(const label of labels)await plan.getByLabel(label+' 담당자',{exact:true}).selectOption(fixtures.accounts.memberA.uid);
+  await plan.getByLabel('일정·보고 변경 사유',{exact:true}).fill('시범 월마감 일정 배정');await plan.getByRole('button',{name:'마감 일정 저장',exact:true}).click();await expect(plan.getByRole('heading',{name:labels[0],exact:true})).toBeVisible({timeout:65000});expect((await call('closePlanGet',{month})).plan.pendingCount).toBe(5);
+  await member.page.bringToFront();await member.page.evaluate(()=>window.dispatchEvent(new Event('focus')));await member.page.getByRole('button',{name:`월마감 미완료 1건 · 기한 경과 ${dueDate<today?1:0}건`,exact:true}).click();const mine=member.page.getByRole('region',{name:'월마감 일정 및 담당자',exact:true});await expect(mine.getByRole('button',{name:'마감 일정 저장',exact:true})).toHaveCount(0);
+  for(let i=0;i<labels.length;i++){const label=labels[i];await mine.getByLabel(label+' 완료 보고 메모',{exact:true}).fill('담당 항목 대사 완료');await mine.getByRole('button',{name:label+' 완료 보고',exact:true}).click();await expect(mine.locator('.erp-plan-tasks article').filter({hasText:'담당 항목 대사 완료'})).toHaveCount(i+1,{timeout:65000});}
+  await expect(member.page.getByRole('button',{name:'월마감 미완료 0건 · 기한 경과 0건',exact:true})).toBeVisible({timeout:65000});await member.page.screenshot({path:testInfo.outputPath('erp-closing-assignee.png'),fullPage:true});expect(await member.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  const saved=(await call('closePlanGet',{month})).plan;expect(saved.awaitingAdminCount).toBe(5);expect((await call('checklistGet',{month})).checklist.items.every(r=>!r.checked)).toBe(true);
+  const forbidden=await probe(member,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/manageErpControl`,{method:'POST',body:{data:{companyId:fixtures.companyA,action:'closeTaskReset',month,revision:saved.revision,key:'INVENTORY',reason:'직원 직접 수정'}}});expect(forbidden.status).toBe(403);
+  await owner.page.bringToFront();await owner.page.getByRole('button',{name:'일정 새로고침',exact:true}).click();await expect(plan.locator('.erp-plan-tasks article').filter({hasText:'담당 항목 대사 완료'})).toHaveCount(5,{timeout:65000});await owner.page.screenshot({path:testInfo.outputPath('erp-closing-plan.png'),fullPage:true});
+  await employeeOption('BOTH');
+  await owner.page.goto('/#/admin/organization');await owner.page.getByRole('button',{name:fixtures.accounts.memberA.name+' 정보 수정',exact:true}).click();
+  const employeeDialog=owner.page.getByRole('dialog',{name:fixtures.accounts.memberA.name+' 정보 수정',exact:true});await expect(employeeDialog.getByText('현재: 입출고 전체',{exact:true})).toBeVisible();await expect(employeeDialog.getByLabel('ERP 접근 허용',{exact:true})).toBeChecked();await owner.page.screenshot({path:testInfo.outputPath('erp-organization-option.png'),fullPage:true});await employeeDialog.getByRole('button',{name:'닫기',exact:true}).click();
+  await member.page.goto('/#/erp');await expect(member.page.getByRole('button',{name:'입고등록',exact:true})).toBeVisible();await expect(member.page.getByRole('button',{name:'출고등록',exact:true})).toBeVisible();
+  await call('grant',{uid:fixtures.accounts.memberA.uid,access:'NONE',expectedAccess:'BOTH',reason:'시범 권한 회수'});
+});
+
 test('real expense UI uploads PNG/PDF and downloads the original bytes and filename', async ({ browser }, testInfo) => {
   const actor = await actorFor(browser, testInfo);
   await login(actor, fixtures.accounts.memberA);

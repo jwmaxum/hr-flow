@@ -2,7 +2,10 @@ import {httpsCallable} from 'firebase/functions';
 import {functions} from '../firebase';
 import {erpScope} from './erpLedgerService';
 import {downloadErpFile} from './erpImportService';
-export type ErpAccess='NONE'|'INBOUND'|'OUTBOUND'|'BOTH'|'ADMIN';
+export type ErpAccess='NONE'|'VIEW'|'INBOUND'|'OUTBOUND'|'BOTH'|'ADMIN';
+export interface CloseTask {key:string;label:string;assigneeUid:string;assigneeName:string;confirmed:boolean;submission:{by:string;name:string;at:string;note:string}|null}
+export interface ClosePlan {companyId:string;month:string;revision:number;status:'OPEN'|'CLOSED';dueDate:string;ownerUid:string;ownerName:string;notes:string;items:CloseTask[];pendingCount:number;myPendingCount:number;actionCount:number;awaitingAdminCount:number;overdue:boolean;today:string}
+export interface CloseAlerts {pendingCount:number;overdueCount:number;hasMore:boolean;checkedAt:string}
 export interface CloseState {revision:number;closedThrough:string;lastClosedMonth:string}
 export interface ErpOperator {uid:string;name:string;email:string;role:string;status:string;access:ErpAccess}
 export interface Approval {id:string;domain:string;requestedBy:string;requesterName:string;status:string;createdAt:string;date:string;reason:string;decidedBy?:string;decisionReason?:string;summary:Record<string,unknown>[]}
@@ -16,10 +19,11 @@ export interface History {id:string;at:string;actorName:string;action:string;dom
 export interface ClosePreview {revision:number;version:number;checklist:CloseChecklist;checklistReady:boolean;dashboard:{month:string;snapshot:string;inventoryValue:number;salesKRW:number;purchasesKRW:number;pendingCount:number}}
 const callable=httpsCallable<Record<string,unknown>,unknown>(functions,'manageErpControl',{timeout:300000});
 export async function erpControl<T>(companyId:string,action:string,data:Record<string,unknown>={}):Promise<T>{
-  const admin=!['status','approvals'].includes(action),mode=admin?true:'operator' as const;
+  const admin=!['status','approvals','closePlans','closeAlerts','closePlanGet','closeTaskSubmit'].includes(action),mode=admin?true:false;
   const scope=erpScope(companyId,mode),response=await callable({...data,companyId,action});
   if(scope!==erpScope(companyId,mode))throw new Error('로그인 사용자 또는 ERP 권한이 변경되었습니다.');
   if(action==='decide')window.dispatchEvent(new Event('erp:approvals-changed'));
+  if(['closePlanSave','closeTaskSubmit','closeTaskReset','checklistSave','reopen','close'].includes(action))window.dispatchEvent(new Event('erp:closing-changed'));
   return response.data as T;
 }
 export async function downloadClose(companyId:string,id:string,fileIndex:number){
