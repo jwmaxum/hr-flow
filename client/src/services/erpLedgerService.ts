@@ -8,7 +8,7 @@ export interface TransferInput { type: 'TRANSFER'; date: string; reason: string;
 export interface TransferStock { id: string; itemId: string; code: string; name: string; unit: string; active: boolean; quantity: number; value: number }
 export interface CorrectionRow { rowNo: number; name: string; code: string; warehouseName: string; transferWarehouseName?: string; unit: string; direction: string; sourceDocumentNo: string;
   beforeQuantity: number; afterQuantity: number; beforeValue: number; afterValue: number; refundKRW?: number; refundSupply?: number; refundTax?: number; currency: string }
-export interface Correction { id: string; companyId: string; status: 'PENDING' | 'COMMITTED'; input: CorrectionInput | TransferInput; rows: CorrectionRow[]; fingerprint: string }
+export interface Correction { id: string; companyId: string; status: 'PENDING' | 'COMMITTED' | 'AWAITING_APPROVAL'; input: CorrectionInput | TransferInput; rows: CorrectionRow[]; fingerprint: string }
 export interface ReportFilters { from: string; to: string; search: string; itemId: string; warehouseId: string }
 export interface ReportCursor { offset: number; revision: number; signature: string }
 export interface ReportMeta { companyId: string; canManage: boolean; basisDate: string | null; lastDate: string | null; revision: number }
@@ -27,16 +27,16 @@ export interface ErpReport extends ReportMeta { snapshot?: string; filters: Repo
   totals: Record<string, number | null> | null; unitTotals?: { unit: string; openingQuantity: number; inQuantity: number; outQuantity: number; transferInQuantity?: number; transferOutQuantity?: number; adjustQuantity: number; closingQuantity: number }[]; nextCursor: ReportCursor | null }
 const reports = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpReport', { timeout: 120000 });
 const corrections = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpCorrection', { timeout: 120000 });
-export function erpScope(companyId: string, write = false) {
+export function erpScope(companyId: string, write: boolean | 'operator' = false) {
   const { userData, companyData, sessionReady } = useAuthStore.getState();
   if (!auth.currentUser || auth.currentUser.uid !== userData?.uid || !sessionReady || userData.companyId !== companyId ||
-    !(write ? ['ADMIN'] : ['ADMIN','SUB_ADMIN','MEMBER']).includes(userData.role) || userData.mustChangePassword ||
+    !(write === true ? ['ADMIN'] : ['ADMIN','SUB_ADMIN','MEMBER']).includes(userData.role) || userData.role !== 'ADMIN' && !['INBOUND','OUTBOUND','BOTH'].includes(userData.erpAccess || '') || userData.mustChangePassword ||
     userData.status && userData.status !== 'ACTIVE' || companyData?.id !== companyId || companyData.status !== 'ACTIVE' || companyData.subscriptionStatus === 'EXPIRED') throw new Error('현재 회사의 권한으로 다시 로그인해 주세요.');
-  return `${userData.uid}:${companyId}:${userData.role}`;
+  return `${userData.uid}:${companyId}:${userData.role}:${userData.erpAccess || 'NONE'}`;
 }
 async function call<T>(companyId: string, write: boolean, action: string, data: Record<string, unknown> = {}): Promise<T> {
-  const expected = erpScope(companyId, write), result = await (write ? corrections : reports)({ ...data, companyId, action });
-  if (expected !== erpScope(companyId, write)) throw new Error('로그인 사용자 또는 회사 권한이 변경되었습니다.');
+  const expected = erpScope(companyId, write ? 'operator' : false), result = await (write ? corrections : reports)({ ...data, companyId, action });
+  if (expected !== erpScope(companyId, write ? 'operator' : false)) throw new Error('로그인 사용자 또는 회사 권한이 변경되었습니다.');
   return result.data as T;
 }
 export const erpLedgerService = {
@@ -45,5 +45,5 @@ export const erpLedgerService = {
   export: (companyId: string, report: ErpReport) => call<ErpReport>(companyId, false, 'export', { filters: report.filters, view: report.view, revision: report.revision, snapshot: report.snapshot }),
   transferStock: (companyId: string, warehouseId: string, cursor?: string) => call<{ records: TransferStock[]; nextCursor: string | null }>(companyId, true, 'transferStock', { warehouseId, ...(cursor ? { cursor } : {}) }),
   preview: (companyId: string, id: string, input: CorrectionInput | TransferInput) => call<{ correction: Correction }>(companyId, true, 'preview', { id, input }),
-  commit: (companyId: string, job: Correction) => call<{ correction: Correction; idempotent: boolean }>(companyId, true, 'commit', { id: job.id, fingerprint: job.fingerprint }),
+  commit: (companyId: string, job: Correction) => call<{ correction: Correction; idempotent: boolean; approvalRequested?: boolean; approvalId?: string }>(companyId, true, 'commit', { id: job.id, fingerprint: job.fingerprint }),
 };

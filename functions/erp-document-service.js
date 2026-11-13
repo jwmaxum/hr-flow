@@ -333,4 +333,4 @@ function createErpDocumentService({ db, bucket, renderPdf, now = () => new Date(
     });
   };
 }
-module.exports = { createErpDocumentService };
+module.exports = { createErpDocumentService: require('./erp-governance').governedService(createErpDocumentService,'documents') };

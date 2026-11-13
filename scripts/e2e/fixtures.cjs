@@ -215,7 +215,7 @@ async function clearFixtures() {
   // Only this run's company IDs and exact UIDs may be removed. No project-wide
   // clear/reset endpoint is used, even though this is an ephemeral demo project.
   for (const companyId of [current.fixtures.companyA, current.fixtures.companyB]) {
-    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs']) {
+    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs', 'erpGovernance', 'erpApprovals', 'erpChangeHistory', 'erpMonthCloses', 'erpCloseMonths']) {
       await attempt(() => current.db.recursiveDelete(current.db.doc(`companies/${companyId}`).collection(name)));
     }
     for (const collection of ['expenses', 'leaves', 'attendance', 'notices', 'audit_logs', 'salary_history', 'payroll_records', 'payroll_drafts']) {
@@ -266,7 +266,7 @@ async function clearErpFixture(companyId) {
   const current = runtime();
   if (companyId !== current.fixtures.companyA) throw new Error('Only generated company A ERP fixtures may be reset.');
   const parent = current.db.doc(`companies/${companyId}`);
-  for (const name of ['erpItems','erpWarehouses','erpPartners','erpKeys','erpInventory','erpAudit','erpImports','erpMovements','erpDocuments','erpState','erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs']) await current.db.recursiveDelete(parent.collection(name));
+  for (const name of ['erpItems','erpWarehouses','erpPartners','erpKeys','erpInventory','erpAudit','erpImports','erpMovements','erpDocuments','erpState','erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs', 'erpGovernance', 'erpApprovals', 'erpChangeHistory', 'erpMonthCloses', 'erpCloseMonths']) await current.db.recursiveDelete(parent.collection(name));
   await current.bucket.deleteFiles({ prefix: `companies/${companyId}/erp-sources/` });
 }
 module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture };

@@ -66,6 +66,11 @@ async function actorFor(browser, testInfo) {
   actors.push(actor);
   actor.page.on('pageerror', () => { actor.pageErrors += 1; });
   actor.page.on('dialog', async dialog => {
+    if (actor.expectedErpConfirmation && dialog.type() === 'confirm' &&
+        dialog.message() === actor.expectedErpConfirmation && actor.page.url() === `${WEB_ORIGIN}/#/erp`) {
+      actor.expectedErpConfirmation = null;
+      await dialog.accept(); return;
+    }
     if (actor.expectedPayrollConfirmation && dialog.type() === 'confirm' &&
         dialog.message() === actor.expectedPayrollConfirmation && actor.page.url() === `${WEB_ORIGIN}/#/admin/salary`) {
       actor.expectedPayrollConfirmation = null; actor.payrollConfirmations += 1;
@@ -438,11 +443,7 @@ test('ERP company masters and name search show independent inventory on desktop 
 
   const member = await actorFor(browser, testInfo);
   await login(member, fixtures.accounts.memberA); await member.page.goto('/#/erp');
-  await member.page.getByLabel('품목명 검색', { exact: true }).fill('자동점검 A');
-  await expect(member.page.getByRole('region', { name: '품목 재고현황' }).getByRole('cell', { name: '7', exact: true })).toBeVisible();
-  await expect(member.page.getByRole('button', { name: '품목 정보만 등록', exact: true })).toHaveCount(0);
-  await expect(member.page.getByText('기본 매입단가', { exact: true })).toHaveCount(0);
-  await expect(member.page.getByRole('button', { name: '거래처 관리', exact: true })).toHaveCount(0);
+  await expect(member.page.getByRole('heading',{name:'ERP 접근 권한이 없습니다.'})).toBeVisible();
 });
 
 test('ERP Excel opening and transactions preview then commit once with exact inventory on desktop and mobile', async ({ browser }, testInfo) => {
@@ -859,12 +860,7 @@ test('ERP period reports, returns, count/value adjustments and immutable cancell
   expect(workbook[0].data[1][12]).toBe(14);expect(workbook[0].data[1][20]).toBe(2000);expect(workbook[0].data[1][23]).toBe(450);
   await summary.locator('.erp-table-scroll').scrollIntoViewIfNeeded();await owner.page.screenshot({path:testInfo.outputPath('erp-period-report.png'),fullPage:true});
   expect(await owner.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
-  const member=await actorFor(browser,testInfo);await login(member,fixtures.accounts.memberA);await member.page.goto('/#/erp');await member.page.getByRole('button',{name:'입출고 총괄·원장',exact:true}).click();
-  await expect(member.page.getByText(/수량 조회 전용/)).toBeVisible();await member.page.getByLabel('조회 시작일',{exact:true}).fill('2026-11-02');await member.page.getByLabel('조회 종료일',{exact:true}).fill('2026-11-30');await member.page.getByRole('button',{name:'원장 조회',exact:true}).click();
-  const memberSummary=member.page.getByRole('region',{name:'입출고 총괄 결과',exact:true});await expect(memberSummary.getByRole('cell',{name:'14',exact:true})).toBeVisible();await expect(member.page.getByRole('button',{name:'재고 조정',exact:true})).toHaveCount(0);
-  await expect(memberSummary.getByRole('columnheader',{name:'기말금액',exact:true})).toHaveCount(0);
-  const memberDownload=member.page.waitForEvent('download');await memberSummary.getByRole('button',{name:'전체 Excel 내려받기',exact:true}).click();const memberFile=await memberDownload,memberStream=await memberFile.createReadStream(),memberChunks=[];for await(const chunk of memberStream)memberChunks.push(chunk);
-  const memberWorkbook=await readExcel(Buffer.concat(memberChunks));expect(memberWorkbook[0].data[0]).toHaveLength(13);expect(JSON.stringify(memberWorkbook)).not.toContain('2000');
+  const member=await actorFor(browser,testInfo);await login(member,fixtures.accounts.memberA);await member.page.goto('/#/erp');await expect(member.page.getByRole('heading',{name:'ERP 접근 권한이 없습니다.'})).toBeVisible();
   expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
 });
 
@@ -968,6 +964,34 @@ test('ERP trade documents issue three PDFs with the registered seal and immutabl
   const member = await actorFor(browser, testInfo); await login(member, fixtures.accounts.memberA); await member.page.goto('/#/erp');
   await expect(member.page.getByRole('button', { name: '거래서류 발행', exact: true })).toHaveCount(0);
   const denied = await probe(member, `http://${HOSTS.functions}/${PROJECT_ID}/us-central1/manageErpDocuments`, { method: 'POST', body: { data: { action: 'pdf', companyId: fixtures.companyA, id: proforma.id } } }); expect(denied.status).toBe(403);
+});
+
+test('ERP delegated approvals and immutable monthly archives work on desktop and mobile', async ({browser},testInfo)=>{
+  test.setTimeout(300000);await clearErpFixture(fixtures.companyA);
+  const owner=await actorFor(browser,testInfo);await login(owner,fixtures.accounts.adminA);
+  async function call(name,data){const r=await probe(owner,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/${name}`,{method:'POST',body:{data:{companyId:fixtures.companyA,...data}}});expect(r.status).toBe(200);return JSON.parse(Buffer.from(r.bytes).toString()).result;}
+  await call('manageErp',{action:'save',kind:'items',id:'approval-item',expectedRevision:0,values:{code:'CLOSE-001',name:'마감 검증 품목',unit:'개',purchasePrice:100,salePrice:200,specification:'',group:'',notes:'',taxType:'과세',active:true}});
+  await owner.page.goto('/#/erp');await owner.page.getByRole('button',{name:'월마감·권한·승인',exact:true}).click();
+  const control=owner.page.getByRole('region',{name:'ERP 마감 권한 승인 이력'});
+  await control.getByRole('button',{name:'담당자 권한',exact:true}).click();
+  await control.getByLabel('ERP 담당자',{exact:true}).selectOption(fixtures.accounts.memberA.uid);
+  await control.getByLabel('담당 업무',{exact:true}).selectOption('INBOUND');await control.getByLabel('권한 변경 사유',{exact:true}).fill('시범 입고 담당자 지정');await control.getByRole('button',{name:'담당자 권한 저장',exact:true}).click();await expect(control.getByText('ERP 담당자 권한을 저장했습니다.')).toBeVisible({timeout:65000});
+  const member=await actorFor(browser,testInfo);await login(member,fixtures.accounts.memberA);await member.page.goto('/#/erp');
+  await expect(member.page.getByRole('button',{name:'입고등록',exact:true})).toBeVisible();await expect(member.page.getByRole('button',{name:'출고등록',exact:true})).toHaveCount(0);
+  await member.page.getByRole('button',{name:'마감 검증 품목 수정',exact:true}).click();await member.page.getByLabel('매입단가 (원) *',{exact:true}).fill('123');await member.page.getByRole('button',{name:'저장',exact:true}).click();await expect(member.page.getByText(/ADMIN 승인 요청을 등록했습니다/)).toBeVisible({timeout:65000});
+  expect((await call('manageErp',{action:'list',kind:'items',search:'마감',searchBy:'name'})).records[0].purchasePrice).toBe(100);
+  await control.getByRole('button',{name:'승인 요청',exact:true}).click();await control.getByLabel('승인·반려 사유 (3자 이상)',{exact:true}).fill('매입 증빙과 단가 확인');await control.getByText('요청 변경 내용 확인',{exact:true}).click();await control.getByRole('button',{name:'승인·반영',exact:true}).click();await expect(control.getByText('승인·반영 처리했습니다.')).toBeVisible({timeout:65000});expect((await call('manageErp',{action:'list',kind:'items',search:'마감',searchBy:'name'})).records[0].purchasePrice).toBe(123);
+  await owner.page.screenshot({path:testInfo.outputPath('erp-approval-management.png'),fullPage:true});
+  await control.getByRole('button',{name:'월마감·보고서 보관',exact:true}).click();await control.getByLabel('마감·재개방 사유 (3자 이상)',{exact:true}).fill('대사 및 월마감 확인');await control.getByRole('button',{name:'마감 미리보기',exact:true}).click();await control.getByRole('checkbox',{name:'금액과 미확정 품목을 확인했으며 해당 기간의 변경을 잠급니다.'}).check();await control.getByRole('button',{name:'월마감 확정·보고서 보관',exact:true}).click();await expect(control.getByText('월마감을 확정하고 Excel·PDF 원본을 보관했습니다.')).toBeVisible({timeout:120000});
+  const a=(await call('manageErpControl',{action:'archives'})).archives[0];expect(a.version).toBe(1);
+  const book=await financeExportDownload(owner.page,control.getByRole('button',{name:a.files[0].name,exact:true}),'xlsx');expect(book.find(s=>s.sheet==='보고서 기준').data.find(r=>r[0]==='보고서')[1]).toContain('월마감 확정 보고서');
+  const closePdf=await financeExportDownload(owner.page,control.getByRole('button',{name:a.files[1].name,exact:true}),'pdf');require('node:fs').writeFileSync(testInfo.outputPath('erp-month-close.pdf'),closePdf);
+  const original=(await call('manageErpControl',{action:'download',id:a.id,fileIndex:0})).base64;
+  await control.getByLabel('마감·재개방 사유 (3자 이상)',{exact:true}).fill('누락 내역 재검토');owner.expectedErpConfirmation=`${a.month} 월마감을 재개방할까요? 기존 보관본은 유지됩니다.`;await control.getByRole('button',{name:'최근 마감 재개방',exact:true}).click();await expect(control.getByText(/마감을 재개방했습니다/)).toBeVisible({timeout:65000});
+  await control.getByLabel('마감·재개방 사유 (3자 이상)',{exact:true}).fill('재검토 후 마감 확정');await control.getByRole('button',{name:'마감 미리보기',exact:true}).click();await control.getByRole('checkbox',{name:'금액과 미확정 품목을 확인했으며 해당 기간의 변경을 잠급니다.'}).check();await control.getByRole('button',{name:'월마감 확정·보고서 보관',exact:true}).click();await expect(control.getByText('월마감을 확정하고 Excel·PDF 원본을 보관했습니다.')).toBeVisible({timeout:120000});expect((await call('manageErpControl',{action:'archives'})).archives).toHaveLength(2);expect((await call('manageErpControl',{action:'download',id:a.id,fileIndex:0})).base64).toBe(original);
+  await owner.page.screenshot({path:testInfo.outputPath('erp-month-close-archives.png'),fullPage:true});expect(await owner.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await control.getByRole('button',{name:'수정·삭제 이력',exact:true}).click();await expect(control.getByText(/ADMIN 승인/).first()).toBeVisible();await owner.page.screenshot({path:testInfo.outputPath('erp-change-history.png'),fullPage:true});
+  await call('manageErpControl',{action:'grant',uid:fixtures.accounts.memberA.uid,access:'NONE',expectedAccess:'INBOUND',reason:'시범 권한 회수'});await expect(member.page.getByRole('heading',{name:'ERP 접근 권한이 없습니다.'})).toBeVisible({timeout:30000});
 });
 
 test('real expense UI uploads PNG/PDF and downloads the original bytes and filename', async ({ browser }, testInfo) => {

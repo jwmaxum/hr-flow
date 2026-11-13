@@ -368,9 +368,11 @@ try {
     await deny(`B cannot read A ${name}`, getDoc(document('outsider', name, id)));
   }
 
+  await deny('member cannot self-grant ERP access',updateDoc(document('bob','UserProfile','bob'),{erpAccess:'BOTH'}));
+  await deny('admin cannot bypass ERP grant audit',updateDoc(document('alice','UserProfile','bob'),{erpAccess:'BOTH'}));
   // ERP must use server authorization and redaction even for company admins.
   for (const uid of ['bob', 'manager', 'alice', 'outsider', 'root', 'anonymous']) {
-    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs']) {
+    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs','erpGovernance','erpApprovals','erpChangeHistory','erpMonthCloses','erpCloseMonths']) {
       const target = doc(db(uid), 'companies', 'a', name, 'private');
       await deny(`${uid} direct ERP read ${name}`, getDoc(target));
       await deny(`${uid} direct ERP write ${name}`, setDoc(target, { companyId: 'a', quantity: 999 }));

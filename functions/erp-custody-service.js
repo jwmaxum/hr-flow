@@ -124,4 +124,4 @@ function createErpCustodyService({db,now=()=>new Date()}) {
     });
   };
 }
-module.exports={createErpCustodyService,inputOf};
+module.exports={createErpCustodyService:require('./erp-governance').governedService(createErpCustodyService,'custody'),inputOf};

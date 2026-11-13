@@ -1,4 +1,5 @@
-const { authorizeContext, fail } = require('./security-context');
+const { fail } = require('./security-context');
+const { authorizeErp: authorizeContext, governedService, checkImport } = require('./erp-governance');
 const { erpMaster: master } = require('./erp-service');
 const { parseErpFile } = require('./erp-import-files');
 const { amounts, safe, round, SHEETS } = require('./erp-import-schema');
@@ -36,6 +37,7 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
   async function context(request, tx) {
     const user = await authorizeContext({ db, request, reader: tx || db, now, roles: ['ADMIN'] });
     if (request.data.companyId !== user.companyId) fail('permission-denied', '현재 로그인한 회사에서 다시 시도해 주세요.');
+    await checkImport(user,request.data);
     return user;
   }
   async function plan(tx, parent, job) {
@@ -348,6 +350,7 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
         await context(request, tx); const existing = await tx.get(ref);
         if (existing.exists) {
           const old = existing.data(); master.verifyTenant(old, user.companyId);
+          await checkImport(await context(request,tx),input,old);
           if (old.source.kind !== 'MANUAL' || old.requestHash !== requestHash) fail('already-exists', '입력 내용이 변경되었습니다. 새로 검증해 주세요.');
           return { import: expose(id, old) };
         }
@@ -400,6 +403,7 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
     return db.runTransaction(async tx => {
       await context(request, tx); const snap = await tx.get(ref), job = snap.data();
       if (!snap.exists) fail('not-found', '업로드 자료를 찾을 수 없습니다.'); master.verifyTenant(job, user.companyId);
+      await checkImport(await context(request,tx),input,job);
       if (input.action === 'get') return { import: expose(id, job) };
       if (input.action === 'cancel') {
         if (job.status === 'COMMITTED') fail('failed-precondition', '확정된 원장은 검토 취소로 삭제할 수 없습니다.');
@@ -428,4 +432,4 @@ function createErpImportService({ db, bucket, now = () => new Date(), parseFile 
     });
   };
 }
-module.exports = { createErpImportService, optionsOf };
+module.exports = { createErpImportService: governedService(createErpImportService, 'import'), optionsOf };

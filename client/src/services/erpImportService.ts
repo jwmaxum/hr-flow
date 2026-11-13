@@ -41,9 +41,9 @@ export interface ErpSourceFile { name: string; mimeType: string; base64: string 
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpImport', { timeout: 120000 });
 function scope(companyId: string) {
   const { userData, companyData, sessionReady } = useAuthStore.getState();
-  if (!auth.currentUser || auth.currentUser.uid !== userData?.uid || userData.companyId !== companyId || userData.role !== 'ADMIN' ||
+  if (!auth.currentUser || auth.currentUser.uid !== userData?.uid || userData.companyId !== companyId || userData.role !== 'ADMIN' && !['INBOUND','OUTBOUND','BOTH'].includes(userData.erpAccess || '') ||
     userData.mustChangePassword || (userData.status && userData.status !== 'ACTIVE') || !sessionReady || companyData?.id !== companyId || companyData.status !== 'ACTIVE' || companyData.subscriptionStatus === 'EXPIRED') throw new Error('현재 회사 관리자로 다시 로그인해 주세요.');
-  return `${userData.uid}:${companyId}:${userData.role}`;
+  return `${userData.uid}:${companyId}:${userData.role}:${userData.erpAccess || 'NONE'}`;
 }
 async function call<T>(companyId: string, action: string, data: Record<string, unknown> = {}): Promise<T> {
   const expected = scope(companyId), result = await callable({ ...data, companyId, action });

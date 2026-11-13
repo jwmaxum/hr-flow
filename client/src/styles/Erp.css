@@ -163,3 +163,9 @@
 .erp-dashboard .erp-table-scroll:focus-visible { outline:2px solid var(--wf-primary-800); outline-offset:3px; }
 @media(max-width:1100px) { .erp-dashboard-kpis {grid-template-columns:repeat(2,minmax(0,1fr));} }
 @media(max-width:600px) { .erp-dashboard>.wf-panel {padding:16px;} .erp-dashboard-kpis {grid-template-columns:minmax(0,1fr);} .erp-dashboard-period {width:100%;} .erp-dashboard-period .wf-field {flex:1;} .erp-trend-month {grid-template-columns:minmax(0,1fr);gap:3px;} .erp-dashboard-toggle {padding:8px 10px;} .erp-title-row {gap:8px;} }
+
+.erp-history-value{max-width:28rem;overflow-wrap:anywhere;white-space:pre-wrap;}
+.erp-control { padding:22px; min-width:0; }
+.erp-control .erp-actions { flex-wrap:wrap; }
+.erp-control .erp-actions .wf-btn { white-space:normal; overflow-wrap:anywhere; }
+@media(max-width:600px) { .erp-control { padding:16px; } }

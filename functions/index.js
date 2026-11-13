@@ -45,6 +45,7 @@ exports.manageOfficialLetters = callable((request, dep) => createOfficialLetterS
   renderPdf: renderOfficialLetterPdf })(request), { memory: '512MiB' });
 exports.adminCreateMember = callable((request, dep) => createMemberService(dep)(request));
 exports.accountSecurity = callable((request, dep) => createAccountSecurityService(dep)(request));
+exports.manageErpControl = callable((request, dep) => require('./erp-control-service').createErpControlService(dep)(request), { memory: '512MiB', timeoutSeconds: 300, concurrency: 1 });
 exports.manageErp = callable((request, dep) => createErpService(dep)(request));
 exports.manageErpFinance = callable((request, dep) => createErpFinanceService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.manageErpCustody = callable((request, dep) => createErpCustodyService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });

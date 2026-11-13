@@ -88,4 +88,4 @@ function createErpFinanceService({ db, now = () => new Date(), renderFinancePdf 
     });
   };
 }
-module.exports = { createErpFinanceService, salesEvents, paymentEvents, summarize };
+module.exports = { createErpFinanceService: require('./erp-governance').governedService(createErpFinanceService, 'finance'), salesEvents, paymentEvents, summarize };

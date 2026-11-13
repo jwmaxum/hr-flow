@@ -118,7 +118,7 @@ test('ERP imports validate and atomically post to the authenticated company', as
       const second = await masters(request({ action: 'purchaseHistory', itemId, cursor: first.nextCursor })); assert.equal(second.rows.length, 5); assert.equal(second.nextCursor, null);
       assert.equal(new Set([...first.rows, ...second.rows].map(row => row.id)).size, 55);
       await reject(masters(request({ action: 'purchaseHistory', itemId, cursor: 'missing' })), 'invalid-argument');
-      const member = await masters(request({ action: 'inventory', itemId }, 'member')); assert.equal(Object.hasOwn(member, 'averagePrice'), false);
+      await reject(masters(request({ action: 'inventory', itemId }, 'member')), 'permission-denied');
     });
     await t.test('preview only saves review/source; confirmation creates masters, opening ledger and balances exactly once', async () => {
       await reset(); const job = await preview(); assert.equal(job.preview.canCommit, true, JSON.stringify(job.preview.errors));

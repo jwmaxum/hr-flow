@@ -28,7 +28,7 @@ export interface PurchaseHistory {
 }
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErp');
 async function call<T>(companyId: string, action: string, data: Record<string, unknown>): Promise<T> {
-  const write = action === 'save' || action === 'purchaseHistory' || data.kind === 'partners';
+  const write = 'operator' as const;
   const expected = erpScope(companyId, write), result = await callable({ ...data, companyId, action });
   if (erpScope(companyId, write) !== expected) throw new Error('로그인 사용자 또는 회사 권한이 변경되었습니다.');
   return result.data as T;
@@ -36,8 +36,8 @@ async function call<T>(companyId: string, action: string, data: Record<string, u
 export const erpService = {
   list: (companyId: string, kind: ErpKind, search: string, searchBy: 'name' | 'code', cursor?: ErpCursor) =>
     call<ErpList>(companyId, 'list', { kind, search, searchBy, ...(cursor ? { cursor } : {}) }),
-  save: (companyId: string, kind: ErpKind, id: string, expectedRevision: number, values: ErpValues) =>
-    call<{ record: ErpRecord }>(companyId, 'save', { kind, id, expectedRevision, values }),
+  save: (companyId: string, kind: ErpKind, id: string, expectedRevision: number, values: ErpValues, requestId?:string) =>
+    call<{ record: ErpRecord; approvalRequested?: boolean; approvalId?: string }>(companyId, 'save', { kind, id, expectedRevision, values, ...(requestId?{requestId}:{}) }),
   inventory: (companyId: string, itemId: string) => call<InventoryResult>(companyId, 'inventory', { itemId }),
   purchaseHistory: (companyId: string, itemId: string, cursor?: string) => call<PurchaseHistory>(companyId, 'purchaseHistory', { itemId, ...(cursor ? { cursor } : {}) }),
 };

@@ -222,7 +222,7 @@ test('receivables, bundles and customer custody remain atomic and tenant-scoped'
     await parent().collection('erpItems').doc('part').update({pendingOpening});
     let r=await masters(req({action:'inventory',itemId:'part'}));assert.equal(r.status,'PENDING_COST');assert.equal(r.pendingOpening.quantity,209);assert.equal(r.quantity,null);assert.equal(r.value,null);
     await save('items','part',{...itemValues('PART','일반품'),purchasePrice:10},1);r=await masters(req({action:'inventory',itemId:'part'}));assert.deepEqual(r.pendingOpening,{basisDate:'2026-11-11',quantity:209,unit:'EA',source:'재고.xlsx 원본!C9'});assert.equal(r.value,null);assert.equal((await records('erpMovements')).length,0);
-    const member=await masters(req({action:'inventory',itemId:'part'},'member'));assert.equal(member.pendingOpening.quantity,209);assert.equal('value' in member,false);
+    await reject(masters(req({action:'inventory',itemId:'part'},'member')),'permission-denied');
     await reject(save('items','part',{...itemValues('PART','일반품'),pendingOpening},2),'invalid-argument');
     await parent().collection('erpItems').doc('part').update({'pendingOpening.quantity':null});assert.equal((await masters(req({action:'inventory',itemId:'part'}))).pendingOpening.quantity,null);
     await parent().collection('erpItems').doc('part').update({'pendingOpening.quantity':-1});await reject(masters(req({action:'inventory',itemId:'part'})));

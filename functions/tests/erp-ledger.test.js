@@ -90,10 +90,7 @@ test('ERP correction and period ledger integration',async t=>{try{
  });
  await t.test('readers receive quantity-only projections in screen and Excel; all writes remain administrator-only',async()=>{
   const out=(await base()).find(r=>r.direction==='출고');await returned('SALES_RETURN',out,1);
-  for(const uid of ['member','manager'])for(const action of ['report','export'])for(const view of ['summary','detail']){
-   const prior=await report({view},uid);const r=await reports(request({action,filters,view,...(action==='export'?{revision:prior.revision,snapshot:prior.snapshot}:{})},uid));const json=JSON.stringify(r);
-   for(const key of ['closingValue','openingValue','salesKRW','marginKRW','refundKRW','partnerName','price','effect','reason','supply','cogsKRW'])assert.equal(json.includes(`"${key}"`),false,`${uid} ${action} ${view} ${key}`);
-  }
+  for(const uid of ['member','manager'])for(const action of ['report','export'])for(const view of ['summary','detail'])await reject(reports(request({action,filters,view},uid)),'permission-denied');
   for(const uid of ['member','manager','root','foreign',null])await reject(corrections(request({action:'preview',id:'unauthorized',input:{type:'CANCEL',sourceId:out.id,date:'2026-11-03',reason:'권한 확인'}},uid)),uid?'permission-denied':'unauthenticated');
   await reject(report({},'foreign','a'),'permission-denied');await reject(report({filters:{...filters,itemId:'foreign-item'}}),'not-found');
   await db.doc('UserProfile/admin').update({status:'SUSPENDED'});await reject(report(),'permission-denied');
@@ -139,7 +136,7 @@ test('ERP correction and period ledger integration',async t=>{try{
   for(const key of ['inQuantity','outQuantity','adjustQuantity','salesKRW','cogsKRW','marginKRW'])assert.equal(r.totals[key],0,key);
   const detail=await report({view:'detail'});assert.equal(detail.rows.length,12);assert.ok(detail.rows.every(row=>row.transferWarehouseName&&row.operationType==='TRANSFER'));
   const exported=await reports(request({action:'export',filters,view:'summary',revision:r.revision,snapshot:r.snapshot}));assert.deepEqual(exported.rows,r.rows);
-  const reader=await report({},'member');assert.ok(reader.rows.some(row=>row.transferInQuantity===2));assert.equal(JSON.stringify(reader).includes('transferInValue'),false);
+  await reject(report({},'member'),'permission-denied');
  });
  await t.test('split rounding, fractional quantities and full depletion preserve the final won; whole-transfer cancellation restores all balances',async()=>{
   await reset();for(const id of ['dest-a','dest-b','dest-c'])await masters(request({action:'save',kind:'warehouses',id,expectedRevision:0,values:{code:id,name:id,active:true,notes:'',address:''}}));

@@ -1,4 +1,5 @@
-const { authorizeContext, fail } = require('./security-context');
+const { fail } = require('./security-context');
+const { authorizeErp: authorizeContext, governedService, checkCorrection } = require('./erp-governance');
 const { FieldPath } = require('firebase-admin/firestore');
 const { erpMaster: master } = require('./erp-service');
 const M = require('./erp-ledger-model');
@@ -51,6 +52,7 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
     const cursor = request.data.cursor == null ? null : master.identifier(request.data.cursor);
     return db.runTransaction(async tx => {
       const user = await context(request, tx), parent = db.collection('companies').doc(user.companyId);
+      await checkCorrection(user,{type:'TRANSFER'},tx,parent);
       const warehouse = await tx.get(parent.collection('erpWarehouses').doc(warehouseId));
       if (!warehouse.exists) fail('not-found', '출발 창고를 찾을 수 없습니다.');
       master.verifyTenant(warehouse.data(), user.companyId);
@@ -273,6 +275,7 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
     return db.runTransaction(async tx => {
       await context(request, tx); const snap = await tx.get(ref), existing = snap.data();
       if (existing) master.verifyTenant(existing, user.companyId);
+      await checkCorrection(await context(request,tx),normalized||existing?.input||{},tx,parent);
       if (input.action === 'get') { if (!existing) fail('not-found', '처리 내역을 찾을 수 없습니다.'); return { correction: { id, ...existing } }; }
       if (input.action === 'preview') {
         if (existing) { if (M.hash(existing.input) !== M.hash(normalized)) fail('already-exists', '처리 ID가 이미 사용 중입니다. 새로 검증해 주세요.'); return { correction: { id, ...existing } }; }
@@ -301,4 +304,4 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
     });
   };
 }
-module.exports = { createErpCorrectionService, inputOf };
+module.exports = { createErpCorrectionService: governedService(createErpCorrectionService, 'correction'), inputOf };

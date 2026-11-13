@@ -1,6 +1,7 @@
 const { createHash } = require('node:crypto');
 const { FieldPath } = require('firebase-admin/firestore');
-const { authorizeContext, fail } = require('./security-context');
+const { fail } = require('./security-context');
+const { authorizeErp: authorizeContext, governedService } = require('./erp-governance');
 
 const COLLECTIONS = { items: 'erpItems', warehouses: 'erpWarehouses', partners: 'erpPartners' };
 const COMMON_FIELDS = ['code', 'name', 'active', 'notes'];
@@ -89,7 +90,7 @@ function createErpService({ db, now = () => new Date() }) {
     const action = data.action;
     if (!['list', 'save', 'inventory', 'purchaseHistory'].includes(action)) fail('invalid-argument', '지원하지 않는 ERP 요청입니다.');
     const user = await context(request, db, action === 'save' || action === 'purchaseHistory');
-    const companyId = user.companyId, canManage = user.role === 'ADMIN';
+    const companyId = user.companyId, canManage = true;
     const companyRef = db.collection('companies').doc(companyId);
     if (action === 'purchaseHistory') {
       if (Object.keys(data).some(key => !['action','companyId','itemId','cursor'].includes(key))) fail('invalid-argument', '입고 이력 요청을 확인해 주세요.');
@@ -121,7 +122,7 @@ function createErpService({ db, now = () => new Date() }) {
     if (action === 'inventory') {
       const itemId = identifier(data.itemId);
       return db.runTransaction(async tx => {
-        const current = await context(request, tx);
+        await context(request, tx);
         const item = await tx.get(companyRef.collection('erpItems').doc(itemId));
         if (!item.exists) fail('not-found', '품목을 찾을 수 없습니다.');
         verifyTenant(item.data(), companyId);
@@ -155,10 +156,10 @@ function createErpService({ db, now = () => new Date() }) {
             const warehouse=await tx.get(companyRef.collection('erpWarehouses').doc(identifier(warehouseId)));
             if(!warehouse.exists)fail('failed-precondition','구성품 창고를 확인해 주세요.');verifyTenant(warehouse.data(),companyId);
             const quantity=Math.min(...stockByPart.map(part=>Math.floor((part.byWarehouse.get(warehouseId)||0)/part.quantityScaled)));
-            rows.push({warehouseId,warehouseCode:warehouse.data().code,warehouseName:warehouse.data().name,warehouseActive:warehouse.data().active,quantity,updatedAt:null,...(current.role==='ADMIN'?{value:0}:{})});
+            rows.push({warehouseId,warehouseCode:warehouse.data().code,warehouseName:warehouse.data().name,warehouseActive:warehouse.data().active,quantity,updatedAt:null,value:0});
           }
-          return {item:view('items',item.id,item.data(),current.role==='ADMIN'),virtual:true,status:'RECORDED',quantity:rows.reduce((sum,row)=>sum+row.quantity,0),
-            ...(current.role==='ADMIN'?{value:0,averagePrice:null,currency:'KRW'}:{}),warehouses:rows,checkedAt:now().toISOString()};
+          return {item:view('items',item.id,item.data(),true),virtual:true,status:'RECORDED',quantity:rows.reduce((sum,row)=>sum+row.quantity,0),
+            value:0,averagePrice:null,currency:'KRW',warehouses:rows,checkedAt:now().toISOString()};
         }
         const balances = await tx.get(companyRef.collection('erpInventory').where('itemId', '==', itemId).limit(501));
         if (balances.size > 500) fail('resource-exhausted', '창고별 재고가 너무 많습니다. 관리자에게 문의해 주세요.');
@@ -176,13 +177,13 @@ function createErpService({ db, now = () => new Date() }) {
             !Number.isSafeInteger(balance.value) || balance.currency !== 'KRW') fail('failed-precondition', '재고 집계 자료를 확인해 주세요.');
           return { warehouseId: balance.warehouseId, warehouseCode: warehouse.code, warehouseName: warehouse.name,
             warehouseActive: warehouse.active, quantity: balance.quantity,
-            ...(current.role === 'ADMIN' ? { value: balance.value } : {}), updatedAt: balance.updatedAt || null };
+            value: balance.value, updatedAt: balance.updatedAt || null };
         });
         const quantity = rows.length ? rows.reduce((sum, row) => sum + Math.round(row.quantity * 10000), 0) / 10000 : null;
-        const value = current.role === 'ADMIN' && rows.length ? rows.reduce((sum, row) => sum + row.value, 0) : null;
+        const value = rows.length ? rows.reduce((sum, row) => sum + row.value, 0) : null;
         if (quantity !== null && !Number.isSafeInteger(Math.round(quantity * 10000)) || value !== null && !Number.isSafeInteger(value)) fail('failed-precondition', '재고 합계 범위를 확인해 주세요.');
-        return { item: view('items', item.id, item.data(), current.role === 'ADMIN'), pendingOpening, status: rows.length ? 'RECORDED' : pendingOpening ? 'PENDING_COST' : 'UNINITIALIZED',
-          quantity, ...(current.role === 'ADMIN' ? { value, averagePrice: quantity > 0 ? value / quantity : null, currency: 'KRW' } : {}), warehouses: rows, checkedAt: now().toISOString() };
+        return { item: view('items', item.id, item.data(), true), pendingOpening, status: rows.length ? 'RECORDED' : pendingOpening ? 'PENDING_COST' : 'UNINITIALIZED',
+          quantity, value, averagePrice: quantity > 0 ? value / quantity : null, currency: 'KRW', warehouses: rows, checkedAt: now().toISOString() };
       });
     }
     const kind = data.kind;
@@ -210,6 +211,7 @@ function createErpService({ db, now = () => new Date() }) {
         nextCursor: snapshots.size > 50 ? { key: last.data()[field], id: last.id } : null };
     }
     const id = identifier(data.id);
+    if(data.requestId!==undefined)identifier(data.requestId);
     if (!Number.isSafeInteger(data.expectedRevision) || data.expectedRevision < 0) fail('invalid-argument', '자료 버전을 확인해 주세요.');
     const values = validate(kind, data.values), ref = collection.doc(id);
     return db.runTransaction(async tx => {
@@ -250,4 +252,4 @@ function createErpService({ db, now = () => new Date() }) {
   };
 }
 
-module.exports = { createErpService, erpMaster: { validate, normalize, keys, hash, identifier, verifyTenant } };
+module.exports = { createErpService: governedService(createErpService, 'master'), erpMaster: { validate, normalize, keys, hash, identifier, verifyTenant } };

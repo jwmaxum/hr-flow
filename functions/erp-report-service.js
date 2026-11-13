@@ -98,7 +98,7 @@ function createErpReportService({ db, now = () => new Date() }) {
     if (filters && !['summary','detail'].includes(input.view)) fail('invalid-argument', '총괄 또는 상세 원장을 선택해 주세요.');
     if (input.action === 'export' && input.cursor != null) fail('invalid-argument', '내려받기는 전체 조회 범위를 사용합니다.');
     return db.runTransaction(async tx => {
-      const user = await context(request, tx), canManage = user.role === 'ADMIN';
+      const user = await context(request, tx), canManage = true;
       const stateDoc = await tx.get(parent.collection('erpState').doc('ledger')), state = stateDoc.data();
       if (state) master.verifyTenant(state, user.companyId);
       const meta = { companyId: user.companyId, canManage, basisDate: state?.basisDate || null, lastDate: state?.lastDate || null, revision: state?.revision || 0 };
@@ -157,4 +157,4 @@ function createErpReportService({ db, now = () => new Date() }) {
     });
   };
 }
-module.exports = { createErpReportService, buildReport, projectSummary, projectDetail, filtersOf };
+module.exports = { createErpReportService: require('./erp-governance').governedService(createErpReportService, 'report'), buildReport, projectSummary, projectDetail, filtersOf };

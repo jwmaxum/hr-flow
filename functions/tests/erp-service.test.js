@@ -128,11 +128,8 @@ test('company-scoped ERP master data and inventory', async t => {
       await save('items', 'item-a', item({ purchasePrice: 9999, salePrice: 18000, active: false }), 1);
       const preserved = await call('inventory', { itemId: 'item-a' });
       assert.equal(preserved.quantity, 12.5); assert.equal(preserved.value, 15000); assert.equal(preserved.item.active, false);
-      const limited = await call('inventory', { itemId: 'item-a' }, 'member');
-      assert.equal(limited.quantity, 12.5); assert.equal('value' in limited, false); assert.equal('purchasePrice' in limited.item, false);
-      assert.ok(limited.warehouses.every(row => !('value' in row)));
-      const listing = await call('list', { kind: 'items' }, 'member');
-      assert.equal('salePrice' in listing.records[0], false); assert.equal(listing.canManage, false);
+      await reject(call('inventory', { itemId: 'item-a' }, 'member'), 'permission-denied');
+      await reject(call('list', { kind: 'items' }, 'member'), 'permission-denied');
       await reject(call('inventory', { itemId: 'item-a' }, 'foreign', 'b'), 'not-found');
       await db.doc('companies/a/erpInventory/balance-b').update({ companyId: 'b' });
       await reject(call('inventory', { itemId: 'item-a' }), 'failed-precondition');

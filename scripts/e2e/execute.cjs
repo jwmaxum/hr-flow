@@ -22,7 +22,7 @@ const { assertE2EEnvironment } = require('./safety.cjs');
     const child = spawn(process.execPath, ['--test', '--experimental-test-coverage', '--test-coverage-include=functions/erp-service.js',
       '--test-coverage-include=functions/erp-*.js', 'functions/tests/erp-service.test.js',
       'functions/tests/erp-import-files.test.js', 'functions/tests/erp-import-service.test.js', 'functions/tests/erp-ledger.test.js',
-      'functions/tests/erp-accounts.test.js', 'functions/tests/erp-documents.test.js', 'functions/tests/erp-document-pdf.test.js'], { cwd: root, env: process.env, stdio: 'inherit' });
+      'functions/tests/erp-accounts.test.js', 'functions/tests/erp-governance.test.js', 'functions/tests/erp-documents.test.js', 'functions/tests/erp-document-pdf.test.js'], { cwd: root, env: process.env, stdio: 'inherit' });
     child.once('error', reject); child.once('exit', code => resolve(code ?? 1));
   });
   if (erpCode !== 0) { process.exitCode = erpCode; return; }
