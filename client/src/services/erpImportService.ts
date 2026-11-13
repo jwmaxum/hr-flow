@@ -4,7 +4,7 @@ import { auth, functions } from '../firebase';
 import { useAuthStore } from '../store/authStore';
 
 export type ErpImportType = 'OPENING' | 'MOVEMENTS';
-export interface ManualLine { code: string; name: string; specification: string; unit: string; taxType: string; quantity: string; price: string; notes: string; amountMode?: 'UNIT' | 'TOTAL'; totalAmount?: string; fulfillment?: 'DIRECT' | 'HOLD' | 'BORROW'; custodyLotId?: string; borrowValue?: string }
+export interface ManualLine { code: string; name: string; specification: string; unit: string; taxType: string; quantity: string; price: string; notes: string; vatMode?: 'INCLUDED' | 'EXCLUDED' | 'EXEMPT' | 'ZERO'; amountMode?: 'UNIT' | 'TOTAL'; totalAmount?: string; fulfillment?: 'DIRECT' | 'HOLD' | 'BORROW'; custodyLotId?: string; borrowValue?: string }
 export interface ManualMovement {
   payment?:{status:'CREDIT'}|({status:'PAID'}&PaymentOptions);
   direction: '입고' | '출고'; date: string; warehouseId: string; partnerId?: string;

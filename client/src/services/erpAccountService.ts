@@ -1,3 +1,4 @@
+import type {ReportRow} from './erpLedgerService';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 import { erpScope } from './erpLedgerService';
@@ -39,13 +40,20 @@ export interface SettlementReport {
   summaries: {partnerId: string; partnerName: string; currency: string; documentBalance: number; unallocated: number; balance: number; overdueAmount: number; credit: number; undated: number}[];
 }
 export interface PaymentOptions {receiptMode:'REUSE_FIRST'|'NEW';confirmNew:boolean;notes:string}
-export interface PaymentInput extends PaymentOptions {documentId:string;date:string}
+export interface PaymentInput extends PaymentOptions {documentId:string;date:string;amount?:string;method?:string;reference?:string}
 export interface PaymentSummary {documentId:string;documentNo:string;partnerName:string;currency:string;date:string;billed:number;before:number;after:number;reused:number;newReceipt:number;receiptMode:string;allocations:{receiptReference:string;amount:number}[]}
 export interface PaymentJob {id:string;companyId:string;status:'PENDING'|'COMMITTED';fingerprint:string;input:PaymentInput;summary:PaymentSummary}
 export interface DashboardCurrency {currency:string;sales:number;salesGross:number;purchases:number;purchasesGross:number;creditSalesGross:number;unconfirmedSalesGross:number;receipts:number;outstanding:number;refundDue:number;documentOutstanding:number;unallocated:number}
 export interface DashboardTrade {id:string;date:string;documentNo:string;partnerName:string;kind:string;currency:string;supply:number;tax:number;gross:number;amountKRW:number}
 export interface ErpDashboard {companyId:string;companyName:string;snapshot:string;month:string;from:string;asOf:string;partialMonth:boolean;basisDate:string|null;inventoryValue:number;salesKRW:number;purchasesKRW:number;marginKRW:number;currencies:DashboardCurrency[];trend:{month:string;inventoryValue:number;salesKRW:number;purchasesKRW:number;outstandingKRW:number}[];assets:{itemId:string;warehouseId:string;code:string;name:string;unit:string;warehouseName:string;closingQuantity:number;closingValue:number}[];assetCount:number;sales:DashboardTrade[];saleCount:number;purchases:DashboardTrade[];purchaseCount:number;partners:SettlementReport['summaries'];partnerCount:number;pendingCount:number}
+export interface ShipmentFilters {from:string;to:string;search:string;status:'ALL'|'OPEN'|'PAID'|'REFUND'}
+export type ShipmentDocument = SettlementReport['documents'][number];
+export interface ShipmentList {companyId:string;asOf:string;snapshot:string;rows:ShipmentDocument[];total:number;nextOffset:number|null}
+export interface ShipmentLine extends ReportRow {quantity:number;returnableQuantity:number;supplyMinor:number;taxMinor:number;grossMinor:number;priceBasis:string;taxType:string;cost:number}
+export interface ShipmentDetail {companyId:string;asOf:string;document:ShipmentDocument & {supplyMinor:number;taxMinor:number};rows:ShipmentLine[];events:ReceivableEvent[];allocations:SettlementReport['allocations'];unallocated:number;partnerBalance:number;suggestedDate:string}
 export const erpFinance = {
+  shipments:(companyId:string,filters:ShipmentFilters,offset=0,snapshot?:string)=>call<ShipmentList>('manageErpFinance',companyId,'shipmentList',{...filters,offset,...(snapshot?{snapshot}:{})}),
+  shipment:(companyId:string,documentId:string)=>call<ShipmentDetail>('manageErpFinance',companyId,'shipmentDetail',{documentId}),
   dashboard:(companyId:string,month:string)=>call<ErpDashboard>('manageErpFinance',companyId,'dashboard',{month}),
   previewPayment:(companyId:string,id:string,input:PaymentInput)=>call<{job:PaymentJob}>('manageErpFinance',companyId,'paymentPreview',{id,input}),
   commitPayment:(companyId:string,job:PaymentJob)=>call<{job:PaymentJob}>('manageErpFinance',companyId,'paymentCommit',{id:job.id,fingerprint:job.fingerprint}),

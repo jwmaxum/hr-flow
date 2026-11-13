@@ -1,6 +1,7 @@
 const {fail}=require('./security-context');
 const {erpMaster:master}=require('./erp-service');
 const M=require('./erp-ledger-model');
+const {minor}=require('./erp-finance-model');
 const {settlementReport}=require('./erp-settlement-model');
 function paymentOptions(value){
   M.exactObject(value,['receiptMode','confirmNew','notes']);
@@ -16,7 +17,9 @@ function planPayment(data,input,identity,{allowZero=false}={}){
   if(!doc)fail('failed-precondition','해당 날짜의 확정 출고 문서를 찾을 수 없습니다.');
   if(doc.balance<0||!doc.balance&&!allowZero)fail('failed-precondition','이미 입금완료이거나 환불·초과수금 확인이 필요한 문서입니다.');
   const group=report.summaries.find(r=>r.partnerId===doc.partnerId&&r.currency===doc.currency);
-  let remaining=doc.balance,available=Math.max(0,group.unallocated),sequence=data.settlementState.revision||0;const allocations=[],receipts=[];
+  const target=input.amount === undefined ? doc.balance : minor(input.amount,doc.currency);
+  if(input.amount !== undefined && (!target || target > doc.balance))fail('invalid-argument','수금·배분 금액은 0보다 크고 문서 미수잔액 이하여야 합니다.');
+  let remaining=target,available=Math.max(0,group.unallocated),sequence=data.settlementState.revision||0;const allocations=[],receipts=[];
   const shared={companyId:identity.companyId,partnerId:doc.partnerId,partnerName:doc.partnerName,currency:doc.currency,date:input.date,notes:input.notes,createdAt:identity.createdAt,createdBy:identity.createdBy,sourceKind:'MANUAL_PAYMENT_CONFIRM',confirmationId:identity.id};
   function allocate(receiptId,amountMinor,reference){
     if(allocations.length>=50)fail('resource-exhausted','배분할 기존 수금이 50건을 초과합니다. 기존 수금을 먼저 배분해 주세요.');
@@ -28,8 +31,8 @@ function planPayment(data,input,identity,{allowZero=false}={}){
   }
   const newAmount=remaining;
   if(newAmount>Math.max(0,group.balance))fail('failed-precondition','다른 문서의 초과수금·미배분 수금이 있습니다. 기등록 수금을 우선 반영하거나 배분을 정리한 뒤 확인해 주세요.');
-  if(newAmount){const id=M.hash(['paid-receipt',identity.kind,identity.id]);receipts.push({...shared,id,type:'RECEIPT',amountMinor:newAmount,method:'OTHER',reference:doc.documentNo,sourceDocumentId:doc.id});allocate(id,newAmount,doc.documentNo);}
-  const summary={documentId:doc.id,documentNo:doc.documentNo,partnerName:doc.partnerName,currency:doc.currency,date:input.date,billed:doc.billed,before:doc.balance,after:remaining,reused:doc.balance-newAmount,newReceipt:newAmount,receiptMode:input.receiptMode,allocations:allocations.map(a=>({receiptReference:a.receiptReference,amount:a.lines[0].amountMinor}))};
+  if(newAmount){const id=M.hash(['paid-receipt',identity.kind,identity.id]);receipts.push({...shared,id,type:'RECEIPT',amountMinor:newAmount,method:input.method||'OTHER',reference:input.reference||doc.documentNo,sourceDocumentId:doc.id});allocate(id,newAmount,input.reference||doc.documentNo);}
+  const summary={documentId:doc.id,documentNo:doc.documentNo,partnerName:doc.partnerName,currency:doc.currency,date:input.date,billed:doc.billed,before:doc.balance,after:doc.balance-target,reused:target-newAmount,newReceipt:newAmount,receiptMode:input.receiptMode,allocations:allocations.map(a=>({receiptReference:a.receiptReference,amount:a.lines[0].amountMinor}))};
   return {summary,receipts,allocations,state:data.state,settlementState:data.settlementState,sequence,fingerprint:M.hash({data,input,identity,summary})};
 }
 function flushPayment(tx,parent,plan,at){
@@ -43,8 +46,11 @@ function createPaymentHandler({db,now,context,load}){
     M.exactObject(input,['action','companyId','id',...(input.action==='paymentPreview'?['input']:['fingerprint'])]);
     const id=master.identifier(input.id),ref=parent.collection('erpSettlementJobs').doc(id);let normalized;
     if(input.action==='paymentPreview'){
-      const value=M.exactObject(input.input,['documentId','date','receiptMode','confirmNew','notes']);
+      const value=M.exactObject(input.input,['documentId','date','receiptMode','confirmNew','notes','amount','method','reference']);
       const {receiptMode,confirmNew,notes}=value;normalized={documentId:master.identifier(value.documentId),date:M.date(value.date),...paymentOptions({receiptMode,confirmNew,notes})};
+      if(value.amount!==undefined){if(typeof value.amount!=='string'||value.amount.length>40)fail('invalid-argument','수금액을 확인해 주세요.');normalized.amount=value.amount;}
+      if(value.method!==undefined){if(!['BANK','CASH','CARD','OTHER'].includes(value.method))fail('invalid-argument','수금 방법을 선택해 주세요.');normalized.method=value.method;}
+      if(value.reference!==undefined)normalized.reference=M.text(value.reference,'입금 참조번호',100);
     }
     async function plan(tx,job){
       const data=await load(tx,parent),result=planPayment(data,job.input,{id:job.id,companyId:parent.id,kind:'DOCUMENT',createdAt:job.createdAt,createdBy:job.createdBy});

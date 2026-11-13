@@ -57,6 +57,48 @@ test('aging counts UTC calendar days across leap years and omits future financia
   const r=settlementReport(data,'2024-03-01');assert.deepEqual(r.totals,[{currency:'USD',balance:135,refundDue:0}]);assert.equal(r.documents[0].overdueDays,2);assert.equal(r.documents[0].overdueAmount,135);assert.equal(settlementReport(data,'2024-03-02').documents[0].overdueAmount,100);
 });
 test('receivables, bundles and customer custody remain atomic and tenant-scoped',async t=>{try{
+  await t.test('shipment workspace registers partial receipts atomically and reconciles returns at current date',async()=>{
+    await reset();const rows=await post('출고',[line()]);const doc=(await settlements()).documents[0];
+    const query={action:'shipmentList',from:'2026-11-01',to:'2026-11-12',search:'buyer',status:'OPEN'};
+    assert.equal((await finance(req(query))).rows[0].balance,660);
+    const loose=await preview(finance,payment({amount:'150'}));await commit(finance,loose);
+    const job=await paidPreview(doc.id,{amount:'200',method:'CASH',reference:'partial-1'});
+    assert.deepEqual([job.summary.reused,job.summary.newReceipt,job.summary.after],[150,50,460]);
+    const competing=await paidPreview(doc.id,{amount:'200'});await paidCommit(job);await reject(paidCommit(competing));assert.equal((await paidCommit(job)).idempotent,true);
+    const receipts=await records('erpReceipts');assert.equal(receipts.length,2);assert.equal(receipts.find(r=>r.reference==='partial-1').amountMinor,50);assert.equal(receipts.find(r=>r.reference==='partial-1').method,'CASH');
+    const detail=()=>finance(req({action:'shipmentDetail',documentId:doc.id}));
+    let d=await detail();assert.deepEqual([d.document.billed,d.document.supplyMinor,d.document.taxMinor,d.document.allocated,d.document.balance],[660,600,60,200,460]);assert.equal(d.rows[0].returnableQuantity,2);
+    const stale=await paidPreview(doc.id,{amount:'100'});await correct('SALES_RETURN',rows[0].id,'1');await reject(paidCommit(stale));
+    d=await detail();assert.deepEqual([d.document.billed,d.document.supplyMinor,d.document.taxMinor,d.document.balance,d.rows[0].returnableQuantity],[330,300,30,130,1]);
+    await paidCommit(await paidPreview(doc.id,{amount:'130'}));assert.equal((await finance(req({...query,status:'PAID'}))).total,1);
+    await correct('SALES_RETURN',rows[0].id,'1');d=await detail();assert.equal(d.document.balance,-330);assert.equal(d.rows[0].returnableQuantity,0);assert.equal((await finance(req({...query,status:'REFUND'}))).total,1);assert.equal((await finance(req({...query,status:'OPEN'}))).total,0);
+    for(const uid of [null,'member','manager','root','foreign'])for(const input of [query,{action:'shipmentDetail',documentId:doc.id}])await reject(finance(req(input,uid)),uid?'permission-denied':'unauthenticated');
+    await reject(finance(req({action:'shipmentDetail',documentId:'foreign-doc'})),'not-found');await reject(finance(req({...query,status:'UNKNOWN'})),'invalid-argument');await reject(finance(req({...query,offset:30,snapshot:'stale'})));
+  });
+  await t.test('partial receipt amounts enforce currency precision and current document limits',async()=>{
+    await reset();await post('출고',[line()]);const doc=(await settlements()).documents[0];
+    for(const amount of ['0','-1','660.1','661','NaN','1e3'])await reject(paidPreview(doc.id,{amount}),'invalid-argument');
+    await reject(paidPreview(doc.id,{method:'WIRE'}),'invalid-argument');await reject(paidPreview(doc.id,{amount:100}),'invalid-argument');
+    await post('출고',[line('PART','1','1')],{currency:'USD',exchangeRate:'1400'});const usd=(await settlements()).documents.find(d=>d.currency==='USD');
+    const job=await paidPreview(usd.id,{amount:'0.01'});assert.equal(job.summary.after,109);await paidCommit(job);await reject(paidPreview(usd.id,{amount:'0.001'}),'invalid-argument');
+    const d=await finance(req({action:'shipmentDetail',documentId:usd.id}));assert.deepEqual([d.document.billed,d.document.supplyMinor,d.document.taxMinor,d.document.balance],[110,100,10,109]);
+  });
+  await t.test('shipment details hide component stock rows and preserve their historical return costs',async()=>{
+    await reset();await post('입고',[line('PART2','10','50')]);
+    await save('items','set',{...itemValues('SET','세트'),itemType:'BUNDLE',components:[{itemId:'part',quantity:'2'},{itemId:'part2',quantity:'1'}]});
+    await post('출고',[line('SET','2','300')]);const doc=(await settlements()).documents[0];
+    let d=await finance(req({action:'shipmentDetail',documentId:doc.id}));assert.equal(d.rows.length,1);assert.equal(d.rows[0].cost,500);
+    await correct('SALES_RETURN',d.rows[0].id,'1');d=await finance(req({action:'shipmentDetail',documentId:doc.id}));assert.equal(d.rows[0].returnableQuantity,1);assert.equal(d.document.billed,330);
+    assert.equal((await stock('part')).quantity,8);assert.equal((await stock('part2')).quantity,9);
+  });
+  await t.test('mixed VAT modes persist matching gross, net and tax and keep historical shipment searches current',async()=>{
+    await reset(false);await post('입고',[line('PART','10','100')],{date:'2026-11-02'});
+    const rows=await post('출고',['INCLUDED','EXCLUDED','EXEMPT'].map(vatMode=>line('PART','1','1000',{vatMode})),{date:'2026-11-03',priceBasis:'세금포함'});
+    const doc=(await settlements()).documents[0];assert.equal(doc.billed,3100);assert.deepEqual(rows.sort((a,b)=>a.rowNo-b.rowNo).map(r=>[r.supply,r.tax,r.total]),[[909,91,1000],[1000,100,1100],[1000,0,1000]]);
+    await paidCommit(await paidPreview(doc.id,{amount:'100'}));
+    const result=await finance(req({action:'shipmentList',from:'2026-11-03',to:'2026-11-03'}));assert.equal(result.rows[0].balance,3000);assert.equal(result.asOf,'2026-11-12');
+    await correct('CANCEL',rows[0].id);const d=await finance(req({action:'shipmentDetail',documentId:doc.id}));assert.ok(d.rows.every(r=>r.cancelledBy&&r.returnableQuantity===0));assert.equal(d.document.balance,-100);
+  });
   await t.test('gross receivables, partial receipts, refunds and reversals reconcile',async()=>{
     await reset();const [sale]=await post('출고',[line()]);let r=await report();assert.deepEqual([r.rows[0].sales,r.rows[0].tax,r.rows[0].balance],[600,60,660]);
     const job=await preview(finance,payment({amount:'400'}));assert.equal(job.after,260);const duplicate=await Promise.all([commit(finance,job),commit(finance,job)]);assert.equal(duplicate.filter(r=>r.idempotent).length,1);

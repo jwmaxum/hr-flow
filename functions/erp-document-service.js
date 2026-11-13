@@ -192,7 +192,7 @@ function createErpDocumentService({ db, bucket, renderPdf, now = () => new Date(
   }
   const audit = (tx, parent, user, id, action, extra = {}) => tx.create(parent.collection('erpAudit').doc(), { companyId: parent.id, actorId: user.uid, recordId: id, kind: 'ISSUED_DOCUMENT', action, at: now().toISOString(), ...extra });
   return async request => {
-    const fields = { meta: [], saveProfile: ['profile', 'expectedVersion'], list: ['cursor'], get: ['id'], sources: ['documentNo', 'kind'],
+    const fields = { meta: [], saveProfile: ['profile', 'expectedVersion'], list: ['cursor','sourceDocumentNo'], get: ['id'], sources: ['documentNo', 'kind'],
       save: ['id', 'expectedRevision', 'input'], issue: ['id', 'expectedRevision', 'fingerprint', 'confirm'], pdf: ['id'], previewPdf: ['id', 'expectedRevision'],
       cancel: ['id', 'expectedRevision', 'reason', 'confirm'], revise: ['id', 'sourceId'] };
     const input = request.data;
@@ -216,6 +216,14 @@ function createErpDocumentService({ db, bucket, renderPdf, now = () => new Date(
       });
     }
     if (input.action === 'list') return db.runTransaction(async tx => {
+      if(input.sourceDocumentNo!==undefined){
+        await context(request,tx);if(input.cursor)fail('invalid-argument','연결 문서 조회는 새로고침해 주세요.');
+        const documentNo=text(input.sourceDocumentNo,'출고 문서번호',80,true);
+        const found=await tx.get(collection.where('input.sourceDocumentNo','==',documentNo).limit(201));
+        if(found.size>200)fail('resource-exhausted','연결 서류가 200건을 초과했습니다. 관리자에게 문의해 주세요.');
+        found.docs.forEach(doc=>master.verifyTenant(doc.data(),user.companyId));
+        return {documents:found.docs.map(doc=>view(doc.id,doc.data(),false)).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)||b.id.localeCompare(a.id)),cursor:null};
+      }
       await context(request, tx); let query = collection.orderBy('updatedAt', 'desc').orderBy(FieldPath.documentId(), 'desc');
       if (input.cursor) { exactObject(input.cursor, ['updatedAt', 'id']); query = query.startAfter(text(input.cursor.updatedAt, '목록 위치', 30, true), master.identifier(input.cursor.id)); }
       const result = await tx.get(query.limit(21)), selected = result.docs.slice(0, 20), last = selected.at(-1);

@@ -71,6 +71,14 @@ async function inventory() {
 }
 
 test('ERP PDF issuance, source allocation and private archive', async t => { try {
+  await t.test('source-filtered archive includes only the selected shipment and rejects foreign access',async()=>{
+    const source=await reset(),draft=await save(input(source,'STATEMENT'));
+    await save(input(source,'PROFORMA'));
+    const list=await call('list',{sourceDocumentNo:'OUT-001'});assert.deepEqual(list.documents.map(d=>d.id),[draft.id]);assert.equal(list.cursor,null);
+    assert.equal((await call('list',{sourceDocumentNo:'NOT-THERE'})).documents.length,0);
+    await assert.rejects(call('list',{sourceDocumentNo:'OUT-001',cursor:'bad'}),e=>e.code==='invalid-argument');
+    await assert.rejects(call('list',{sourceDocumentNo:'OUT-001'},'foreign'),e=>e.code==='permission-denied');
+  });
   await t.test('bundle statements show the sale once and preserve the company seal without printing component stock rows', async () => {
     const existing = await reset();
     const extra=await imports(request({action:'preview',id:'extra-part',type:'MOVEMENTS',source:await workbook('MOVEMENTS',[movement({1:2,2:'입고',3:'IN-EXTRA',5:'EXTRA',6:'추가 구성품',11:10,12:50})]),options:{allowNewItems:true,allowNewPartners:true}}));assert.equal(extra.import.preview.canCommit,true);await imports(request({action:'commit',id:extra.import.id,fingerprint:extra.import.preview.fingerprint}));const extraPart=(await parent().collection('erpItems').where('code','==','EXTRA').get()).docs[0].id;

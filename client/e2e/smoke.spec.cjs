@@ -556,7 +556,7 @@ test('ERP manual inbound and outbound preserve receipt prices, value inventory a
   await actor.page.getByRole('combobox', { name: '출고 창고 *', exact: true }).selectOption('warehouse');
   await actor.page.getByLabel('거래일 *', { exact: true }).fill('2026-11-03');
   await actor.page.getByRole('combobox', { name: '거래처 *', exact: true }).selectOption({ label: 'MANPART · 직접 거래처' });
-  await actor.page.getByRole('combobox', { name: '금액 기준', exact: true }).selectOption('세금포함');
+  await actor.page.getByRole('combobox', { name: '1번 판매단가 부가세 구분', exact: true }).selectOption('INCLUDED');
   await actor.page.getByLabel('출고수량 *', { exact: true }).fill('5');
   await actor.page.getByLabel('판매단가 (KRW) *', { exact: true }).fill('330');
   await actor.page.getByRole('combobox',{name:'출고 입금상태 *',exact:true}).selectOption('PAID');
@@ -565,9 +565,9 @@ test('ERP manual inbound and outbound preserve receipt prices, value inventory a
   await expect(preview.getByRole('alert').filter({hasText:'재고 부족'})).toBeVisible({timeout:65000});await expect(preview.getByLabel('입금완료 금액 확인',{exact:true})).toHaveCount(0);
   await actor.page.getByLabel('출고수량 *',{exact:true}).fill('5');
   await actor.page.getByRole('button', { name: '검증·미리보기', exact: true }).click();
-  await expect(preview.getByText('매출액 (공급가액)', { exact: true })).toBeVisible({ timeout: 65000 });
+  await expect(preview.getByText('공급가액 (부가세 제외)', { exact: true })).toBeVisible({ timeout: 65000 });
   await expect(preview.getByRole('cell', { name: '3,000 → 2,250', exact: true })).toBeVisible();
-  await expect(preview.getByText('원화 매출액 1,500원 · 매출총이익 750원', { exact: true })).toBeVisible();
+  await expect(preview.getByText('원화 공급가액 매출 1,500원 · 매출총이익 (부가세 제외) 750원', { exact: true })).toBeVisible();
   await preview.getByRole('checkbox', { name: '수량·단가·거래처와 재고 변동을 확인했습니다.', exact: true }).check();
   await preview.getByRole('button', { name: '출고 확정', exact: true }).click();
   await expect(preview.getByRole('heading', { name: '출고 확정 완료', exact: true })).toBeVisible({ timeout: 65000 });
@@ -591,6 +591,35 @@ test('ERP manual inbound and outbound preserve receipt prices, value inventory a
 
   expect(await actor.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
+});
+
+test('ERP shipment workspace collects partial payments, returns stock and issues linked statements on desktop and mobile',async({browser},testInfo)=>{
+  test.setTimeout(360000);await clearErpFixture(fixtures.companyA);
+  const foreignBefore=await readErpInventory(fixtures.companyB),owner=await actorFor(browser,testInfo);await login(owner,fixtures.accounts.adminA);const page=owner.page;
+  async function call(name,data){const response=await probe(owner,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/${name}`,{method:'POST',body:{data:{companyId:fixtures.companyA,...data}}});expect(response.status,`${name}/${data.action}`).toBe(200);return JSON.parse(Buffer.from(response.bytes).toString()).result;}
+  await call('manageErp',{action:'save',kind:'warehouses',id:'workspace-warehouse',expectedRevision:0,values:{code:'WH-01',name:'본사 창고',active:true,address:'',notes:''}});
+  for(const[type,rows]of [['OPENING',[erpOpening()]],['MOVEMENTS',[erpMovement({2:'출고',3:'WORKSPACE-001',11:5,12:300})]]]){const p=await call('manageErpImport',{action:'preview',id:randomUUID(),type,source:await erpWorkbook(type,rows),options:{allowNewItems:true,allowNewPartners:true}});expect(p.import.preview.canCommit).toBe(true);await call('manageErpImport',{action:'commit',id:p.import.id,fingerprint:p.import.preview.fingerprint});}
+  const official=await call('manageOfficialLetters',{action:'bootstrap'}),stamp=require('../../functions/tests/erp-document-pdf-fixtures.cjs').sealPng();
+  await call('manageOfficialLetters',{action:'saveSettings',expectedVersion:official.settings?.version||0,settings:{companyName:'통합 검증 회사',companyNameEn:'Workspace Sample',address:'서울 검증로 10',representative:'김검증',phone:'',email:'',logoData:`data:image/png;base64,${stamp.toString('base64')}`,sealData:`data:image/png;base64,${stamp.toString('base64')}`,sealWidthMm:28,sealHeightMm:18}});
+  await page.goto('/#/erp');await page.getByRole('button',{name:'출고 문서 관리',exact:true}).click();
+  const lookup=page.getByRole('region',{name:'출고 문서 조회',exact:true});await lookup.getByLabel('출고 시작일',{exact:true}).fill('2026-11-01');await lookup.getByLabel('출고 종료일',{exact:true}).fill('2026-11-30');await lookup.getByRole('button',{name:'출고 문서 조회',exact:true}).click();
+  await page.getByRole('button',{name:'WORKSPACE-001 상세 보기',exact:true}).click();
+  const detail=page.getByRole('region',{name:'선택 출고 문서',exact:true});await expect(detail.getByText('공급가액 1,500 + 부가세 150',{exact:true})).toBeVisible({timeout:65000});
+  const receipt=page.getByRole('region',{name:'출고 문서 수금 등록',exact:true});await receipt.getByLabel('수금일 *',{exact:true}).fill('2026-11-12');await receipt.getByLabel('이 문서에 반영할 수금액 *',{exact:true}).fill('500');await receipt.getByLabel('입금 참조번호',{exact:true}).fill('부분입금-01');await receipt.getByLabel('입금 확인 메모 *',{exact:true}).fill('자체 은행 확인');await receipt.getByRole('button',{name:'문서 수금 미리보기',exact:true}).click();
+  await expect(receipt.getByText('문서 미수잔액: 1,650 → 1,150 KRW',{exact:true})).toBeVisible({timeout:65000});await receipt.getByRole('checkbox',{name:'기존 수금·새 입금액과 문서 잔액을 확인했습니다.',exact:true}).check();await receipt.getByRole('button',{name:'문서 수금 확정',exact:true}).click();await expect(receipt.getByText('수금과 문서 배분을 함께 반영했습니다.',{exact:true})).toBeVisible({timeout:65000});
+  await detail.getByRole('heading',{name:'WORKSPACE-001 · 합성 거래처',exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-shipment-receipt.png'),fullPage:true});
+  await detail.getByRole('button',{name:'반품 처리',exact:true}).click();await detail.getByRole('button',{name:'0001 반품 처리',exact:true}).click();
+  const correction=detail.getByRole('region',{name:'취소 반품 조정 처리',exact:true});await correction.getByLabel('처리일',{exact:true}).fill('2026-11-12');await correction.getByLabel('처리 사유',{exact:true}).fill('통합 화면 반품 검증');await correction.getByRole('textbox',{name:/반품 수량/}).fill('1');await correction.getByRole('button',{name:'변동 미리보기',exact:true}).click();await expect(correction.getByRole('heading',{name:/변동 미리보기 ·/})).toBeVisible({timeout:65000});await correction.getByRole('checkbox',{name:'사유와 전체 변동 내역을 확인했습니다.',exact:true}).check();await correction.getByRole('button',{name:'취소·반품·조정 확정',exact:true}).click();
+  await expect(page.getByText('반품을 반영하고 재고·매출·미수잔액을 갱신했습니다.',{exact:true})).toBeVisible({timeout:65000});await expect(detail.getByText('공급가액 1,200 + 부가세 120',{exact:true})).toBeVisible();expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{quantity:6,value:600}]);
+  // Delay the superseded StrictMode request until after issuance; stale bootstrap must not replace the issued document.
+  let releaseSource,sourceDelivered,sourceCalls=0;const heldSource=new Promise(resolve=>{releaseSource=resolve;}),deliveredSource=new Promise(resolve=>{sourceDelivered=resolve;});
+  await page.route('**/manageErpDocuments',async route=>{if(route.request().postDataJSON()?.data?.action==='sources'&&++sourceCalls===1){const response=await route.fetch();await heldSource;await route.fulfill({response});sourceDelivered();}else await route.fallback();});
+  await detail.getByRole('button',{name:'거래명세표 발행',exact:true}).click();await expect(detail.getByRole('heading',{name:'거래명세표 · 초안',exact:true})).toBeVisible({timeout:65000});await expect(detail.getByLabel('확정 출고 문서번호 *',{exact:true})).toHaveAttribute('readonly','');
+  await detail.getByRole('button',{name:'초안 저장·금액 확인',exact:true}).click();await expect(detail.locator('.erp-document-total')).toHaveText('합계 1,320 KRW',{timeout:65000});await detail.getByRole('checkbox',{name:'거래처·금액·등록 인감을 확인했습니다.',exact:true}).check();await detail.getByRole('button',{name:'발행 확정',exact:true}).click();await expect(detail.getByRole('status').filter({hasText:'발행이 완료되었습니다.'})).toBeVisible({timeout:65000});expect(sourceCalls).toBeGreaterThanOrEqual(2);releaseSource();await deliveredSource;await expect(detail.getByRole('heading',{name:'거래명세표 · 발행',exact:true})).toBeVisible();
+  const pending=page.waitForEvent('download',{timeout:65000});await detail.getByRole('button',{name:'발행 PDF 내려받기',exact:true}).click({timeout:30000});const file=await pending,stream=await file.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);const bytes=Buffer.concat(chunks);expect(bytes.subarray(0,5).toString()).toBe('%PDF-');expect(bytes.length).toBeGreaterThan(10000);await file.saveAs(testInfo.outputPath('erp-shipment-statement.pdf'));
+  await detail.locator('.erp-document-editor').scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-shipment-statement.png'),fullPage:true});
+  const list=await call('manageErpFinance',{action:'shipmentList',from:'2026-11-01',to:'2026-11-30',status:'OPEN'});expect(list.rows).toHaveLength(1);expect(list.rows[0]).toMatchObject({billed:1320,allocated:500,balance:820});expect((await call('manageErpDocuments',{action:'list',sourceDocumentNo:'WORKSPACE-001'})).documents.filter(d=>d.status==='ISSUED')).toHaveLength(1);
+  await detail.getByRole('button',{name:'수금 등록·내역',exact:true}).click();await expect(receipt.getByText('미수잔액 820 KRW · 거래처의 미배분 순수금 0 KRW',{exact:true})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
 });
 
 test('ERP bundles, receivables and borrowed customer goods connect through desktop and mobile forms', async ({ browser }, testInfo) => {

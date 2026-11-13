@@ -32,7 +32,7 @@ async function call<T>(companyId: string, action: string, data: Record<string, u
 export const erpDocumentService = {
   meta: (companyId: string) => call<DocumentMeta>(companyId, 'meta'),
   saveProfile: (companyId: string, profile: PrintProfile) => { const { version, ...values } = profile; return call<{ profile: PrintProfile }>(companyId, 'saveProfile', { profile: values, expectedVersion: version }); },
-  list: (companyId: string, cursor?: DocumentCursor) => call<{ documents: TradeDocument[]; cursor: DocumentCursor | null }>(companyId, 'list', cursor ? { cursor } : {}),
+  list: (companyId: string, cursor?: DocumentCursor, sourceDocumentNo?: string) => call<{ documents: TradeDocument[]; cursor: DocumentCursor | null }>(companyId, 'list', { ...(cursor ? {cursor} : {}), ...(sourceDocumentNo ? {sourceDocumentNo} : {}) }),
   get: (companyId: string, id: string) => call<DocumentResult>(companyId, 'get', { id }),
   sources: (companyId: string, documentNo: string, kind: DocumentKind) => call<SourceDocument>(companyId, 'sources', { documentNo, kind }),
   save: (companyId: string, id: string, expectedRevision: number, input: DocumentInput) => call<DocumentResult>(companyId, 'save', { id, expectedRevision, input }),

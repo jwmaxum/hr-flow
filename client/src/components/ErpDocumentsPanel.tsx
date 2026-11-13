@@ -36,8 +36,8 @@ function ProfileEditor({ meta, busy, save }: { meta: DocumentMeta; busy: boolean
   </details>;
 }
 
-function DraftEditor({ companyId, document, items, partners, busy, onSave, onIssue, onPdf, onDirty, moreItems, morePartners, initialSource }: {
-  companyId: string; document: TradeDocument; items: ErpRecord[]; partners: ErpRecord[]; busy: boolean;
+function DraftEditor({ companyId, document, items, partners, busy, onSave, onIssue, onPdf, onDirty, moreItems, morePartners, initialSource, lockedSource }: {
+  lockedSource?: boolean; companyId: string; document: TradeDocument; items: ErpRecord[]; partners: ErpRecord[]; busy: boolean;
   onSave: (value: DocumentInput) => void; onIssue: () => void; onPdf: () => void; onDirty: (value: boolean) => void;
   moreItems?: () => void; morePartners?: () => void; initialSource?: SourceDocument | null;
 }) {
@@ -69,7 +69,7 @@ function DraftEditor({ companyId, document, items, partners, busy, onSave, onIss
         <label className="wf-field"><span>통화 *</span><select className="wf-input" value={form.currency} onChange={event => change({ currency: event.target.value })}>{['KRW', 'USD', 'EUR', 'JPY', 'CNY'].map(currency => <option key={currency}>{currency}</option>)}</select></label>
         <label className="wf-field"><span>Buyer name (영문) *</span><input className="wf-input" required maxLength={200} value={form.buyerNameEn} onChange={event => change({ buyerNameEn: event.target.value })} /></label>
         <label className="wf-field"><span>Buyer address (영문) *</span><input className="wf-input" required maxLength={300} value={form.buyerAddressEn} onChange={event => change({ buyerAddressEn: event.target.value })} /></label></> :
-        <div className="wf-field"><label htmlFor="erp-document-source-number">확정 출고 문서번호 *</label><div className="erp-document-source"><input id="erp-document-source-number" className="wf-input" required maxLength={80} value={form.sourceDocumentNo} onChange={event => { setSource(null); change({ sourceDocumentNo: event.target.value, lines: [], partnerId: '' }); }} />
+        <div className="wf-field"><label htmlFor="erp-document-source-number">확정 출고 문서번호 *</label><div className="erp-document-source"><input id="erp-document-source-number" readOnly={lockedSource} className="wf-input" required maxLength={80} value={form.sourceDocumentNo} onChange={event => { setSource(null); change({ sourceDocumentNo: event.target.value, lines: [], partnerId: '' }); }} />
           <button type="button" className="wf-btn" onClick={() => void loadSource()} disabled={!form.sourceDocumentNo || disabled}>{sourceBusy ? '불러오는 중…' : '출고 불러오기'}</button></div></div>}
     </fieldset>
     {!proforma && <p className="erp-form-note">입출고 총괄·원장의 출고 문서번호를 입력하세요. 취소·반품·같은 종류의 기발행 수량을 제외한 범위에서 일부 또는 전체를 선택합니다. {source && `${source.partnerName} · ${source.currency}`}</p>}
@@ -112,7 +112,7 @@ function DraftEditor({ companyId, document, items, partners, busy, onSave, onIss
   </form>;
 }
 
-export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '' }: { companyId: string; initialSourceDocumentNo?: string }) {
+export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '', embedded = false }: { companyId: string; initialSourceDocumentNo?: string; embedded?: boolean }) {
   const [initialSource, setInitialSource] = useState<SourceDocument | null>(null);
   const [meta, setMeta] = useState<DocumentMeta | null>(null), [documents, setDocuments] = useState<TradeDocument[]>([]), [cursor, setCursor] = useState<DocumentCursor | null>(null);
   const [items, setItems] = useState<ErpRecord[]>([]), [partners, setPartners] = useState<ErpRecord[]>([]), [itemCursor, setItemCursor] = useState<ErpCursor | null>(null), [partnerCursor, setPartnerCursor] = useState<ErpCursor | null>(null);
@@ -120,24 +120,25 @@ export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '' }: {
   const [reason, setReason] = useState(''), [cancelChecked, setCancelChecked] = useState(false);
   const live = useRef(true), pending = useRef(false), errorRef = useRef<HTMLParagraphElement>(null), revisionIds = useRef(new Map<string, string>());
   useEffect(() => {
-    live.current = true;
-    void Promise.all([api.meta(companyId), api.list(companyId), erpService.list(companyId, 'items', '', 'name'), erpService.list(companyId, 'partners', '', 'name'), initialSourceDocumentNo ? api.sources(companyId, initialSourceDocumentNo, 'STATEMENT') : Promise.resolve(null)]).then(([m, list, i, p, source]) => {
-      if (!live.current) return; setMeta(m); setDocuments(list.documents); setCursor(list.cursor); setItems(i.records); setItemCursor(i.nextCursor); setPartners(p.records); setPartnerCursor(p.nextCursor);
-      if (source) {
+    let active=true;live.current = true;
+    const sourceRequest=initialSourceDocumentNo?api.sources(companyId,initialSourceDocumentNo,'STATEMENT').catch(failure=>{if(!embedded)throw failure;if(active)setError(getErrorMessage(failure));return null;}):Promise.resolve(null);
+    void Promise.all([api.meta(companyId), api.list(companyId, undefined, embedded ? initialSourceDocumentNo : undefined), erpService.list(companyId, 'items', '', 'name'), erpService.list(companyId, 'partners', '', 'name'), sourceRequest]).then(([m, list, i, p, source]) => {
+      if (!active) return; setMeta(m); setDocuments(list.documents); setCursor(list.cursor); setItems(i.records); setItemCursor(i.nextCursor); setPartners(p.records); setPartnerCursor(p.nextCursor);
+      if (source && (!embedded || source.rows.some(row => row.available > 0))) {
         const draft = blank(companyId, 'STATEMENT');
         draft.input = { ...draft.input!, sourceDocumentNo: source.documentNo, currency: source.currency, partnerId: source.partnerId,
           lines: source.rows.filter(row => row.available > 0).map(row => ({ sourceId: row.id, quantity: String(row.available), notes: '' })) };
         setInitialSource(source); setSelected(draft); setNotice('확정 출고를 불러왔습니다. 초안을 저장하고 금액을 확인한 뒤 발행해 주세요.');
       }
-    }).catch(failure => { if (live.current) setError(getErrorMessage(failure)); }).finally(() => { if (live.current) setBusy(false); });
-    return () => { live.current = false; };
-  }, [companyId, initialSourceDocumentNo]);
+    }).catch(failure => { if (active) setError(getErrorMessage(failure)); }).finally(() => { if (active) setBusy(false); });
+    return () => { active=false;live.current = false; };
+  }, [companyId, initialSourceDocumentNo, embedded]);
   async function run(action: () => Promise<void>) {
     if (pending.current || busy) return; pending.current = true; setBusy(true); setError(''); setNotice('');
     try { await action(); } catch (failure) { if (live.current) { setError(getErrorMessage(failure)); setTimeout(() => errorRef.current?.focus(), 0); } }
     finally { pending.current = false; if (live.current) setBusy(false); }
   }
-  async function refresh() { const list = await api.list(companyId); if (live.current) { setDocuments(list.documents); setCursor(list.cursor); } }
+  async function refresh() { const list = await api.list(companyId, undefined, embedded ? initialSourceDocumentNo : undefined); if (live.current) { setDocuments(list.documents); setCursor(list.cursor); } }
   function select(doc: TradeDocument) { setSelected(doc); setDirty(false); setReason(''); setCancelChecked(false); }
   async function result(action: Promise<DocumentResult>, message: string) {
     const response = await action; if (!live.current) return; select(response.document); setNotice(response.warning || message); await refresh();
@@ -151,13 +152,13 @@ export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '' }: {
   }
   return <div className="erp-documents" aria-busy={busy}>
     <section className="wf-panel erp-document-intro"><div className="erp-list-head"><div><h2 className="wf-section-title">거래서류 발행</h2><p className="wf-muted">회사 인감과 발행 당시의 거래 내용을 PDF로 보관합니다.</p></div><button className="wf-btn" disabled={busy} aria-label="거래서류 새로고침" onClick={() => void run(async () => { const m = await api.meta(companyId); if (live.current) setMeta(m); await refresh(); })}><RefreshCw size={16} /></button></div>
-      <div className="erp-actions">{(Object.keys(labels) as DocumentKind[]).map(kind => <button className="wf-btn" disabled={busy} key={kind} onClick={() => { select(blank(companyId, kind)); setNotice(''); }}><FilePlus2 size={16} />{labels[kind]} 작성</button>)}</div>
+      <div className="erp-actions">{(embedded ? ['STATEMENT'] as DocumentKind[] : Object.keys(labels) as DocumentKind[]).map(kind => <button className="wf-btn" disabled={busy} key={kind} onClick={() => { const next=blank(companyId, kind); if(embedded)next.input!.sourceDocumentNo=initialSourceDocumentNo; select(next); setNotice(''); }}><FilePlus2 size={16} />{labels[kind]} 작성</button>)}</div>
       {meta && !meta.canIssue && <p className="erp-notice">발행하려면 <Link to="/documents">회사 서류 템플릿</Link>에 회사명·주소·대표자·법인 인감을 등록해 주세요.</p>}
     </section>
     {error && <p role="alert" tabIndex={-1} ref={errorRef} className="erp-error">{error}</p>}{notice && <p role="status" className="erp-success">{notice}</p>}
     {meta && <ProfileEditor key={meta.profile.version} meta={meta} busy={busy} save={value => void run(async () => { await api.saveProfile(companyId, value); const next = await api.meta(companyId); if (live.current) { setMeta(next); setNotice('공급자 출력 설정을 저장했습니다. 기존 초안은 다시 저장해 주세요.'); } })} />}
     {selected && <section className="wf-panel erp-document-editor" aria-label="거래서류 편집"><div className="erp-list-head"><div><h2 className="wf-section-title">{labels[selected.kind]} · {statusLabel[selected.status]}</h2><p className="wf-muted">{selected.number || '발행 시 번호 자동 부여'}{selected.replacesNumber && ` · 정정 ${selected.edition}차 / 원본 ${selected.replacesNumber}`}</p></div><button className="wf-btn" disabled={busy} onClick={() => setSelected(null)}>닫기</button></div>
-      {selected.status === 'DRAFT' ? <DraftEditor key={`${selected.id}:${selected.revision}`} companyId={companyId} document={selected} items={items} partners={partners} busy={busy} initialSource={initialSource}
+      {selected.status === 'DRAFT' ? <DraftEditor key={`${selected.id}:${selected.revision}`} companyId={companyId} lockedSource={embedded} document={selected} items={items} partners={partners} busy={busy} initialSource={initialSource}
         onDirty={setDirty} onSave={input => void run(() => result(api.save(companyId, selected.id, selected.revision, input), '초안을 저장했습니다. 금액을 확인한 뒤 발행해 주세요.'))}
         onIssue={() => void run(() => result(api.issue(companyId, selected), '발행이 완료되었습니다. PDF를 내려받을 수 있습니다.'))} onPdf={() => void run(() => download(selected, true))}
         moreItems={itemCursor ? () => void run(async () => { const next = await erpService.list(companyId, 'items', '', 'name', itemCursor); if (live.current) { setItems(current => [...current, ...next.records]); setItemCursor(next.nextCursor); } }) : undefined}
@@ -178,7 +179,7 @@ export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '' }: {
       {dirty && <p className="erp-form-note">저장하지 않은 변경사항이 있습니다.</p>}
     </section>}
     <section className="wf-panel" aria-label="거래서류 목록"><div className="erp-list-head"><h2 className="wf-section-title">초안·발행 내역</h2></div><div className="erp-table-scroll" tabIndex={0} role="region" aria-label="거래서류 목록 가로 스크롤"><table className="erp-table erp-document-list"><thead><tr><th>문서번호·종류</th><th>거래처</th><th>발행일</th><th>합계</th><th>상태</th><th>열기</th></tr></thead><tbody>{documents.map(doc => <tr key={doc.id}><td>{doc.number || '번호 미부여'}<small className="erp-cell-note">{labels[doc.kind]}{doc.edition > 1 ? ` · 정정 ${doc.edition}차` : ''}</small></td><td>{doc.buyerName || '초안 작성 중'}</td><td>{doc.issueDate}</td><td className="erp-number">{money(doc.totalMinor, doc.currency)}</td><td>{statusLabel[doc.status]}</td><td><button className="wf-btn" disabled={busy} aria-label={`${doc.number || labels[doc.kind]} 열기`} onClick={() => void run(async () => { const loaded = await api.get(companyId, doc.id); if (live.current) select(loaded.document); })}>열기</button></td></tr>)}</tbody></table></div>
-      {!documents.length && <p className="erp-empty">저장된 거래서류가 없습니다.</p>}{cursor && <div className="erp-more"><button className="wf-btn" disabled={busy} onClick={() => void run(async () => { const next = await api.list(companyId, cursor); if (live.current) { setDocuments(current => [...current, ...next.documents]); setCursor(next.cursor); } })}>발행 내역 더 보기</button></div>}
+      {!documents.length && <p className="erp-empty">저장된 거래서류가 없습니다.</p>}{cursor && <div className="erp-more"><button className="wf-btn" disabled={busy} onClick={() => void run(async () => { const next = await api.list(companyId, cursor, embedded ? initialSourceDocumentNo : undefined); if (live.current) { setDocuments(current => [...current, ...next.documents]); setCursor(next.cursor); } })}>발행 내역 더 보기</button></div>}
     </section>
   </div>;
 }

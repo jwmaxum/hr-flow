@@ -31,13 +31,15 @@ function createErpFinanceService({ db, now = () => new Date(), renderFinancePdf 
     const delta = nextEvents.find(row => row.id === job.id).receipt;
     return { entry, before: balance, after: M.signed(balance - delta), state: data.state, fingerprint: M.hash({ input, state: data.state, ledger: data.ledger, events: data.events, partner: partner.data(), entry }) };
   }
+  const shipments=require('./erp-shipment-service').createShipmentHandler({db,now,context,load});
   const paymentHandler=createPaymentHandler({db,now,context,load});
   const dashboard=createDashboardHandler({db,now,context,load});
   const exportReport=createFinanceExportHandler({db,now,context,load,dashboard,renderPdf:renderFinancePdf});
   const settlement = createSettlementHandler({db,now,context,load});
   return async request => {
-    const input = M.exactObject(request.data, ['action','companyId','from','to','partnerId','offset','snapshot','id','input','fingerprint','month','format']);
-    if (!['dashboardExport','statementExport','dashboard','paymentPreview','paymentCommit','report','preview','commit','settlementReport','settlementPreview','settlementCommit'].includes(input.action)) fail('invalid-argument', '수금 요청을 확인해 주세요.');
+    const input = M.exactObject(request.data, ['action','companyId','from','to','partnerId','offset','snapshot','id','input','fingerprint','month','format','documentId','search','status']);
+    if (!['shipmentList','shipmentDetail','dashboardExport','statementExport','dashboard','paymentPreview','paymentCommit','report','preview','commit','settlementReport','settlementPreview','settlementCommit'].includes(input.action)) fail('invalid-argument', '수금 요청을 확인해 주세요.');
+    if(input.action.startsWith('shipment')){const user=await context(request);return shipments(request,input,db.collection('companies').doc(user.companyId));}
     if(input.action.endsWith('Export')){const user=await context(request);return exportReport(request,input,db.collection('companies').doc(user.companyId));}
     if(input.action==='dashboard'){const user=await context(request);return dashboard(request,input,db.collection('companies').doc(user.companyId));}
     if(input.action.startsWith('payment')){const user=await context(request);return paymentHandler(request,input,user,db.collection('companies').doc(user.companyId));}
