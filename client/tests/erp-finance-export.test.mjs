@@ -7,10 +7,15 @@ import vm from 'node:vm';
 import readXlsx from 'read-excel-file/node';
 import JSZip from 'jszip';
 import {financeWorkbook} from '../src/utils/erpFinanceWorkbook.ts';
-const require=createRequire(import.meta.url),fixtures=require('../../functions/tests/erp-finance-export-fixtures.cjs');
+const require=createRequire(import.meta.url);
+// Client-only builds do not install Functions dependencies. Exercise the output contract with plain data.
+function sample(kind,count){return {kind,companyId:'synthetic',companyName:'합성 출력회사',partnerName:kind==='STATEMENT'?'거래처 A':'',month:'2026-11',from:'2026-11-01',asOf:'2026-11-13',generatedAt:'2026-11-13T00:00:00Z',snapshot:'a'.repeat(64),title:'출력 검증',notes:['통화별 금액 검증'],sections:[
+  {name:kind==='STATEMENT'?'출고 문서별 잔액':'재고자산 내역',note:'전체 내역',columns:[{label:'코드',width:1},{label:'이름',width:2},{label:'금액',width:1}],rows:Array.from({length:count},(_,i)=>['000'+i,['=','+','-','@'][i%4]+'HYPERLINK("https://example.invalid") A&B <규격>',123.45+i])},
+  {name:'통화별 총액',note:'',columns:[{label:'통화',width:1},{label:'금액',width:1}],rows:[['USD',123.45],['JPY',12345],['KRW',-100]]},
+]};}
 
 test('financial workbooks preserve all rows, source totals, foreign decimal amounts and inert identifiers',async()=>{
-  for(const report of [fixtures.monthly(105),fixtures.statement(105)]){
+  for(const report of [sample('DASHBOARD',105),sample('STATEMENT',105)]){
     const buffer=Buffer.from(await(await financeWorkbook(report)).arrayBuffer()),sheets=await readXlsx(buffer),zip=await JSZip.loadAsync(buffer);
     assert.equal(sheets.length,report.sections.length+1);assert.ok(JSON.stringify(sheets[0]).includes(report.snapshot));
     for(let i=0;i<report.sections.length;i++){
