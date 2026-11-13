@@ -996,11 +996,15 @@ test('ERP delegated approvals and immutable monthly archives work on desktop and
     await checklist.getByRole('button',{name:'체크리스트 저장',exact:true}).click();await expect(checklist.getByText('체크리스트를 저장했습니다.',{exact:true})).toBeVisible({timeout:65000});
   }
   async function evidenceBytes(button){const pending=owner.page.waitForEvent('download');await button.click();const file=await pending;expect(file.suggestedFilename()).toBe('월마감 증빙.png');const chunks=[];for await(const chunk of await file.createReadStream())chunks.push(chunk);return Buffer.concat(chunks);}
+  async function expectCloseReady(){
+    try{await expect(control.getByRole('button',{name:'월마감 확정·보고서 보관',exact:true})).toBeEnabled({timeout:10000});}
+    catch(error){console.log('Monthly close readiness:',JSON.stringify({reasonReady:(await control.getByLabel('마감·재개방 사유 (3자 이상)',{exact:true}).inputValue()).trim().length>=3,checklistBusy:await checklist.getAttribute('aria-busy'),controlBusy:await control.getAttribute('aria-busy'),unsaved:await checklist.getByText(/변경한 확인 사항을 먼저 저장/).count(),incomplete:await control.getByText('체크리스트 전체 확인과 증빙 또는 미첨부 사유를 저장해야 마감할 수 있습니다.',{exact:true}).count()}));throw error;}
+  }
   await control.getByLabel('마감·재개방 사유 (3자 이상)',{exact:true}).fill('대사 및 월마감 확인');await control.getByRole('button',{name:'마감 미리보기',exact:true}).click();await control.getByRole('checkbox',{name:'금액과 미확정 품목을 확인했으며 해당 기간의 변경을 잠급니다.'}).check();await expect(control.getByRole('button',{name:'월마감 확정·보고서 보관',exact:true})).toBeDisabled();
   await confirmChecklist();await checklist.getByLabel('월마감 증빙 파일',{exact:true}).setInputFiles({name:'월마감 증빙.png',mimeType:'image/png',buffer:png});await checklist.getByRole('button',{name:'증빙 첨부',exact:true}).click();await expect(checklist.getByText('증빙 원본을 첨부했습니다.',{exact:true})).toBeVisible({timeout:65000});
   expect((await evidenceBytes(checklist.getByRole('button',{name:'월마감 증빙.png 증빙 내려받기',exact:true}))).equals(png)).toBe(true);
   await checklist.scrollIntoViewIfNeeded();await owner.page.screenshot({path:testInfo.outputPath('erp-close-checklist.png'),fullPage:true});
-  await control.getByRole('button',{name:'마감 미리보기',exact:true}).click();await control.getByRole('checkbox',{name:'금액과 미확정 품목을 확인했으며 해당 기간의 변경을 잠급니다.'}).check();await control.getByRole('button',{name:'월마감 확정·보고서 보관',exact:true}).click();await expect(control.getByText('월마감을 확정하고 Excel·PDF 원본을 보관했습니다.')).toBeVisible({timeout:120000});
+  await control.getByRole('button',{name:'마감 미리보기',exact:true}).click();await control.getByRole('checkbox',{name:'금액과 미확정 품목을 확인했으며 해당 기간의 변경을 잠급니다.'}).check();await expectCloseReady();await control.getByRole('button',{name:'월마감 확정·보고서 보관',exact:true}).click();await expect(control.getByText('월마감을 확정하고 Excel·PDF 원본을 보관했습니다.')).toBeVisible({timeout:120000});
   const a=(await call('manageErpControl',{action:'archives'})).archives[0];expect(a.version).toBe(1);
   const book=await financeExportDownload(owner.page,control.getByRole('button',{name:a.files[0].name,exact:true}),'xlsx');expect(book.find(s=>s.sheet==='보고서 기준').data.find(r=>r[0]==='보고서')[1]).toContain('월마감 확정 보고서');
   expect(book.find(s=>s.sheet==='마감 증빙').data[1][0]).toBe('월마감 증빙.png');
