@@ -4,6 +4,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { Boxes, PackageSearch, Plus, RefreshCw, Warehouse, UsersRound, Pencil, X, ChartColumn } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { erpService } from '../services/erpService';
+import { ErpBundleEstimate } from '../components/ErpBundleEstimate';
 import { erpChoices } from '../services/erpAccountService';
 import type { ErpKind, ErpRecord, ErpCursor, ErpValues, InventoryResult } from '../services/erpService';
 import { getErrorMessage } from '../utils/errors';
@@ -57,22 +58,25 @@ function MasterEditor({ companyId, kind, record, onClose, onSaved }: {
   })));
   const [notes, setNotes] = useState(record?.notes || '');
   const [itemType, setItemType] = useState(record?.itemType || 'STOCK');
-  const [components, setComponents] = useState(() => record?.components?.map(c => ({itemId: c.itemId, quantity: String(c.quantityScaled / 10000)})) || [{itemId: '', quantity: '1'}]);
-  const [choices, setChoices] = useState<ErpRecord[]>([]);
+  const [components, setComponents] = useState(() => record?.components?.map(c => ({itemId: c.itemId, quantity: String(c.quantityScaled / 10000)})) || [{itemId: '', quantity: '1'}, {itemId: '', quantity: '1'}]);
+  const [choices, setChoices] = useState<ErpRecord[]>([]), [warehouses, setWarehouses] = useState<ErpRecord[]>([]);
+  const [warehouseId, setWarehouseId] = useState(''), [componentSearch, setComponentSearch] = useState('');
   const [active, setActive] = useState(record?.active ?? true);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const first = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; first.current?.focus(); return () => { mounted.current = false; }; }, []);
-  useEffect(() => {let live = true; if (kind === 'items') void erpChoices(companyId, 'items').then(items => {if (live) setChoices(items);}).catch(e => {if (live) setError(getErrorMessage(e));}); return () => {live = false;};}, [companyId, kind]);
+  useEffect(() => {let live = true; if (kind === 'items') void Promise.all([erpChoices(companyId, 'items'), erpChoices(companyId, 'warehouses')]).then(([items, stores]) => {if (live) {setChoices(items); setWarehouses(stores);}}).catch(e => {if (live) setError(getErrorMessage(e));}); return () => {live = false;};}, [companyId, kind]);
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
     setError(''); setBusy(true);
     const payload: ErpValues = { code: values.code.trim(), name: values.name.trim(), active, notes: notes.trim() };
     for (const field of fields[kind]) payload[field.key] = field.numeric ? Number(values[field.key]) : values[field.key].trim();
-    if (kind === 'items') {payload.itemType = itemType; payload.components = itemType === 'BUNDLE' ? components : [];}
+    if (kind === 'items') {payload.itemType = itemType; payload.components = itemType === 'BUNDLE' ? components : []; if (itemType === 'BUNDLE') payload.purchasePrice = 0;}
     try {
+      const unchangedLegacy = record?.components?.length === 1 && components.length === 1 && record.components[0].itemId === components[0].itemId && record.components[0].quantityScaled === Number(components[0].quantity) * 10000;
+      if (kind === 'items' && itemType === 'BUNDLE' && ((components.length < 2 && !unchangedLegacy) || new Set(components.map(c => c.itemId)).size !== components.length)) throw new Error('합성상품은 서로 다른 일반 품목 2~20종으로 구성해 주세요.');
       const result = await erpService.save(companyId, kind, id, record?.revision || 0, payload, requestId);
       if (mounted.current) onSaved(result.approvalRequested ? record! : result.record, result.approvalRequested);
     } catch (failure) { if (mounted.current) setError(getErrorMessage(failure, '저장하지 못했습니다. 다시 시도해 주세요.')); }
@@ -84,8 +88,8 @@ function MasterEditor({ companyId, kind, record, onClose, onSaved }: {
     <p className="wf-muted">이 회사의 기준정보로 저장합니다. 필수 항목은 * 표시입니다.</p>
     <form onSubmit={event => void submit(event)}>
       <fieldset disabled={busy} className="erp-form-fields">
-        {kind === 'items' && <label className="wf-field erp-form-wide"><span>상품 유형</span><select className="wf-input" value={itemType} disabled={!!record} onChange={e => setItemType(e.target.value as 'STOCK' | 'BUNDLE')}><option value="STOCK">일반 품목</option><option value="BUNDLE">조합상품 (구성품 자동 차감)</option></select></label>}
-        {fields[kind].map((field, index) => <label className="wf-field" key={field.key}>
+        {kind === 'items' && <label className="wf-field erp-form-wide"><span>상품 유형</span><select aria-label="상품 유형" className="wf-input" value={itemType} disabled={!!record} onChange={e => setItemType(e.target.value as 'STOCK' | 'BUNDLE')}><option value="STOCK">일반상품</option><option value="BUNDLE">합성상품 (Combo·세트)</option></select></label>}
+        {fields[kind].filter(field => !(kind === 'items' && itemType === 'BUNDLE' && field.key === 'purchasePrice')).map((field, index) => <label className="wf-field" key={field.key}>
           <span>{field.label}{field.required ? ' *' : ''}</span>
           {field.options ? <select className="wf-input" value={values[field.key]} onChange={e => setValues(current => ({ ...current, [field.key]: e.target.value }))}>
             {field.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -94,7 +98,19 @@ function MasterEditor({ companyId, kind, record, onClose, onSaved }: {
             max={field.numeric ? 1e9 : undefined} step={field.numeric ? '0.0001' : undefined} maxLength={field.max}
             onChange={e => setValues(current => ({ ...current, [field.key]: e.target.value }))} />}
         </label>)}
-        {kind === 'items' && itemType === 'BUNDLE' && <div className="erp-form-wide"><h3>조합 1개당 구성</h3><p className="wf-muted">1~20개 일반 품목으로 구성합니다. 조합상품 판매 시 구성품을 같은 출고 창고에서 차감하며, 판매 당시 구성은 반품·원장에 보존합니다.</p>{components.map((component, index) => <div className="erp-form-fields" key={index}><label className="wf-field"><span>{index + 1}번 구성품 *</span><select className="wf-input" required value={component.itemId} onChange={e => setComponents(rows => rows.map((r, i) => i === index ? {...r, itemId: e.target.value} : r))}><option value="">구성품 선택</option>{choices.filter(r => r.active && r.itemType !== 'BUNDLE' && r.id !== id).map(r => <option key={r.id} value={r.id}>{r.code} · {r.name}</option>)}</select></label><label className="wf-field"><span>{index + 1}번 구성수량 *</span><input className="wf-input" required inputMode="decimal" value={component.quantity} onChange={e => setComponents(rows => rows.map((r, i) => i === index ? {...r, quantity: e.target.value} : r))} /></label><button className="wf-btn" type="button" disabled={components.length === 1} onClick={() => setComponents(rows => rows.filter((_, i) => i !== index))}>구성 삭제</button></div>)}<button className="wf-btn" type="button" disabled={components.length >= 20} onClick={() => setComponents(rows => [...rows, {itemId: '', quantity: '1'}])}>구성품 추가</button></div>}
+        {kind === 'items' && itemType === 'BUNDLE' && <div className="erp-form-wide">
+          <h3>합성상품 1세트 구성</h3><p className="wf-muted">서로 다른 일반상품 2~20종을 선택하세요. 출고 시 구성품을 같은 창고에서 차감하며 당시 구성과 원가는 보존합니다. 세트 자체의 매입단가는 입력하지 않습니다.</p>
+          {record?.components?.length === 1 && <p className="erp-notice">기존 1종 구성은 유지할 수 있습니다. 구성을 변경하려면 2종 이상을 선택하세요.</p>}
+          <label className="wf-field"><span>구성품 검색</span><input className="wf-input" placeholder="품목명 또는 코드 검색" value={componentSearch} onChange={e => setComponentSearch(e.target.value)} /></label>
+          {components.map((component, index) => <div className="erp-form-fields erp-bundle-component" key={index}>
+            <label className="wf-field"><span>{index + 1}번 구성품 *</span><select aria-label={`${index + 1}번 구성품`} className="wf-input" required value={component.itemId} onChange={e => setComponents(rows => rows.map((r, i) => i === index ? {...r, itemId: e.target.value} : r))}><option value="">구성품 선택</option>{choices.filter(r => r.id === component.itemId || r.active && r.itemType !== 'BUNDLE' && r.id !== id && `${r.code} ${r.name}`.toLocaleLowerCase().includes(componentSearch.trim().toLocaleLowerCase())).map(r => <option key={r.id} value={r.id} disabled={components.some((c, i) => i !== index && c.itemId === r.id)}>{r.code} · {r.name}</option>)}</select></label>
+            <label className="wf-field"><span>{index + 1}번 구성수량 *</span><input className="wf-input" required type="number" min="0.0001" step="0.0001" value={component.quantity} onChange={e => setComponents(rows => rows.map((r, i) => i === index ? {...r, quantity: e.target.value} : r))} /></label>
+            <button className="wf-btn" type="button" disabled={components.length <= 2} aria-label={`${index + 1}번 구성 삭제`} onClick={() => setComponents(rows => rows.filter((_, i) => i !== index))}>구성 삭제</button>
+          </div>)}
+          <button className="wf-btn" type="button" disabled={components.length >= 20} onClick={() => setComponents(rows => [...rows, {itemId: '', quantity: '1'}])}>구성품 추가</button>
+          <label className="wf-field"><span>원가 확인 창고</span><select aria-label="원가 확인 창고" className="wf-input" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}><option value="">창고 선택 (선택사항)</option>{warehouses.filter(w => w.active).map(w => <option key={w.id} value={w.id}>{w.code} · {w.name}</option>)}</select></label>
+          <ErpBundleEstimate companyId={companyId} warehouseId={warehouseId} components={components} quantity="1" />
+        </div>}
         <label className="wf-field erp-form-wide"><span>비고</span><input className="wf-input" maxLength={500} value={notes} onChange={e => setNotes(e.target.value)} /></label>
         <label className="erp-active-field erp-form-wide"><input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} /> 사용 중</label>
       </fieldset>
@@ -120,7 +136,7 @@ function InventoryPanel({ value, loading, error, onRetry, onEdit, onOpening, can
       {value.virtual && <p className="erp-notice">조합상품의 별도 재고자산은 없습니다. 출고 가능 수량은 창고별 구성품 보유량으로 계산하며 구성품 원가에서 차감합니다.</p>}{canManage && !value.virtual && <p className="wf-muted">평균 재고단가 = 전체 창고의 재고금액 ÷ 현재 재고수량</p>}
       {value.status === 'UNINITIALIZED' && <p className="erp-notice"><strong>재고 미등록</strong><br />기초재고 또는 입출고가 반영되면 창고별 수량을 확인할 수 있습니다.</p>}
       {value.pendingOpening && <div className="erp-notice" aria-label="원가 미확정 이관 대기"><strong>원가 확인 후 재고 확정 필요</strong><p>{value.pendingOpening.basisDate} 기준 · 원본 수량 {value.pendingOpening.quantity == null ? '공란' : `${number(value.pendingOpening.quantity)} ${value.pendingOpening.unit}`}</p><p>{value.pendingOpening.source}</p><p>원본의 이관 대기 수량입니다. 출고 가능한 확정 재고와 재고자산에는 포함되지 않습니다. 실제 원가 확인 후 기초재고 원가 확정에서 수량·금액을 확정해 주세요. 기본 매입단가만 수정해도 재고가 확정되지는 않습니다.</p>{canManage&&<button className="wf-btn wf-btn-primary" disabled={!value.item.active} onClick={onOpening}>원가 입력·기초재고 확정</button>}</div>}
-      {canManage && <dl className="erp-prices"><div><dt>기본 매입단가</dt><dd>{number(value.item.purchasePrice ?? 0)}원</dd></div><div><dt>기본 판매단가</dt><dd>{number(value.item.salePrice ?? 0)}원</dd></div></dl>}
+      {canManage && <dl className="erp-prices">{!value.virtual && <div><dt>기본 매입단가</dt><dd>{number(value.item.purchasePrice ?? 0)}원</dd></div>}<div><dt>기본 판매단가</dt><dd>{number(value.item.salePrice ?? 0)}원</dd></div></dl>}
       {value.warehouses.length > 0 && <div className="erp-table-scroll"><table className="erp-table"><caption className="erp-sr-only">창고별 재고</caption><thead><tr><th>창고</th><th className="erp-number">수량</th>{canManage && <th className="erp-number">금액 (원)</th>}</tr></thead>
         <tbody>{value.warehouses.map(row => <tr key={row.warehouseId}><td>{row.warehouseName}<small className="erp-cell-note">{row.warehouseCode}{row.warehouseActive ? '' : ' · 사용 중지'}</small></td><td className="erp-number">{number(row.quantity)}</td>{canManage && <td className="erp-number">{number(row.value ?? 0)}</td>}</tr>)}</tbody></table></div>}
       <div className="erp-inventory-footer"><small className="wf-muted">조회 {new Date(value.checkedAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}</small>
@@ -233,7 +249,7 @@ function ErpWorkspace({ companyId, companyName, canManage, access, approvalLink,
     {accountPanel==='closing'?<Suspense fallback={<p role="status">마감 일정을 불러오고 있습니다.</p>}><ErpClosingPlanPanel companyId={companyId}/></Suspense>:accountPanel==='control'?<Suspense fallback={<p role="status">관리 화면을 불러오고 있습니다.</p>}><ErpControlPanel companyId={companyId} initialTab={approvalLink?'approvals':undefined}/></Suspense>:accountPanel && canManage ? <Suspense fallback={<p role="status">원장을 불러오고 있습니다.</p>}>{accountPanel==='dashboard'?<ErpDashboardPanel companyId={companyId} onFinance={()=>setAccountPanel('finance')} onLedger={()=>{setAccountPanel(null);setReportOpen(true);}} />:accountPanel === 'finance' ? <ErpFinancePanel companyId={companyId} /> : accountPanel==='opening' ? <ErpOpeningPanel key={openingItemId} companyId={companyId} initialItemId={openingItemId} onInventory={showInventory} /> : <ErpCustodyPanel companyId={companyId} />}</Suspense> : movement && (movement.direction==='입고'?inbound:outbound) ? <Suspense fallback={<p role="status">입출고 등록을 불러오고 있습니다.</p>}><ErpMovementPanel key={movement.key} companyId={companyId} direction={movement.direction} initialItem={movement.item} onInventory={showInventory} onStatement={documentNo => { setMovement(null); setDocumentSource(documentNo); setDocumentsOpen(true); }} /></Suspense> : transferOpen && (canManage||access==='BOTH') ? <Suspense fallback={<p role="status">창고 이동을 불러오고 있습니다.</p>}><ErpTransferPanel key={companyId} companyId={companyId} /></Suspense> : documentsOpen && canManage ? <Suspense fallback={<p role="status">거래서류를 불러오고 있습니다.</p>}><ErpDocumentsPanel companyId={companyId} initialSourceDocumentNo={documentSource} /></Suspense> : reportOpen ? <ErpReportPanel companyId={companyId} canManage={canOperate} /> : importOpen && canManage ? <ErpImportPanel companyId={companyId} onInventory={showInventory} /> : <div className={`erp-layout ${kind !== 'items' && !editor ? 'erp-layout-single' : ''}`}>
       <section className="wf-panel erp-list" aria-label={`${names[kind]} 목록`}>
         <div className="erp-list-head"><h2 className="wf-section-title">{names[kind]} 목록</h2>{(kind==='items'?inbound:canOperate) && <button ref={addButton} className="wf-btn wf-btn-primary" onClick={() => { if (kind === 'items') openMovement('입고'); else { setEditor({ record: null }); setNotice(''); } }}><Plus size={16} aria-hidden="true" />{kind === 'items' ? '입고등록' : `${names[kind]} 등록`}</button>}</div>
-        {kind === 'items' && canOperate && <div className="erp-actions"><small className="wf-muted">코드 선택 → 입고등록 · 품목명 선택 → 재고현황</small><button className="wf-btn" onClick={() => { setEditor({ record: null }); setNotice(''); }}>품목 정보만 등록</button></div>}
+        {kind === 'items' && canOperate && <div className="erp-actions"><small className="wf-muted">코드 선택 → 일반상품 입고 / 합성상품 출고 · 품목명 선택 → 재고현황</small><button className="wf-btn" onClick={() => { setEditor({ record: null }); setNotice(''); }}>품목 등록</button></div>}
         <div className="erp-search"><label className="wf-field"><span>검색 기준</span><select className="wf-input" value={searchBy} onChange={e => { reset(); setSearchBy(e.target.value as 'name' | 'code'); }}><option value="name">{names[kind]}명</option><option value="code">코드</option></select></label>
           <label className="wf-field erp-search-term"><span>{searchBy === 'name' ? `${names[kind]}명` : '코드'} 검색</span><input className="wf-input" type="search" value={search} maxLength={120} placeholder="이름 또는 코드의 앞부분 입력" onChange={e => { reset(); setSearch(e.target.value); }} /></label>
           <button className="wf-btn erp-refresh" aria-label="목록 새로고침" onClick={() => { reset(); setReload(value => value + 1); }}><RefreshCw size={17} aria-hidden="true" /></button></div>

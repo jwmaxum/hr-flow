@@ -110,7 +110,7 @@ function createErpDocumentService({ db, bucket, renderPdf, now = () => new Date(
         sourceState.push({ id: row.id, used, link });
         allocations.push({ sourceId: row.id, quantityScaled, supplyMinor: amount.supplyMinor, taxMinor: amount.taxMinor, used });
         return { rowNo: index + 1, sourceRowNo: row.rowNo, sourceId: row.id, itemId: row.itemId, code: row.code, description: row.name, specification: row.specification,
-          unit: row.unit, quantityScaled, priceScaled: row.priceScaled, taxType: row.taxType, taxRateScaled: row.taxRateScaled, priceBasis: row.priceBasis,
+          unit: row.unit, quantityScaled, priceScaled: row.priceScaled, ...(row.amountMode === 'TOTAL' ? {amountMode:'TOTAL'} : {}), taxType: row.taxType, taxRateScaled: row.taxRateScaled, priceBasis: row.priceBasis,
           supplyMinor: amount.supplyMinor, taxMinor: amount.taxMinor, notes: line.notes, sourceDate: row.date, warehouseName: row.warehouseName || row.warehouseCode };
       });
     }

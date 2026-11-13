@@ -37,7 +37,7 @@ function validate(kind, input) {
   if (typeof data.active !== 'boolean') fail('invalid-argument', '사용 상태를 확인해 주세요.');
   if (kind === 'items') {
     Object.assign(data, { specification: text(input.specification, '규격', 160), unit: text(input.unit, '단위', 20, true),
-      purchasePrice: price(input.purchasePrice, '매입단가'), salePrice: price(input.salePrice, '판매단가'),
+      purchasePrice: input.itemType === 'BUNDLE' ? 0 : price(input.purchasePrice, '매입단가'), salePrice: price(input.salePrice, '판매단가'),
       taxType: input.taxType, group: text(input.group, '그룹', 80), currency: 'KRW' });
     data.itemType = input.itemType || 'STOCK'; data.components = [];
     if (!['STOCK','BUNDLE'].includes(data.itemType)) fail('invalid-argument','품목 유형을 확인해 주세요.');
@@ -88,10 +88,11 @@ function createErpService({ db, now = () => new Date() }) {
     const data = request.data;
     if (!object(data)) fail('invalid-argument', '요청 형식을 확인해 주세요.');
     const action = data.action;
-    if (!['list', 'save', 'inventory', 'purchaseHistory'].includes(action)) fail('invalid-argument', '지원하지 않는 ERP 요청입니다.');
+    if (!['list', 'save', 'inventory', 'purchaseHistory', 'bundleEstimate'].includes(action)) fail('invalid-argument', '지원하지 않는 ERP 요청입니다.');
     const user = await context(request, db, action === 'save' || action === 'purchaseHistory');
     const companyId = user.companyId, canManage = true;
     const companyRef = db.collection('companies').doc(companyId);
+    if (action === 'bundleEstimate') return require('./erp-bundle-estimate').estimateBundle({db, request, companyRef, context, now, master: {identifier, verifyTenant}});
     if (action === 'purchaseHistory') {
       if (Object.keys(data).some(key => !['action','companyId','itemId','cursor'].includes(key))) fail('invalid-argument', '입고 이력 요청을 확인해 주세요.');
       const itemId = identifier(data.itemId);
@@ -221,6 +222,9 @@ function createErpService({ db, now = () => new Date() }) {
       if ((previous?.revision || 0) !== data.expectedRevision) fail('aborted', '다른 사용자가 수정했습니다. 목록을 새로고침한 후 다시 편집해 주세요.');
       if (kind === 'items') {
         if (previous && (previous.itemType || 'STOCK') !== values.itemType) fail('failed-precondition','등록 후 일반·조합 유형은 변경할 수 없습니다. 새 품목코드로 등록해 주세요.');
+        const sameLegacy = previous?.itemType === 'BUNDLE' && previous.components?.length === 1 && values.components.length === 1 &&
+          previous.components[0].itemId === values.components[0].itemId && previous.components[0].quantityScaled === values.components[0].quantityScaled;
+        if (values.itemType === 'BUNDLE' && values.components.length < 2 && !sameLegacy) fail('invalid-argument','합성상품은 서로 다른 일반 품목 2~20종으로 구성해 주세요.');
         const components = values.components.length ? await tx.getAll(...values.components.map(row => companyRef.collection('erpItems').doc(row.itemId))) : [];
         for (const component of components) {
           if (component.id === id || !component.exists) fail('invalid-argument','자기 자신을 제외한 등록 구성품을 선택해 주세요.');

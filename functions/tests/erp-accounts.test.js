@@ -77,20 +77,50 @@ test('receivables, bundles and customer custody remain atomic and tenant-scoped'
     const results=await Promise.allSettled([commit(finance,a),commit(finance,b)]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal((await report()).rows[0].balance,160);
     const stale=await preview(finance,payment({amount:'100'}));await post('출고',[line('PART','1','200')]);await reject(commit(finance,stale));
   });
+  await t.test('bundle drafts estimate warehouse costs without writes and preserve legacy compositions',async()=>{
+    await reset();await post('입고',[line('PART2','10','50')]);
+    const components=[{itemId:'part',quantity:'2'},{itemId:'part2',quantity:'1'}];
+    const estimate=(extra={},uid='admin')=>masters(req({action:'bundleEstimate',warehouseId:'wh',components,quantity:'3',...extra},uid));
+    const before=await records('erpInventory');const e=await estimate();assert.equal(e.estimatedCost,750);assert.equal(e.availableSets,5);assert.deepEqual(e.rows.map(r=>[r.quantity,r.needed,r.shortage]),[[10,6,0],[10,3,0]]);
+    const short=await estimate({quantity:'6'});assert.equal(short.canShip,false);assert.equal(short.estimatedCost,null);assert.equal(short.rows[0].shortage,2);assert.deepEqual(await records('erpInventory'),before);
+    for(const uid of ['foreign','member',null])await reject(estimate({},uid),uid?'permission-denied':'unauthenticated');
+    await db.doc('UserProfile/member').update({erpAccess:'VIEW'});assert.equal((await estimate({},'member')).estimatedCost,750);
+    await reject(estimate({components:[components[0],components[0]]}),'invalid-argument');
+    await reject(estimate({quantity:'0.0001',components:[{itemId:'part',quantity:'0.0001'}]}),'invalid-argument');
+    await reject(estimate({warehouseId:'missing'}),'not-found');
+    const one={...itemValues('SET','세트'),itemType:'BUNDLE',components:[{itemId:'part',quantity:'2'}]};
+    await reject(save('items','set',one),'invalid-argument');
+    // Seed a real pre-migration shape; new registrations must not create it.
+    await save('items','set',{...one,components});await parent().collection('erpItems').doc('set').update({components:[{itemId:'part',quantityScaled:20000}]});
+    await save('items','set',{...one,name:'기존 세트'},1);assert.equal((await masters(req({action:'inventory',itemId:'set'}))).quantity,5);
+    await reject(save('items','set',{...one,components:[{itemId:'part',quantity:'1'}]},2),'invalid-argument');
+    const sale=(await post('출고',[line('SET','1','200',{name:'기존 세트'})])).find(r=>!r.bundleParentId);await correct('SALES_RETURN',sale.id,'1');assert.equal((await stock('part')).quantity,10);
+  });
+  await t.test('exact bundle totals reconcile stock, single sale, COGS, partial returns and paid receipts',async()=>{
+    await reset();await post('입고',[line('PART2','10','50')]);await save('items','set',{...itemValues('SET','세트'),itemType:'BUNDLE',components:[{itemId:'part',quantity:'2'},{itemId:'part2',quantity:'1'}]});
+    const totalLine=(quantity='3',amount='1000',extra={})=>line('SET',quantity,'',{amountMode:'TOTAL',totalAmount:amount,...extra});
+    const j=await movementPreview('출고',[totalLine()],{priceBasis:'세금포함'});assert.equal(j.preview.canCommit,true);assert.deepEqual([j.preview.rows[0].supply,j.preview.rows[0].tax,j.preview.rows[0].total,j.preview.rows[0].cost],[909,91,1000,750]);
+    await commitMovement(j);assert.equal((await commitMovement(j)).idempotent,true);const sale=(await records('erpMovements')).find(r=>r.importId===j.id&&!r.bundleParentId);
+    assert.equal(sale.amountMode,'TOTAL');assert.equal(sale.inputAmountMinor,1000);assert.equal((await stock('part')).quantity,4);assert.equal((await stock('part2')).quantity,7);assert.equal((await report()).rows[0].balance,1000);assert.equal((await ledger()).totals.cogsKRW,750);
+    await correct('SALES_RETURN',sale.id,'1');await correct('SALES_RETURN',sale.id,'2');assert.equal((await report()).rows[0].balance,0);assert.equal((await ledger()).totals.cogsKRW,0);assert.equal((await stock('part')).value,1000);
+    await post('출고',[totalLine('3','1000')],{priceBasis:'세금포함',payment:{status:'PAID',...paidOptions}});assert.equal((await records('erpReceipts'))[0].amountMinor,1000);assert.equal((await report()).rows[0].balance,0);
+    await reject(movementPreview('출고',[totalLine('1','100',{price:'100'})]),'invalid-argument');await reject(movementPreview('입고',[totalLine()]),'invalid-argument');await reject(movementPreview('출고',[totalLine('1','1.1')]),'invalid-argument');
+    const overlap=await movementPreview('출고',[totalLine('2','100'),totalLine('1','100')]);assert.equal(overlap.preview.canCommit,false);
+  });
   await t.test('flat bundle sales count once, consume components and preserve historical BOM on partial returns',async()=>{
     await reset();await post('입고',[line('PART2','10','50')]);const values={...itemValues('SET','세트'),itemType:'BUNDLE',components:[{itemId:'part',quantity:'2'},{itemId:'part2',quantity:'1'}]};await save('items','set',values);
     const availability=await masters(req({action:'inventory',itemId:'set'}));assert.equal(availability.virtual,true);assert.equal(availability.quantity,5);assert.equal(availability.value,0);
     const sale=(await post('출고',[line('SET','2','500')])).find(r=>!r.bundleParentId);assert.equal(sale.cost,500);assert.equal((await stock('part')).quantity,6);assert.equal((await stock('part2')).quantity,8);assert.equal(await stock('set'),undefined);
     assert.equal((await report()).rows[0].balance,1100);assert.equal((await ledger()).totals.cogsKRW,500);
     const ret=await correct('SALES_RETURN',sale.id,'1');assert.equal(ret.rows.length,3);assert.equal((await stock('part')).quantity,8);assert.equal((await report()).rows[0].balance,550);
-    await save('items','set',{...values,components:[{itemId:'part2',quantity:'3'}]},1);
+    await save('items','set',{...values,components:[{itemId:'part2',quantity:'3'},{itemId:'part',quantity:'1'}]},1);
     await correct('CANCEL',(await records('erpMovements')).find(r=>r.operationId===ret.id&&r.stockMode==='BUNDLE').id);
     assert.equal((await stock('part')).quantity,6);assert.equal((await report()).rows[0].balance,1100);
     await correct('SALES_RETURN',sale.id,'2');assert.equal((await stock('part')).quantity,10);assert.equal((await stock('part2')).quantity,10);assert.equal((await report()).rows[0].balance,0);assert.equal((await ledger()).totals.cogsKRW,0);
   });
   await t.test('bundle restrictions, whole-document cancellation and stale component stock',async()=>{
-    await reset();const values={...itemValues('SET','세트'),itemType:'BUNDLE',components:[{itemId:'part',quantity:'2'}]};await save('items','set',values);
-    await reject(save('items','bad',{...itemValues('BAD','잘못된 조합'),itemType:'BUNDLE',components:[{itemId:'set',quantity:'1'}]}),'invalid-argument');
+    await reset();await post('입고',[line('PART2','10','50')]);const values={...itemValues('SET','세트'),itemType:'BUNDLE',components:[{itemId:'part',quantity:'2'},{itemId:'part2',quantity:'1'}]};await save('items','set',values);
+    await reject(save('items','bad',{...itemValues('BAD','잘못된 조합'),itemType:'BUNDLE',components:[{itemId:'set',quantity:'1'},{itemId:'part2',quantity:'1'}]}),'invalid-argument');
     await reject(save('items','dup',{...itemValues('DUP','중복'),itemType:'BUNDLE',components:[{itemId:'part',quantity:'1'},{itemId:'part',quantity:'2'}]}),'invalid-argument');
     const incoming=await movementPreview('입고',[line('SET','1','100')]);assert.equal(incoming.preview.canCommit,false);
     const bad=await movementPreview('출고',[line('SET','6','100')]);assert.equal(bad.preview.canCommit,false);
@@ -315,7 +345,7 @@ test('receivables, bundles and customer custody remain atomic and tenant-scoped'
     await reject(movementPreview('출고',[line()],{payment:{status:'PAID',...paidOptions,receiptMode:'NEW'}}),'invalid-argument');
   });
   await t.test('paid bundles count one sale and free shipments create no zero-value financial rows',async()=>{
-    await reset();await save('items','bundle',{...itemValues('SET','세트'),itemType:'BUNDLE',components:[{itemId:'part',quantity:2}]});
+    await reset();await post('입고',[line('PART2','10','50')]);await save('items','bundle',{...itemValues('SET','세트'),itemType:'BUNDLE',components:[{itemId:'part',quantity:2},{itemId:'part2',quantity:1}]});
     await post('출고',[line('SET','1','200')],{payment:{status:'PAID',...paidOptions}});assert.equal((await stock('part')).quantity,8);assert.equal((await records('erpReceipts'))[0].amountMinor,220);assert.equal((await settlements()).documents.length,1);
     await post('출고',[line('PART','1','0')],{payment:{status:'PAID',...paidOptions}});assert.equal((await records('erpReceipts')).length,1);assert.equal((await settlements()).documents.some(d=>d.paymentStatus==='NO_BALANCE'),true);
   });

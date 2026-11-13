@@ -26,6 +26,10 @@ export interface PurchaseHistory {
     currency: string; priceBasis: string; value: number; costPerUnit: number | null; cancelled: boolean; returnedQuantity: number }[];
   nextCursor: string | null;
 }
+export interface BundleEstimate {
+  rows: {itemId: string; code: string; name: string; unit: string; perSet: number; quantity: number; needed: number; shortage: number; availableSets: number; averagePrice: number | null; estimatedCost: number | null; pendingCost: boolean}[];
+  canShip: boolean; availableSets: number; estimatedCost: number | null; checkedAt: string;
+}
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErp');
 async function call<T>(companyId: string, action: string, data: Record<string, unknown>): Promise<T> {
   const write = action === 'save' ? 'operator' as const : false;
@@ -34,6 +38,8 @@ async function call<T>(companyId: string, action: string, data: Record<string, u
   return result.data as T;
 }
 export const erpService = {
+  bundleEstimate: (companyId: string, warehouseId: string, components: {itemId: string; quantity: string}[], quantity: string) =>
+    call<BundleEstimate>(companyId, 'bundleEstimate', {warehouseId, components, quantity}),
   list: (companyId: string, kind: ErpKind, search: string, searchBy: 'name' | 'code', cursor?: ErpCursor) =>
     call<ErpList>(companyId, 'list', { kind, search, searchBy, ...(cursor ? { cursor } : {}) }),
   save: (companyId: string, kind: ErpKind, id: string, expectedRevision: number, values: ErpValues, requestId?:string) =>

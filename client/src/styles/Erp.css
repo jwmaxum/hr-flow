@@ -190,3 +190,8 @@
 .erp-plan-overdue { border-color: #be123c; color: #9f1239; }
 .erp-plan-tasks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
 .erp-plan-tasks article { overflow-wrap: anywhere; }
+
+.erp-bundle-component { margin: 12px 0; padding: 12px; border: 1px solid var(--wf-border, #d8dce3); border-radius: 8px; align-items: end; }
+.erp-bundle-estimate { margin: 16px 0; padding: 16px; background: var(--wf-bg, #f7f8fa); border: 1px solid var(--wf-border, #d8dce3); border-radius: 8px; min-width: 0; }
+.erp-bundle-estimate h4 { margin: 0; }
+.erp-bundle-estimate .erp-table { min-width: 700px; }

@@ -81,7 +81,7 @@ async function renderErpDocumentPdf(document, images) {
       }
       function row(line) {
         const description = [line.description, `${line.code}${line.specification ? ` / ${line.specification}` : ''}`, !statement && line.notes].filter(Boolean).join('\n');
-        const unitPrice = `${quantity(line.priceScaled)}${line.priceBasis === '세금포함' ? english ? '\nIncl. tax' : '\n세금 포함' : ''}`;
+        const unitPrice = `${quantity(line.priceScaled)}${line.amountMode === 'TOTAL' ? english ? '\nDerived' : '\n환산단가' : ''}${line.priceBasis === '세금포함' ? english ? '\nIncl. tax' : '\n세금 포함' : ''}`;
         const cells = statement ? [String(line.rowNo), line.sourceDate.slice(5).replace('-', '/'), description, quantity(line.quantityScaled), line.unit,
           unitPrice, amount(line.supplyMinor), amount(line.taxMinor), line.notes || '-'] :
           [String(line.rowNo), description, quantity(line.quantityScaled), line.unit, unitPrice, amount(line.supplyMinor), amount(line.taxMinor)];

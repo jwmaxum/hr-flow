@@ -36,14 +36,15 @@ function round(numerator, denominator) { return (numerator * 2n + denominator) /
 function amounts(row) {
   if (row.type === 'OPENING') return { value: row.openingValue };
   const digits = ['KRW', 'JPY'].includes(row.currency) ? 0 : 2, unit = 10n ** BigInt(digits);
-  const product = BigInt(row.quantityScaled) * BigInt(row.priceScaled) * unit;
+  // Total-entry amounts are authoritative; the derived unit price is display-only.
+  const product = row.amountMode === 'TOTAL' ? BigInt(row.inputAmountMinor) * 100000000n : BigInt(row.quantityScaled) * BigInt(row.priceScaled) * unit;
   const base = round(product, 100000000n), rate = BigInt(row.taxRateScaled);
   const supply = row.priceBasis === '세금포함' ? round(product * 1000000n, 100000000n * (1000000n + rate)) : base;
   const tax = row.priceBasis === '세금포함' ? base - supply : round(supply * rate, 1000000n);
   return { supply: safe(supply) / Number(unit), tax: safe(tax) / Number(unit), total: safe(supply + tax) / Number(unit),
     value: safe(round(supply * BigInt(row.exchangeRateScaled), unit * 1000000n)) };
 }
-function parseMatrix(workbook, type) {
+function parseMatrix(workbook, type, manualTotals = new Map()) {
   if (!Object.hasOwn(HEADERS, type)) fail('invalid-argument', '업로드 유형을 선택해 주세요.');
   const sheet = workbook.find(s => s.sheet === SHEETS[type]), guide = workbook.find(s => s.sheet === '작성안내');
   if (!sheet || !guide) fail('invalid-argument', '작성안내와 지정된 입력 시트를 유지해 주세요.');
@@ -84,7 +85,15 @@ function parseMatrix(workbook, type) {
       } else {
         row.date = date(c[0], '거래일'); row.order = decimal(c[1], 0, '처리순서', 999999);
         row.direction = text(c[2], '구분', 10, true); row.documentNo = text(c[3], '거래번호', 80, true);
-        row.priceScaled = decimal(c[12], 4, '단가'); row.exchangeRateScaled = decimal(c[14], 6, '적용환율', 1000000000000);
+        if (manualTotals.has(index - 9)) {
+          if (row.direction !== '출고' || !empty(c[12])) fail('invalid-argument', '총출고금액 방식에서는 단가를 비워 주세요.');
+          const digits = ['KRW','JPY'].includes(row.currency) ? 0 : 2;
+          row.amountMode = 'TOTAL';
+          row.inputAmountMinor = decimal(manualTotals.get(index - 9), digits, '총출고금액', 9000000000000);
+          if (!row.quantityScaled) fail('invalid-argument', '출고수량을 입력해 주세요.');
+          row.priceScaled = safe(round(BigInt(row.inputAmountMinor) * 100000000n, BigInt(row.quantityScaled) * 10n ** BigInt(digits)), '환산단가');
+        } else row.priceScaled = decimal(c[12], 4, '단가');
+        row.exchangeRateScaled = decimal(c[14], 6, '적용환율', 1000000000000);
         row.taxRateScaled = decimal(c[16], 6, '부가세율', 1000000); row.priceBasis = text(c[17], '단가기준', 10, true);
         row.partner = { code: text(c[18], '거래처코드', 60), name: text(c[19], '거래처명', 120), country: text(c[20], '국가코드', 2).toUpperCase(),
           registrationNumber: text(c[21], '등록번호', 80), contactName: text(c[22], '담당자', 100), email: text(c[23], '이메일', 254),
@@ -92,7 +101,7 @@ function parseMatrix(workbook, type) {
         if (!row.quantityScaled || !row.order || !['입고', '출고'].includes(row.direction) || !['KRW','USD','EUR','JPY','CNY'].includes(row.currency) ||
           !row.exchangeRateScaled || row.currency === 'KRW' && row.exchangeRateScaled !== 1000000 || !['세금포함', '세금별도'].includes(row.priceBasis) ||
           row.taxType !== '과세' && row.taxRateScaled !== 0) fail('invalid-argument', '수량·순서·구분·환율·세율·단가기준을 확인해 주세요. 세율 10%는 0.1입니다.');
-        if (!row.priceScaled && !row.notes) fail('invalid-argument', '무상 거래의 근거를 비고에 입력해 주세요.');
+        if (!(row.amountMode === 'TOTAL' ? row.inputAmountMinor : row.priceScaled) && !row.notes) fail('invalid-argument', '무상 거래의 근거를 비고에 입력해 주세요.');
         if (basisDate && row.date <= basisDate) fail('invalid-argument', '거래일은 기초재고 기준일 다음 날부터 입력합니다.');
       }
       const unique = opening ? String(row.rowNo) : `${row.documentNo.normalize('NFKC').toLowerCase()}:${row.rowNo}`;
