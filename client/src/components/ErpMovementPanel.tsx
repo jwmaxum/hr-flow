@@ -1,4 +1,5 @@
 import { ErpBundleEstimate } from './ErpBundleEstimate';
+import {ErpItemPicker} from './ErpItemPicker';
 import {useAuthStore} from '../store/authStore';
 import {ErpPaymentOptions,ErpPaymentSummary} from './ErpPaymentControls';
 import type {PaymentOptions} from '../services/erpAccountService';
@@ -93,6 +94,7 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
     setter(current => [...current, ...result.records.filter(row => !current.some(old => old.id === row.id))]); setCursors(current => ({ ...current, [kind]: result.nextCursor }));
   }
   async function preview() {
+    if(direction==='출고'&&lines.some(line=>!line.itemId))throw new Error('검색 결과에서 출고할 등록 품목을 선택해 주세요.');
     if(direction==='출고'&&!paymentStatus)throw new Error('외상출고 또는 입금완료 후 출고를 선택해 주세요.');
     const movement: ManualMovement = { direction, date, warehouseId, ...(partnerId === 'NEW' ? { partner: newPartner } : { partnerId }), currency, exchangeRate, priceBasis,
       ...(direction==='출고'?{payment:paymentStatus==='PAID'?{status:'PAID',...paymentOptions}:{status:'CREDIT'}}:{}),
@@ -113,11 +115,11 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
           <label className="wf-field"><span>통화</span><select className="wf-input" value={currency} onChange={e => { changed(); setCurrency(e.target.value); setExchangeRate(e.target.value === 'KRW' ? '1' : ''); }}>{['KRW','USD','EUR','JPY','CNY'].map(value => <option key={value}>{value}</option>)}</select></label>
           <label className="wf-field"><span>적용환율 (원/통화단위) *</span><input className="wf-input" required readOnly={currency === 'KRW'} inputMode="decimal" value={exchangeRate} onChange={e => { changed(); setExchangeRate(e.target.value); }} /></label>
         </fieldset>
-        <div className="erp-actions">{(['items','warehouses','partners'] as const).filter(kind => cursors[kind]).map((kind, i) => <button key={kind} type="button" className="wf-btn" disabled={busy || done} onClick={() => void run(() => more(kind))}>{({ items: '품목', warehouses: '창고', partners: '거래처' })[kind]} 선택목록 더 보기<span className="erp-sr-only"> {i}</span></button>)}</div>
+        <div className="erp-actions">{(['items','warehouses','partners'] as const).filter(kind => cursors[kind]&&(kind!=='items'||direction==='입고')).map((kind, i) => <button key={kind} type="button" className="wf-btn" disabled={busy || done} onClick={() => void run(() => more(kind))}>{({ items: '품목', warehouses: '창고', partners: '거래처' })[kind]} 선택목록 더 보기<span className="erp-sr-only"> {i}</span></button>)}</div>
         {lines.map((line, index) => <fieldset className="erp-movement-line erp-form-fields" key={line.key} disabled={busy || done}><legend>{index + 1}. {line.name || '품목 선택'}</legend>
-          <label className="wf-field erp-form-wide"><span>등록 품목 선택 *</span><select className="wf-input" required value={line.itemId} onChange={e => {
+          {direction==='출고'?<ErpItemPicker companyId={companyId} item={items.find(item=>item.id===line.itemId)||null} disabled={busy||done} onClear={()=>edit(index,{...lineFor(),key:line.key})} onSelect={item=>{setItems(current=>[...current.filter(old=>old.id!==item.id),item]);edit(index,{...lineFor(item),key:line.key});}}/>:<label className="wf-field erp-form-wide"><span>등록 품목 선택 *</span><select className="wf-input" required value={line.itemId} onChange={e => {
             const item = items.find(row => row.id === e.target.value), next = lineFor(item); edit(index, { ...next, key: line.key, itemId: e.target.value });
-          }}><option value="">품목 선택</option>{direction === '입고' && <option value="NEW">신규 품목 입력</option>}{items.filter(row => row.active && (direction === '출고' || row.itemType !== 'BUNDLE')).map(row => <option key={row.id} value={row.id}>{row.code} · {row.name}</option>)}</select></label>
+          }}><option value="">품목 선택</option><option value="NEW">신규 품목 입력</option>{items.filter(row => row.active && row.itemType !== 'BUNDLE').map(row => <option key={row.id} value={row.id}>{row.code} · {row.name}</option>)}</select></label>}
           {(['code','name','specification','unit'] as const).map((key, i) => <label className="wf-field" key={key}><span>{['품목코드 *','품목명 *','규격','단위 *'][i]}</span><input className="wf-input" value={line[key]} required={key !== 'specification'} readOnly={line.itemId !== 'NEW'} maxLength={[60,120,160,20][i]} onChange={e => edit(index, { [key]: e.target.value })} /></label>)}
           <label className="wf-field"><span>{direction}수량 *</span><input className="wf-input" required inputMode="decimal" value={line.quantity} onChange={e => edit(index, { quantity: e.target.value })} /></label>
           {direction === '출고' && <label className="wf-field"><span>금액 입력방식</span><select aria-label={`${index + 1}번 금액 입력방식`} className="wf-input" value={line.amountMode || 'UNIT'} onChange={e => edit(index, {amountMode: e.target.value as 'UNIT' | 'TOTAL', price: '', totalAmount: ''})}><option value="UNIT">판매단가 × 수량</option><option value="TOTAL">총출고금액 직접 입력</option></select></label>}

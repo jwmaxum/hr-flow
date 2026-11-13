@@ -88,10 +88,11 @@ function createErpService({ db, now = () => new Date() }) {
     const data = request.data;
     if (!object(data)) fail('invalid-argument', '요청 형식을 확인해 주세요.');
     const action = data.action;
-    if (!['list', 'save', 'inventory', 'purchaseHistory', 'bundleEstimate'].includes(action)) fail('invalid-argument', '지원하지 않는 ERP 요청입니다.');
+    if (!['itemSearch','list', 'save', 'inventory', 'purchaseHistory', 'bundleEstimate'].includes(action)) fail('invalid-argument', '지원하지 않는 ERP 요청입니다.');
     const user = await context(request, db, action === 'save' || action === 'purchaseHistory');
     const companyId = user.companyId, canManage = true;
     const companyRef = db.collection('companies').doc(companyId);
+    if(action==='itemSearch')return require('./erp-item-search').searchItems({request,companyRef,context,user,master:{normalize,text,hash,identifier,verifyTenant,view}});
     if (action === 'bundleEstimate') return require('./erp-bundle-estimate').estimateBundle({db, request, companyRef, context, now, master: {identifier, verifyTenant}});
     if (action === 'purchaseHistory') {
       if (Object.keys(data).some(key => !['action','companyId','itemId','cursor'].includes(key))) fail('invalid-argument', '입고 이력 요청을 확인해 주세요.');

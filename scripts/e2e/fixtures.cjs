@@ -269,4 +269,13 @@ async function clearErpFixture(companyId) {
   for (const name of ['erpItems','erpWarehouses','erpPartners','erpKeys','erpInventory','erpAudit','erpImports','erpMovements','erpDocuments','erpState','erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs', 'erpClosePlans','erpCloseChecklists','erpGovernance', 'erpApprovals', 'erpChangeHistory', 'erpMonthCloses', 'erpCloseMonths']) await current.db.recursiveDelete(parent.collection(name));
   await current.bucket.deleteFiles({ prefix: `companies/${companyId}/erp-sources/` });
 }
-module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture };
+async function seedErpSearchItems(companyId){
+  const current=runtime();if(companyId!==current.fixtures.companyA)throw new Error('Only generated company A may receive search fixtures.');
+  const batch=current.db.batch(),collection=current.db.doc(`companies/${companyId}`).collection('erpItems');
+  const item=(code,name,specification,active=true)=>({companyId,code,name,specification,active,codeKey:code.toLowerCase(),nameKey:name.toLowerCase(),unit:'EA',purchasePrice:100,salePrice:200,taxType:'과세',group:'',notes:'합성 검색 검증',itemType:'STOCK',components:[],currency:'KRW',revision:1,updatedAt:'2026-11-12T00:00:00Z'});
+  for(let i=0;i<260;i++)batch.set(collection.doc(`search-filler-${String(i).padStart(4,'0')}`),item(`FILL-${i}`,`앞선 품목 ${i}`,''));
+  batch.set(collection.doc('zz-search-black'),item('SG-9000','프리미엄 블랙 장치','OMR322BK'));
+  batch.set(collection.doc('zz-search-white'),item('SG-9001','OMR322WT 화이트 장치','화이트'));
+  batch.set(collection.doc('zz-search-inactive'),item('SG-OFF','OMR322 사용중지','',false));await batch.commit();
+}
+module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture,seedErpSearchItems };

@@ -3,6 +3,7 @@ const {erpMaster:master}=require('./erp-service');
 const M=require('./erp-ledger-model');
 const {minor}=require('./erp-finance-model');
 const {settlementReport}=require('./erp-settlement-model');
+const {releaseAllocation}=require('./erp-allocation-release');
 
 // Refunds use a document entitlement and the partner's net available funds.
 // RELEASE entries remain append-only; replacement allocations preserve other invoices.
@@ -45,20 +46,9 @@ function createRecoveryHandler({db,now,context,load}) {
     if(amountMinor>limit)fail('failed-precondition',input.type==='RELEASE'?'선택 문서의 초과 배분액을 초과했습니다.':'환불액이 이 문서의 해제 잔액 또는 거래처의 환불 가능 순수금을 초과합니다. 배분을 먼저 정리해 주세요.');
     const shared={companyId:parent.id,partnerId:doc.partnerId,partnerName:doc.partnerName,currency:doc.currency,date:input.date,notes:input.notes,
       createdAt:job.createdAt,createdBy:job.createdBy,sourceKind:'RETURN_RECOVERY',recoveryId:job.id,recoveryDocumentId:doc.id};
-    const entries=[],preserved=[];let sequence=data.settlementState.revision||0;
+    let entries=[],preserved=[],sequence=data.settlementState.revision||0;
     if(input.type==='RELEASE'){
-      let remaining=amountMinor;
-      for(const source of report.allocations.filter(a=>a.active&&a.lines.some(l=>l.documentId===doc.id)).sort((a,b)=>b.sequence-a.sequence||a.id.localeCompare(b.id))){
-        if(!remaining)break;
-        if(preserved.length>=40)fail('resource-exhausted','한 번에 40건까지 배분을 정리할 수 있습니다. 금액을 나누어 처리해 주세요.');
-        const target=source.lines.find(l=>l.documentId===doc.id),releasedAmountMinor=Math.min(remaining,target.amountMinor);
-        const lines=source.lines.map(l=>({...l,amountMinor:l.documentId===doc.id?l.amountMinor-releasedAmountMinor:l.amountMinor})).filter(l=>l.amountMinor>0);
-        const id=M.hash(['return-release',job.id,source.id]),replacementId=lines.length?M.hash(['return-reallocate',job.id,source.id]):'';
-        entries.push({...shared,id,type:'RELEASE',sequence:++sequence,sourceId:source.id,receiptId:source.receiptId,releasedAmountMinor,replacementAllocationId:replacementId});
-        if(lines.length)entries.push({...shared,id:replacementId,type:'ALLOCATE',sequence:++sequence,receiptId:source.receiptId,lines,replacesAllocationId:source.id});
-        preserved.push({sourceId:source.id,releasedAmountMinor,remainingLines:lines});remaining-=releasedAmountMinor;
-      }
-      if(remaining)fail('failed-precondition','원수금 배분 연결을 다시 확인해 주세요.');
+      ({entries,preserved,sequence}=releaseAllocation({report,documentId:doc.id,amount:amountMinor,shared,sequence,operationId:job.id}));
     }
     const refund=input.type==='REFUND'?{...shared,type:'REFUND',amountMinor,method:input.method,reference:input.reference}:null;
     const summary={type:input.type,documentId:doc.id,documentNo:doc.documentNo,partnerName:doc.partnerName,currency:doc.currency,date:input.date,amountMinor,

@@ -4,7 +4,7 @@ const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof v
 const digest = value => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const accessOf = user => user.role === 'ADMIN' ? 'ADMIN' : ['VIEW','INBOUND','OUTBOUND','BOTH'].includes(user.erpAccess) ? user.erpAccess : 'NONE';
 function requireAction(user,domain,action){
-  const reads={master:['list','inventory','purchaseHistory','bundleEstimate'],report:['meta','report','export']};
+  const reads={master:['itemSearch','list','inventory','purchaseHistory','bundleEstimate'],report:['meta','report','export']};
   if(accessOf(user)==='VIEW'&&!reads[domain]?.includes(action))fail('permission-denied','ERP 조회 전용 권한입니다. 등록·수정·취소는 담당 권한과 ADMIN 승인이 필요합니다.');
 }
 function requireDirection(user, direction) {

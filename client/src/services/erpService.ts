@@ -12,6 +12,8 @@ export interface ErpRecord {
 }
 export interface ErpValues { code: string; name: string; active: boolean; notes: string; [key: string]: string | number | boolean | {itemId: string; quantity: string}[] }
 export interface ErpCursor { key: string; id: string }
+export interface ItemSearchCursor {id:string;signature:string}
+export interface ItemSearchResult {records:ErpRecord[];scanned:number;nextCursor:ItemSearchCursor|null}
 export interface ErpList { records: ErpRecord[]; canManage: boolean; nextCursor: ErpCursor | null }
 export interface InventoryResult {
   item: ErpRecord; status: 'RECORDED' | 'UNINITIALIZED' | 'PENDING_COST'; quantity: number | null; value?: number | null;
@@ -38,6 +40,7 @@ async function call<T>(companyId: string, action: string, data: Record<string, u
   return result.data as T;
 }
 export const erpService = {
+  searchItems: (companyId:string,search:string,cursor?:ItemSearchCursor)=>call<ItemSearchResult>(companyId,'itemSearch',{search,...(cursor?{cursor}:{})}),
   bundleEstimate: (companyId: string, warehouseId: string, components: {itemId: string; quantity: string}[], quantity: string) =>
     call<BundleEstimate>(companyId, 'bundleEstimate', {warehouseId, components, quantity}),
   list: (companyId: string, kind: ErpKind, search: string, searchBy: 'name' | 'code', cursor?: ErpCursor) =>

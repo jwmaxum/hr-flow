@@ -42,6 +42,7 @@ function inputOf(value) {
   return result;
 }
 function createErpCorrectionService({ db, now = () => new Date() }) {
+  function viewCorrection(job,user){if(user.role==='ADMIN')return job;const result={...job};delete result.settlement;return result;}
   async function context(request, reader = db) {
     const user = await authorizeContext({ db, request, reader, now, roles: ['ADMIN'] });
     if (user.companyId !== request.data.companyId) fail('permission-denied', '로그인한 회사에서 처리해 주세요.');
@@ -258,8 +259,9 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
       await add(null, stock, effect);
     }
     if (!rows.length) fail('failed-precondition', '반영할 원장 행이 없습니다.');
-    const fingerprint = M.hash({ input, state, readState, sources, rows, custody:custody.snapshot() });
-    return { rows, balances, links, stateRef, state, documentRef, order, fingerprint, custody };
+    const settlement=await require('./erp-return-settlement').planReturnSettlement(tx,parent,job,rows);
+    const fingerprint = M.hash({ input, state, readState, sources, rows, custody:custody.snapshot(),...(settlement?{settlement:settlement.fingerprint}:{}) });
+    return { rows, balances, links, stateRef, state, documentRef, order, fingerprint, custody, settlement };
   }
   return async request => {
     const input = M.exactObject(request.data, ['action','companyId','id','input','fingerprint','warehouseId','cursor']);
@@ -276,22 +278,23 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
       await context(request, tx); const snap = await tx.get(ref), existing = snap.data();
       if (existing) master.verifyTenant(existing, user.companyId);
       await checkCorrection(await context(request,tx),normalized||existing?.input||{},tx,parent);
-      if (input.action === 'get') { if (!existing) fail('not-found', '처리 내역을 찾을 수 없습니다.'); return { correction: { id, ...existing } }; }
+      if (input.action === 'get') { if (!existing) fail('not-found', '처리 내역을 찾을 수 없습니다.'); return { correction: viewCorrection({ id, ...existing },user) }; }
       if (input.action === 'preview') {
-        if (existing) { if (M.hash(existing.input) !== M.hash(normalized)) fail('already-exists', '처리 ID가 이미 사용 중입니다. 새로 검증해 주세요.'); return { correction: { id, ...existing } }; }
+        if (existing) { if (M.hash(existing.input) !== M.hash(normalized)) fail('already-exists', '처리 ID가 이미 사용 중입니다. 새로 검증해 주세요.'); return { correction: viewCorrection({ id, ...existing },user) }; }
         const job = { id, companyId: user.companyId, input: normalized, status: 'PENDING', createdAt: now().toISOString(), createdBy: user.uid };
         const result = await plan(tx, parent, job);
-        const saved = { ...job, rows: result.rows, fingerprint: result.fingerprint };
+        const saved = { ...job, rows: result.rows, fingerprint: result.fingerprint,...(result.settlement?{settlement:result.settlement.summary}:{}) };
         if (Buffer.byteLength(JSON.stringify(saved)) > 850000) fail('resource-exhausted', '처리 자료 크기 제한을 초과했습니다.');
-        tx.create(ref, saved); return { correction: saved };
+        tx.create(ref, saved); return { correction: viewCorrection(saved,user) };
       }
       if (!existing) fail('not-found', '먼저 검증과 미리보기를 실행해 주세요.');
       if (typeof input.fingerprint !== 'string' || input.fingerprint !== existing.fingerprint) fail('failed-precondition', '확인한 미리보기로 다시 시도해 주세요.');
-      if (existing.status === 'COMMITTED') return { correction: { id, ...existing }, idempotent: true };
+      if (existing.status === 'COMMITTED') return { correction: viewCorrection({ id, ...existing },user), idempotent: true };
       const result = await plan(tx, parent, existing);
-      if (result.fingerprint !== input.fingerprint) fail('failed-precondition', '재고·원거래·기준정보가 변경되었습니다. 다시 미리보기를 실행해 주세요.');
+      if (result.fingerprint !== input.fingerprint) fail('failed-precondition', '재고·원거래·수금·배분 또는 기준정보가 변경되었습니다. 다시 미리보기를 실행해 주세요.');
       const at = now().toISOString();
       result.custody.flush(at);
+      require('./erp-return-settlement').commitReturnSettlement(tx,parent,result.settlement,at);
       for (const row of result.rows) tx.create(parent.collection('erpMovements').doc(M.hash(['correction',id,row.rowNo])), { ...row, committedAt: at, committedBy: user.uid });
       for (const stock of result.balances.values()) if (!stock.virtual) tx.set(stock.ref, { companyId: user.companyId, itemId: stock.itemId, warehouseId: stock.warehouseId,
         quantity: stock.quantityScaled / 10000, value: stock.value, currency: 'KRW', openingImportId: stock.openingImportId, updatedAt: at, operationId: id });
@@ -300,7 +303,7 @@ function createErpCorrectionService({ db, now = () => new Date() }) {
       tx.set(result.stateRef, { ...result.state, revision: result.state.revision + 1, lastDate: existing.input.date, lastOrder: result.order, updatedAt: at });
       tx.create(parent.collection('erpAudit').doc(), { companyId: user.companyId, actorId: user.uid, action: existing.input.type, operationId: id, reason: existing.input.reason, rowCount: result.rows.length, at });
       const saved = { ...existing, status: 'COMMITTED', committedAt: at, committedBy: user.uid };
-      tx.update(ref, { status: saved.status, committedAt: at, committedBy: user.uid }); return { correction: saved, idempotent: false };
+      tx.update(ref, { status: saved.status, committedAt: at, committedBy: user.uid }); return { correction: viewCorrection(saved,user), idempotent: false };
     });
   };
 }

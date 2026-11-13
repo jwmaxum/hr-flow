@@ -9,7 +9,7 @@ import { getErrorMessage } from '../utils/errors';
 const number = (value?: number|null) => value==null?'—':value.toLocaleString('ko-KR',{maximumFractionDigits:4});
 const today = () => { const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());return ['year','month','day'].map(type=>parts.find(p=>p.type===type)!.value).join('-'); };
 const nextDay = (value:string) => {const date=new Date(`${value}T00:00:00Z`);date.setUTCDate(date.getUTCDate()+1);return date.toISOString().slice(0,10);};
-export function ErpReportPanel({companyId,canManage}:{companyId:string;canManage:boolean}) {
+export function ErpReportPanel({companyId,canManage,onStatement}:{companyId:string;canManage:boolean;onStatement?:(documentNo:string)=>void}) {
   const [meta,setMeta]=useState<ReportMeta|null>(null),[filters,setFilters]=useState<ReportFilters>({from:today().slice(0,8)+'01',to:today(),search:'',itemId:'',warehouseId:''});
   const [view,setView]=useState<'summary'|'detail'>('summary'),[report,setReport]=useState<ErpReport|null>(null);
   const [warehouses,setWarehouses]=useState<ErpRecord[]>([]),[cursor,setCursor]=useState<ErpCursor|null>(null);
@@ -46,7 +46,7 @@ export function ErpReportPanel({companyId,canManage}:{companyId:string;canManage
       <div className="erp-actions"><button className="wf-btn" aria-pressed={view==='summary'} disabled={busy} onClick={()=>{setView('summary');setReport(null);setEditing(null);}}>입출고 총괄</button><button className="wf-btn" aria-pressed={view==='detail'} disabled={busy} onClick={()=>{setView('detail');setReport(null);setEditing(null);}}>상세 원장</button><button className="wf-btn wf-btn-primary" disabled={busy||!meta?.basisDate} onClick={()=>void run(()=>query())}><ListFilter size={16}/>{busy?'처리 중…':'원장 조회'}</button></div>
     </section>
     {error&&<p role="alert" className="erp-error">{error}</p>}{notice&&<p role="status" className="erp-success">{notice}</p>}
-    {editing&&<ErpCorrectionPanel key={editing.key} companyId={companyId} type={editing.type} source={editing.source} date={meta?.lastDate&&meta.lastDate>today()?meta.lastDate:today()} onClose={()=>setEditing(null)} onCommitted={async()=>{await query();}}/>}
+    {editing&&<ErpCorrectionPanel key={editing.key} companyId={companyId} type={editing.type} source={editing.source} date={meta?.lastDate&&meta.lastDate>today()?meta.lastDate:today()} onClose={()=>setEditing(null)} onCommitted={async()=>{await query();}} onStatement={onStatement}/>}
     {report&&!dirty&&<section className="wf-panel" aria-label={report.view==='summary'?'입출고 총괄 결과':'품목별 상세 원장 결과'}>
       <div className="erp-list-head"><div><h2 className="wf-section-title">{report.view==='summary'?'입출고 총괄':'품목별 상세 원장'}</h2><p className="wf-muted">{report.filters.from} ~ {report.filters.to} · 전체 {report.totalRows}행 · {report.rows.length}행 표시</p></div><button className="wf-btn" disabled={busy||!report.rows.length} onClick={()=>void run(download)}><Download size={16}/>전체 Excel 내려받기</button></div>
       <p className="erp-form-note">기초 + 입고 − 출고 + 이동입고 − 이동출고 + 조정 = 기말. 취소·반품은 순액에 포함합니다. 상세 잔량·잔액은 각 품목·창고별 누적값입니다.</p>

@@ -8,7 +8,8 @@ export interface TransferInput { type: 'TRANSFER'; date: string; reason: string;
 export interface TransferStock { id: string; itemId: string; code: string; name: string; unit: string; active: boolean; quantity: number; value: number }
 export interface CorrectionRow { rowNo: number; name: string; code: string; warehouseName: string; transferWarehouseName?: string; unit: string; direction: string; sourceDocumentNo: string;
   beforeQuantity: number; afterQuantity: number; beforeValue: number; afterValue: number; refundKRW?: number; refundSupply?: number; refundTax?: number; currency: string }
-export interface Correction { id: string; companyId: string; status: 'PENDING' | 'COMMITTED' | 'AWAITING_APPROVAL'; input: CorrectionInput | TransferInput; rows: CorrectionRow[]; fingerprint: string }
+export interface ReturnSettlement {documentId:string;documentNo:string;partnerName:string;currency:string;date:string;returnAmount:number;receivableBefore:number;receivableReduction:number;receivableAfter:number;documentReturnDue:number;partnerReceivableAfter:number;partnerReturnDue:number;refundable:number;allocationReleased:number;previousExcess:number}
+export interface Correction { id: string; companyId: string; status: 'PENDING' | 'COMMITTED' | 'AWAITING_APPROVAL'; input: CorrectionInput | TransferInput; rows: CorrectionRow[]; fingerprint: string;settlement?:ReturnSettlement }
 export interface ReportFilters { from: string; to: string; search: string; itemId: string; warehouseId: string }
 export interface ReportCursor { offset: number; revision: number; signature: string }
 export interface ReportMeta { companyId: string; canManage: boolean; basisDate: string | null; lastDate: string | null; revision: number }

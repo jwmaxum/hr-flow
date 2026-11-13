@@ -31,6 +31,17 @@ async function reset() {
 
 test('company-scoped ERP master data and inventory', async t => {
   try {
+    await t.test('item search finds model and name substrings beyond the first page without leaking tenants',async()=>{
+      await reset();const batch=db.batch();for(let i=0;i<260;i++)batch.set(db.doc(`companies/a/erpItems/filler-${String(i).padStart(4,'0')}`),{...item({code:`F${i}`,name:`기본 품목 ${i}`}),companyId:'a'});await batch.commit();
+      await save('items','target-a',item({code:'SG-OTHER-900',name:'냉장고 OMR322BK',specification:'Model-Alpha'}));
+      await save('items','target-b',item({code:'SG-OTHER-901',name:'사무용 냉장고',specification:'Model-OMR322WT'}));
+      await save('items','target-hidden',item({code:'OMR322-hidden',active:false}));await save('items','target-a',item({code:'OMR322-foreign'}),0,'foreign','b');
+      const first=await call('itemSearch',{search:'322'});assert.equal(first.records.length,0);assert.equal(first.scanned,250);assert.ok(first.nextCursor);
+      const second=await call('itemSearch',{search:'322',cursor:first.nextCursor});assert.deepEqual(second.records.map(r=>r.id),['target-a','target-b']);assert.equal(second.nextCursor,null);
+      for(const search of ['ｏｍｒ３２２','냉장','model omr']){let cursor,found=[];do{const r=await call('itemSearch',{search,...(cursor?{cursor}:{})});found.push(...r.records);cursor=r.nextCursor;}while(cursor);assert.equal(found.length,2);}
+      await reject(call('itemSearch',{search:'다른',cursor:first.nextCursor}),'invalid-argument');await reject(call('itemSearch',{search:'322',cursor:{...first.nextCursor,id:'../b'}}),'invalid-argument');await reject(call('itemSearch',{search:'322'},'admin','b'),'permission-denied');await reject(call('itemSearch',{search:'322'},null),'unauthenticated');await reject(call('itemSearch',{search:'x'.repeat(121)}),'invalid-argument');
+      await db.doc('UserProfile/member').update({erpAccess:'VIEW'});assert.ok((await call('itemSearch',{search:'',},'member')).records.length>0);
+    });
     await t.test('companies may use identical codes with independent names and prices', async () => {
       await reset();
       await save('items', 'same-id', item());
