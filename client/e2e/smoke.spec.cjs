@@ -67,7 +67,7 @@ async function actorFor(browser, testInfo) {
   actor.page.on('pageerror', () => { actor.pageErrors += 1; });
   actor.page.on('dialog', async dialog => {
     if (actor.expectedErpConfirmation && dialog.type() === 'confirm' &&
-        dialog.message() === actor.expectedErpConfirmation && actor.page.url() === `${WEB_ORIGIN}/#/erp`) {
+        dialog.message() === actor.expectedErpConfirmation && [`${WEB_ORIGIN}/#/erp`, `${WEB_ORIGIN}/#/erp?panel=approvals`].includes(actor.page.url())) {
       actor.expectedErpConfirmation = null;
       await dialog.accept(); return;
     }
@@ -980,15 +980,38 @@ test('ERP delegated approvals and immutable monthly archives work on desktop and
   await expect(member.page.getByRole('button',{name:'입고등록',exact:true})).toBeVisible();await expect(member.page.getByRole('button',{name:'출고등록',exact:true})).toHaveCount(0);
   await member.page.getByRole('button',{name:'마감 검증 품목 수정',exact:true}).click();await member.page.getByLabel('매입단가 (원) *',{exact:true}).fill('123');await member.page.getByRole('button',{name:'저장',exact:true}).click();await expect(member.page.getByText(/ADMIN 승인 요청을 등록했습니다/)).toBeVisible({timeout:65000});
   expect((await call('manageErp',{action:'list',kind:'items',search:'마감',searchBy:'name'})).records[0].purchasePrice).toBe(100);
-  await control.getByRole('button',{name:'승인 요청',exact:true}).click();await control.getByLabel('승인·반려 사유 (3자 이상)',{exact:true}).fill('매입 증빙과 단가 확인');await control.getByText('요청 변경 내용 확인',{exact:true}).click();await control.getByRole('button',{name:'승인·반영',exact:true}).click();await expect(control.getByText('승인·반영 처리했습니다.')).toBeVisible({timeout:65000});expect((await call('manageErp',{action:'list',kind:'items',search:'마감',searchBy:'name'})).records[0].purchasePrice).toBe(123);
+  await expect(member.page.getByRole('button',{name:/ERP 승인 대기/})).toHaveCount(0);
+  await owner.page.bringToFront();await owner.page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await owner.page.getByRole('button',{name:'ERP 승인 대기 1건',exact:true}).click();await expect(control.getByRole('button',{name:'승인 요청',exact:true})).toHaveAttribute('aria-pressed','true');
+  await control.getByLabel('승인·반려 사유 (3자 이상)',{exact:true}).fill('매입 증빙과 단가 확인');await control.getByText('요청 변경 내용 확인',{exact:true}).click();await control.getByRole('button',{name:'승인·반영',exact:true}).click();await expect(control.getByText('승인·반영 처리했습니다.')).toBeVisible({timeout:65000});expect((await call('manageErp',{action:'list',kind:'items',search:'마감',searchBy:'name'})).records[0].purchasePrice).toBe(123);
+  await expect(owner.page.getByRole('button',{name:'ERP 승인 대기 0건',exact:true})).toBeVisible({timeout:65000});
   await owner.page.screenshot({path:testInfo.outputPath('erp-approval-management.png'),fullPage:true});
-  await control.getByRole('button',{name:'월마감·보고서 보관',exact:true}).click();await control.getByLabel('마감·재개방 사유 (3자 이상)',{exact:true}).fill('대사 및 월마감 확인');await control.getByRole('button',{name:'마감 미리보기',exact:true}).click();await control.getByRole('checkbox',{name:'금액과 미확정 품목을 확인했으며 해당 기간의 변경을 잠급니다.'}).check();await control.getByRole('button',{name:'월마감 확정·보고서 보관',exact:true}).click();await expect(control.getByText('월마감을 확정하고 Excel·PDF 원본을 보관했습니다.')).toBeVisible({timeout:120000});
+  await control.getByRole('button',{name:'월마감·보고서 보관',exact:true}).click();
+  const checklist=control.getByRole('region',{name:'월마감 체크리스트 및 증빙',exact:true});
+  async function confirmChecklist(noEvidenceReason=''){
+    await expect(checklist).toHaveAttribute('aria-busy','false',{timeout:65000});
+    const checks=checklist.getByRole('checkbox');await expect(checks).toHaveCount(5);
+    for(let i=0;i<5;i++)await checks.nth(i).check();
+    await checklist.getByLabel('증빙 미첨부 사유',{exact:true}).fill(noEvidenceReason);
+    await checklist.getByRole('button',{name:'체크리스트 저장',exact:true}).click();await expect(checklist.getByText('체크리스트를 저장했습니다.',{exact:true})).toBeVisible({timeout:65000});
+  }
+  async function evidenceBytes(button){const pending=owner.page.waitForEvent('download');await button.click();const file=await pending;expect(file.suggestedFilename()).toBe('월마감 증빙.png');const chunks=[];for await(const chunk of await file.createReadStream())chunks.push(chunk);return Buffer.concat(chunks);}
+  await control.getByLabel('마감·재개방 사유 (3자 이상)',{exact:true}).fill('대사 및 월마감 확인');await control.getByRole('button',{name:'마감 미리보기',exact:true}).click();await control.getByRole('checkbox',{name:'금액과 미확정 품목을 확인했으며 해당 기간의 변경을 잠급니다.'}).check();await expect(control.getByRole('button',{name:'월마감 확정·보고서 보관',exact:true})).toBeDisabled();
+  await confirmChecklist();await checklist.getByLabel('월마감 증빙 파일',{exact:true}).setInputFiles({name:'월마감 증빙.png',mimeType:'image/png',buffer:png});await checklist.getByRole('button',{name:'증빙 첨부',exact:true}).click();await expect(checklist.getByText('증빙 원본을 첨부했습니다.',{exact:true})).toBeVisible({timeout:65000});
+  expect((await evidenceBytes(checklist.getByRole('button',{name:'월마감 증빙.png 증빙 내려받기',exact:true}))).equals(png)).toBe(true);
+  await checklist.scrollIntoViewIfNeeded();await owner.page.screenshot({path:testInfo.outputPath('erp-close-checklist.png'),fullPage:true});
+  await control.getByRole('button',{name:'마감 미리보기',exact:true}).click();await control.getByRole('checkbox',{name:'금액과 미확정 품목을 확인했으며 해당 기간의 변경을 잠급니다.'}).check();await control.getByRole('button',{name:'월마감 확정·보고서 보관',exact:true}).click();await expect(control.getByText('월마감을 확정하고 Excel·PDF 원본을 보관했습니다.')).toBeVisible({timeout:120000});
   const a=(await call('manageErpControl',{action:'archives'})).archives[0];expect(a.version).toBe(1);
   const book=await financeExportDownload(owner.page,control.getByRole('button',{name:a.files[0].name,exact:true}),'xlsx');expect(book.find(s=>s.sheet==='보고서 기준').data.find(r=>r[0]==='보고서')[1]).toContain('월마감 확정 보고서');
+  expect(book.find(s=>s.sheet==='마감 증빙').data[1][0]).toBe('월마감 증빙.png');
+  await control.getByText('마감 당시 체크리스트·증빙 1개',{exact:true}).click();expect((await evidenceBytes(control.getByRole('button',{name:'월마감 증빙.png 마감 증빙 원본',exact:true}))).equals(png)).toBe(true);
   const closePdf=await financeExportDownload(owner.page,control.getByRole('button',{name:a.files[1].name,exact:true}),'pdf');require('node:fs').writeFileSync(testInfo.outputPath('erp-month-close.pdf'),closePdf);
   const original=(await call('manageErpControl',{action:'download',id:a.id,fileIndex:0})).base64;
   await control.getByLabel('마감·재개방 사유 (3자 이상)',{exact:true}).fill('누락 내역 재검토');owner.expectedErpConfirmation=`${a.month} 월마감을 재개방할까요? 기존 보관본은 유지됩니다.`;await control.getByRole('button',{name:'최근 마감 재개방',exact:true}).click();await expect(control.getByText(/마감을 재개방했습니다/)).toBeVisible({timeout:65000});
+  await expect(checklist).toHaveAttribute('aria-busy','false',{timeout:65000});await expect(checklist.getByRole('checkbox').first()).not.toBeChecked();
+  await checklist.getByLabel('증빙 제외 사유',{exact:true}).fill('재검토 버전에서 증빙 제외');await checklist.getByRole('button',{name:'월마감 증빙.png 증빙 제외',exact:true}).click();await expect(checklist.getByText(/현재 체크리스트에서 증빙을 제외했습니다/)).toBeVisible({timeout:65000});await confirmChecklist('이번 버전은 추가 증빙 없음');
   await control.getByLabel('마감·재개방 사유 (3자 이상)',{exact:true}).fill('재검토 후 마감 확정');await control.getByRole('button',{name:'마감 미리보기',exact:true}).click();await control.getByRole('checkbox',{name:'금액과 미확정 품목을 확인했으며 해당 기간의 변경을 잠급니다.'}).check();await control.getByRole('button',{name:'월마감 확정·보고서 보관',exact:true}).click();await expect(control.getByText('월마감을 확정하고 Excel·PDF 원본을 보관했습니다.')).toBeVisible({timeout:120000});expect((await call('manageErpControl',{action:'archives'})).archives).toHaveLength(2);expect((await call('manageErpControl',{action:'download',id:a.id,fileIndex:0})).base64).toBe(original);
+  expect((await evidenceBytes(control.getByRole('button',{name:'월마감 증빙.png 마감 증빙 원본',exact:true}))).equals(png)).toBe(true);
   await owner.page.screenshot({path:testInfo.outputPath('erp-month-close-archives.png'),fullPage:true});expect(await owner.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await control.getByRole('button',{name:'수정·삭제 이력',exact:true}).click();await expect(control.getByText(/ADMIN 승인/).first()).toBeVisible();await owner.page.screenshot({path:testInfo.outputPath('erp-change-history.png'),fullPage:true});
   await call('manageErpControl',{action:'grant',uid:fixtures.accounts.memberA.uid,access:'NONE',expectedAccess:'INBOUND',reason:'시범 권한 회수'});await expect(member.page.getByRole('heading',{name:'ERP 접근 권한이 없습니다.'})).toBeVisible({timeout:30000});

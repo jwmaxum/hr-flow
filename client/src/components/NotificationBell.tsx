@@ -7,6 +7,7 @@ import {
   acknowledgeOfficialNotification, officialNotificationError, subscribeOfficialNotifications,
 } from '../services/officialNotificationService';
 import type { OfficialNotification } from '../services/officialNotificationService';
+import {ErpApprovalAlert} from './ErpApprovalAlert';
 
 interface NotificationBellProps {
   currentUserId: string;
@@ -256,9 +257,10 @@ function NotificationInbox({ currentUserId, companyId, recipientRole, onNavigate
 
 export function NotificationBell(props: NotificationBellProps) {
   const userData = useAuthStore(state => state.userData);
+  const sessionReady=useAuthStore(state=>state.sessionReady);
   const recipientRole = userData?.role === 'ADMIN' || userData?.role === 'SUB_ADMIN' || userData?.role === 'MEMBER' ? userData.role : null;
   const companyId = userData?.uid === props.currentUserId && recipientRole && userData.status !== 'RESIGNED'
     ? userData.companyId : '';
   // A different company/account/role gets a new state tree before effects run.
-  return <NotificationInbox key={`${props.currentUserId}:${companyId}:${recipientRole}`} {...props} companyId={companyId} recipientRole={recipientRole || 'MEMBER'} />;
+  return <>{sessionReady&&recipientRole==='ADMIN'&&companyId&&<ErpApprovalAlert key={`${props.currentUserId}:${companyId}`} companyId={companyId} onNavigate={props.onNavigate}/>}<NotificationInbox key={`${props.currentUserId}:${companyId}:${recipientRole}`} {...props} companyId={companyId} recipientRole={recipientRole || 'MEMBER'} /></>;
 }
