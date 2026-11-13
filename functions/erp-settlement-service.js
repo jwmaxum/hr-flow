@@ -1,7 +1,7 @@
 const M = require('./erp-ledger-model');
 const { erpMaster: master } = require('./erp-service');
 const { fail } = require('./security-context');
-const { settlementReport } = require('./erp-settlement-model');
+const { settlementReport, financeSnapshot } = require('./erp-settlement-model');
 const digits = currency => ['KRW','JPY'].includes(currency) ? 0 : 2;
 
 function createSettlementHandler({ db, now, context, load }) {
@@ -67,7 +67,7 @@ function createSettlementHandler({ db, now, context, load }) {
       const to=M.date(input.to),partnerId=input.partnerId?master.identifier(input.partnerId):'';
       return db.runTransaction(async tx=>{
         await context(request,tx);const data=await load(tx,parent),assignees=await directory(tx,parent);
-        const result={companyId:parent.id,...settlementReport(data,to,partnerId),assignees,followUpLastDate:data.settlementState.followUpLastDate||null,lastDate:[data.state.lastDate,data.ledger.lastDate,data.settlementState.lastDate].filter(Boolean).sort().at(-1)||null};
+        const result={companyId:parent.id,snapshot:financeSnapshot(data,parent.id,to),...settlementReport(data,to,partnerId),assignees,followUpLastDate:data.settlementState.followUpLastDate||null,lastDate:[data.state.lastDate,data.ledger.lastDate,data.settlementState.lastDate].filter(Boolean).sort().at(-1)||null};
         const activeIds=new Set(assignees.map(person=>person.id));
         for(const doc of result.documents)doc.assigneeActive=!!doc.assigneeId&&activeIds.has(doc.assigneeId);
         if(Buffer.byteLength(JSON.stringify(result))>8e6)fail('resource-exhausted','문서 배분 조회가 너무 큽니다. 거래처별로 조회하거나 원장 분할 집계를 요청해 주세요.');

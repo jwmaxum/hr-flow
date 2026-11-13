@@ -341,4 +341,41 @@ test('receivables, bundles and customer custody remain atomic and tenant-scoped'
     d=await q('2026-11');assert.equal(d.partialMonth,false);assert.equal(d.asOf,'2026-11-30');assert.equal(d.currencies.find(r=>r.currency==='KRW').outstanding,440);assert.equal((await q('2026-12')).currencies.find(r=>r.currency==='KRW').outstanding,0);
     assert.equal((await dashboard('2026-10')).inventoryValue,1000);
   });
+  await t.test('monthly exports include all 101-plus rows and match a single reviewed snapshot in PDF and Excel data',async()=>{
+    await reset();await parent().update({nameKo:'합성 출력회사'});const original=(await records('erpMovements'))[0],batch=db.batch();
+    for(let i=0;i<101;i++)batch.set(parent().collection('erpMovements').doc('export-'+i),{...original,id:'export-'+i,itemId:'export-'+i,code:'000'+i,name:'출력 품목 '+i,quantityScaled:10000,value:100,supply:100,tax:10,total:110,afterQuantity:1,afterValue:100});await batch.commit();
+    const d=await dashboard('2026-11');assert.equal(d.assets.length,100);assert.equal(d.assetCount,102);assert.equal(d.purchaseCount,102);
+    const input={action:'dashboardExport',month:'2026-11',snapshot:d.snapshot,format:'DATA'},data=await finance(req(input));
+    assert.equal(data.sections.find(s=>s.name==='재고자산 내역').rows.length,102);assert.equal(data.sections.find(s=>s.name==='매입내역').rows.length,102);
+    assert.equal(data.sections[0].rows.find(r=>r[0]==='재고자산')[1],11100);assert.equal(data.companyName,'합성 출력회사');
+    const auditBefore=(await records('erpAudit')).length;let captured;
+    const api=createErpFinanceService({db,now,renderFinancePdf:async value=>{captured=value;return Buffer.from('%PDF-synthetic');}}),pdf=await api(req({...input,format:'PDF'}));
+    assert.equal(captured.snapshot,data.snapshot);assert.equal(pdf.sourceSnapshot,d.snapshot);assert.equal(pdf.snapshot,data.snapshot);assert.equal(pdf.size,14);assert.match(pdf.sha256,/^[a-f0-9]{64}$/);
+    assert.equal((await records('erpAudit')).length,auditBefore);assert.equal((await records('erpIssuedDocuments')).length,0);
+    await parent().update({nameKo:'변경된 회사'});await reject(finance(req(input)));await reject(finance(req({...input,snapshot:'bad'})),'invalid-argument');
+  });
+  await t.test('partner statements reconcile currencies, unallocated receipts and credits without exposing internal notes',async()=>{
+    await reset();await post('출고',[line('PART','2','100')]);const sale=(await settlements()).documents[0];
+    await post('출고',[line('PART','1','2')],{currency:'USD',exchangeRate:'1300'});await commit(finance,await preview(finance,payment({amount:'100',reference:'PRIVATE-BANK-REF',notes:'PRIVATE-RECEIPT-NOTE'})));
+    await settle(await settlementPreview({type:'TERMS',documentId:sale.id,dueDate:'2026-11-12'}));await settle(await settlementPreview({type:'FOLLOW_UP',documentId:sale.id,expectedDate:'2026-11-20',assigneeId:'admin',notes:'PRIVATE-FOLLOW-UP'}));
+    const to='2026-11-13',source=await settlements(to),input={action:'statementExport',to,partnerId:'buyer',snapshot:source.snapshot,format:'DATA'},out=await finance(req(input));
+    const totals=out.sections[0].rows;assert.deepEqual(totals.find(r=>r[0]==='KRW'),['KRW',220,100,220,100,120,220]);assert.deepEqual(totals.find(r=>r[0]==='USD'),['USD',2.2,0,2.2,0,2.2,0]);
+    assert.equal(out.sections[1].rows.find(r=>r[1]===sale.documentNo)[7],1);assert.equal(out.sections[2].rows[0][3],100);
+    for(const secret of ['PRIVATE-BANK-REF','PRIVATE-RECEIPT-NOTE','PRIVATE-FOLLOW-UP','assigneeId','followUpNotes'])assert.equal(JSON.stringify(out).includes(secret),false);
+    await save('partners','buyer',{code:'buyer',name:'buyer',country:'KR',type:'BOTH',active:false,notes:''},1);assert.equal((await finance(req(input))).partnerName,'buyer');
+    await save('partners','buyer',{code:'buyer',name:'buyer',country:'KR',type:'BOTH',active:true,notes:''},2);await commit(finance,await preview(finance,payment({amount:'20'})));await reject(finance(req(input)));
+    const original=(await records('erpMovements')).find(r=>r.documentNo===sale.documentNo);await correct('SALES_RETURN',original.id,'2');
+    const credit=await finance(req({...input,snapshot:(await settlements(to)).snapshot}));assert.equal(credit.sections[0].rows.find(r=>r[0]==='KRW')[5],-120);
+    const monthlyCredit=await dashboard('2026-11');assert.equal(monthlyCredit.partners.find(r=>r.currency==='KRW').balance,-120);assert.equal(monthlyCredit.currencies.find(r=>r.currency==='KRW').refundDue,120);
+    const empty=await finance(req({...input,to:'2026-11-11',snapshot:(await settlements('2026-11-11')).snapshot}));assert.equal(empty.sections[1].rows.length,0);
+  });
+  await t.test('report export endpoints enforce company identity, role, exact fields and post-render revocation',async()=>{
+    await reset();const d=await dashboard('2026-11'),input={action:'dashboardExport',month:'2026-11',snapshot:d.snapshot,format:'DATA'};
+    for(const uid of [null,'member','manager','root','foreign'])await reject(finance(req(input,uid)),uid?'permission-denied':'unauthenticated');
+    await reject(finance(req({...input,rows:[]})),'invalid-argument');await reject(finance(req({...input,format:'HTML'})),'invalid-argument');
+    const snapshot=(await settlements()).snapshot;await db.doc('companies/b/erpPartners/foreign-only').set({companyId:'b',name:'비공개 거래처'});
+    await reject(finance(req({action:'statementExport',to:'2026-11-12',partnerId:'foreign-only',snapshot,format:'DATA'})),'not-found');
+    const api=createErpFinanceService({db,now,renderFinancePdf:async()=>{await db.doc('UserProfile/admin').update({status:'DISABLED'});return Buffer.from('%PDF-synthetic');}});
+    await reject(api(req({...input,format:'PDF'})),'permission-denied');
+  });
 }finally{await deleteApp(app);}});

@@ -31,12 +31,12 @@ function monthSnapshot(data,purchases,month,today){
   return {month,from,to,stock,settlement,currencies:[...currencies.values()].sort((a,b)=>a.currency.localeCompare(b.currency)),sales,bought,inventoryValue:stock.totals.closingValue,salesKRW:stock.totals.salesKRW,purchasesKRW:bought.reduce((sum,r)=>M.signed(sum+r.amountKRW),0),marginKRW:stock.totals.marginKRW};
 }
 function createDashboardHandler({db,now,context,load}){
-  return async(request,input,parent)=>{
+  return async(request,input,parent,{full=false}={})=>{
     M.exactObject(input,['action','companyId','month']);
     if(typeof input.month!=='string'||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(input.month))fail('invalid-argument','조회할 월을 선택해 주세요.');
     const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul'}).format(now());if(input.month>today.slice(0,7))fail('invalid-argument','아직 시작하지 않은 월은 조회할 수 없습니다.');
     return db.runTransaction(async tx=>{
-      await context(request,tx);const data=await load(tx,parent);
+      await context(request,tx);const data=await load(tx,parent),company=await tx.get(parent);
       const waiting=await tx.get(parent.collection('erpItems').where('pendingOpening.status','in',['PENDING_COST','CONFIRMED']).limit(501));if(waiting.size>500)fail('resource-exhausted','이관 관리 품목이 500개를 초과했습니다.');
       const pending=waiting.docs.map(doc=>{master.verifyTenant(doc.data(),parent.id);return doc.data().pendingOpening;});
       const purchases=purchaseEvents(data.movements),selected=monthSnapshot(data,purchases,input.month,today),trend=[];
@@ -45,9 +45,11 @@ function createDashboardHandler({db,now,context,load}){
       const byId=new Map(data.movements.map(row=>[row.id,row]));
       const sales=selected.sales.map(r=>({...r,amountKRW:M.effectOf(byId.get(r.id)).salesKRW})).sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
       const bought=selected.bought.sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
-      const partners=selected.settlement.summaries.filter(r=>r.balance>0||r.documentBalance>0).sort((a,b)=>a.currency.localeCompare(b.currency)||b.balance-a.balance);
-      const result={companyId:parent.id,month:input.month,from:selected.from,asOf:selected.to,partialMonth:selected.to<monthEnd(input.month),basisDate:data.ledger.basisDate||null,inventoryValue:selected.inventoryValue,salesKRW:selected.salesKRW,purchasesKRW:selected.purchasesKRW,marginKRW:selected.marginKRW,currencies:selected.currencies,trend,assets:assets.slice(0,100).map(r=>projectSummary(r,true)),assetCount:assets.length,sales:sales.slice(0,100),saleCount:sales.length,purchases:bought.slice(0,100),purchaseCount:bought.length,partners:partners.slice(0,100),partnerCount:partners.length,pendingCount:pending.filter(p=>p.basisDate<=selected.to&&(p.status==='PENDING_COST'||p.postingDate>selected.to)).length};
-      if(Buffer.byteLength(JSON.stringify(result))>5e6)fail('resource-exhausted','대시보드 조회 결과가 너무 큽니다.');return result;
+      const partners=selected.settlement.summaries.filter(r=>r.balance!==0||r.documentBalance!==0).sort((a,b)=>a.currency.localeCompare(b.currency)||b.balance-a.balance);
+      const result={companyId:parent.id,companyName:M.text(company.data()?.nameKo||company.data()?.name||parent.id,'회사명',240),month:input.month,from:selected.from,asOf:selected.to,partialMonth:selected.to<monthEnd(input.month),basisDate:data.ledger.basisDate||null,inventoryValue:selected.inventoryValue,salesKRW:selected.salesKRW,purchasesKRW:selected.purchasesKRW,marginKRW:selected.marginKRW,currencies:selected.currencies,trend,assets:assets.map(r=>projectSummary(r,true)),assetCount:assets.length,sales,saleCount:sales.length,purchases:bought,purchaseCount:bought.length,partners,partnerCount:partners.length,pendingCount:pending.filter(p=>p.basisDate<=selected.to&&(p.status==='PENDING_COST'||p.postingDate>selected.to)).length};
+      const snapshot=M.hash(result),output={...result,snapshot};
+      if(!full)for(const key of ['assets','sales','purchases','partners'])output[key]=result[key].slice(0,100);
+      if(Buffer.byteLength(JSON.stringify(output))>5e6)fail('resource-exhausted','대시보드 조회 결과가 너무 큽니다. 일부 내역만 출력하지 않습니다.');return output;
     });
   };
 }

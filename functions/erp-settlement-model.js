@@ -81,4 +81,5 @@ function settlementReport(data, to, partnerId = '') {
     summaries,
   };
 }
-module.exports = { settlementReport };
+const financeSnapshot=(data,companyId,to)=>M.hash({companyId,to,data});
+module.exports = { settlementReport, financeSnapshot };

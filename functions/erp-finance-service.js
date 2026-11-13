@@ -3,9 +3,10 @@ const { erpMaster: master } = require('./erp-service');
 const M = require('./erp-ledger-model');
 const {createPaymentHandler}=require('./erp-payment-service');
 const {createDashboardHandler}=require('./erp-dashboard-service');
+const {createFinanceExportHandler}=require('./erp-finance-export');
 const { createSettlementHandler } = require('./erp-settlement-service');
 const {currencies,minor,salesEvents,paymentEvents,summarize,loadFinance}=require('./erp-finance-model');
-function createErpFinanceService({ db, now = () => new Date() }) {
+function createErpFinanceService({ db, now = () => new Date(), renderFinancePdf = report => require('./erp-finance-pdf').renderFinanceReportPdf(report) }) {
   async function context(request, tx) { const user = await authorizeContext({ db, request, reader: tx || db, now, roles: ['ADMIN'] }); if (user.companyId !== request.data.companyId) fail('permission-denied', '로그인한 회사에서 조회해 주세요.'); return user; }
   const load=loadFinance;
   async function plan(tx, parent, job) {
@@ -32,10 +33,12 @@ function createErpFinanceService({ db, now = () => new Date() }) {
   }
   const paymentHandler=createPaymentHandler({db,now,context,load});
   const dashboard=createDashboardHandler({db,now,context,load});
+  const exportReport=createFinanceExportHandler({db,now,context,load,dashboard,renderPdf:renderFinancePdf});
   const settlement = createSettlementHandler({db,now,context,load});
   return async request => {
-    const input = M.exactObject(request.data, ['action','companyId','from','to','partnerId','offset','snapshot','id','input','fingerprint','month']);
-    if (!['dashboard','paymentPreview','paymentCommit','report','preview','commit','settlementReport','settlementPreview','settlementCommit'].includes(input.action)) fail('invalid-argument', '수금 요청을 확인해 주세요.');
+    const input = M.exactObject(request.data, ['action','companyId','from','to','partnerId','offset','snapshot','id','input','fingerprint','month','format']);
+    if (!['dashboardExport','statementExport','dashboard','paymentPreview','paymentCommit','report','preview','commit','settlementReport','settlementPreview','settlementCommit'].includes(input.action)) fail('invalid-argument', '수금 요청을 확인해 주세요.');
+    if(input.action.endsWith('Export')){const user=await context(request);return exportReport(request,input,db.collection('companies').doc(user.companyId));}
     if(input.action==='dashboard'){const user=await context(request);return dashboard(request,input,db.collection('companies').doc(user.companyId));}
     if(input.action.startsWith('payment')){const user=await context(request);return paymentHandler(request,input,user,db.collection('companies').doc(user.companyId));}
     if (input.action.startsWith('settlement')) {const user=await context(request);return settlement(request,input,user,db.collection('companies').doc(user.companyId));}

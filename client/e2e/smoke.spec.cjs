@@ -276,6 +276,14 @@ function historicalCsv(rows) {
   const cell = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
   return Buffer.from(CSV_TEMPLATE + rows.map(row => HEADER_FIELDS.map(field => cell(row[field.key])).join(',')).join('\r\n') + '\r\n');
 }
+
+async function financeExportDownload(page,button,extension){
+  const pending=page.waitForEvent('download',{timeout:65000});await button.click();const file=await pending;
+  expect(file.suggestedFilename().endsWith('.'+extension)).toBe(true);
+  const stream=await file.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);const bytes=Buffer.concat(chunks);
+  if(extension==='pdf'){expect(bytes.subarray(0,5).toString()).toBe('%PDF-');expect(bytes.subarray(-100).toString()).toMatch(/%%EOF\s*$/);return bytes;}
+  return require('read-excel-file/node').default(bytes);
+}
 function confirmHistoricalPayroll(actor, draft) {
   const won = value => `${value.toLocaleString('ko-KR')}원`;
   const refunds = draft.rows.filter(row => ['pension', 'health', 'longTerm', 'employment', 'incomeTax', 'localTax', 'otherDeductions'].some(key => (row.amounts[key] ?? 0) < 0)).length;
@@ -574,6 +582,10 @@ test('ERP manual inbound and outbound preserve receipt prices, value inventory a
   await expect(dashboard.getByRole('article').filter({hasText:'재고자산'}).getByText('2,250원',{exact:true})).toBeVisible({timeout:65000});
   await expect(dashboard.getByRole('article').filter({hasText:'당월 순매출'}).getByText('1,500원',{exact:true})).toBeVisible();
   await expect(dashboard.getByRole('article').filter({hasText:'당월 순매입'}).getByText('2,000원',{exact:true})).toBeVisible();
+  const monthlyBook=await financeExportDownload(actor.page,dashboard.getByRole('button',{name:'월별 보고서 Excel',exact:true}),'xlsx');
+  expect(monthlyBook.find(s=>s.sheet==='월별 요약').data.find(r=>r[0]==='재고자산')[1]).toBe(2250);expect(monthlyBook.find(s=>s.sheet==='매출내역').data[1][5]).toBe(1500);
+  await financeExportDownload(actor.page,dashboard.getByRole('button',{name:'월별 보고서 PDF·인쇄',exact:true}),'pdf');
+  await expect(dashboard.getByText('PDF를 내려받았습니다. PDF 뷰어에서 인쇄해 주세요.',{exact:true})).toBeVisible();
   await dashboard.getByRole('heading',{name:'월별 경영 대시보드',exact:true}).scrollIntoViewIfNeeded();await actor.page.screenshot({path:testInfo.outputPath('erp-monthly-dashboard.png'),fullPage:true});
 
   expect(await actor.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -684,6 +696,12 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   await expect(manual.getByText('입금완료 상태와 미수잔액을 반영했습니다.',{exact:true})).toBeVisible({timeout:65000});
   await manual.getByRole('checkbox',{name:'미입금 문서만 보기',exact:true}).uncheck();await expect(table.getByRole('row').filter({hasText:saleNumber}).getByText('입금완료',{exact:true})).toBeVisible();
   const updated=await call('manageErpFinance',{action:'report',from:'2026-01-01',to:'2026-12-31'});expect(updated.rows[0].balance).toBe(440);
+  await expect(manual.getByRole('button',{name:'거래처 미수명세서 PDF·인쇄',exact:true})).toBeDisabled();
+  await manual.getByRole('combobox',{name:'외상매출 대상회사',exact:true}).selectOption('buyer');
+  const statementBook=await financeExportDownload(page,manual.getByRole('button',{name:'거래처 미수명세서 Excel',exact:true}),'xlsx');
+  expect(statementBook.find(s=>s.sheet==='통화별 미수 총괄').data[1][5]).toBe(440);
+  const printedDocs=statementBook.find(s=>s.sheet==='출고 문서별 잔액').data;expect(printedDocs.find(r=>r[1]===saleNumber)[5]).toBe(0);
+  await financeExportDownload(page,manual.getByRole('button',{name:'거래처 미수명세서 PDF·인쇄',exact:true}),'pdf');
   await table.scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-manual-paid-status.png')});
   await page.screenshot({path: testInfo.outputPath('erp-custody.png'), fullPage: true}); expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
 });
