@@ -194,4 +194,9 @@
 .erp-bundle-component { margin: 12px 0; padding: 12px; border: 1px solid var(--wf-border, #d8dce3); border-radius: 8px; align-items: end; }
 .erp-bundle-estimate { margin: 16px 0; padding: 16px; background: var(--wf-bg, #f7f8fa); border: 1px solid var(--wf-border, #d8dce3); border-radius: 8px; min-width: 0; }
 .erp-bundle-estimate h4 { margin: 0; }
-.erp-bundle-estimate .erp-table { min-width: 700px; }
+.erp-bundle-parts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; margin: 12px 0; }
+.erp-bundle-part { min-width: 0; padding: 12px; border: 1px solid var(--wf-border, #d8dce3); border-radius: 8px; background: #fff; overflow-wrap: anywhere; }
+.erp-bundle-part h5 { margin: 0 0 4px; font-size: 14px; }
+.erp-bundle-part dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0 0; }
+.erp-bundle-part dt { font-size: 12px; color: #526174; }
+.erp-bundle-part dd { margin: 4px 0 0; font-weight: 600; }

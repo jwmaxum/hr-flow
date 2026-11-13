@@ -27,7 +27,13 @@ export function ErpBundleEstimate({companyId, warehouseId, components, quantity}
     {!ready ? <p className="wf-muted">창고, 구성품, 세트 수량을 입력하면 출고 가능 수량과 예상 원가가 표시됩니다.</p> : !current ? <p role="status">구성품 재고를 조회하고 있습니다.</p> : current.error ? <p role="alert" className="erp-error">{current.error}</p> : value && <>
       <p><strong>출고 가능 {number(value.availableSets)}세트</strong> · 요청 {quantity}세트 · 예상 원가 <strong>{number(value.estimatedCost)}원</strong></p>
       {!value.canShip && <p className="erp-error">구성품 재고가 부족합니다. 부족한 품목을 입고하거나 출고 수량·창고를 변경해 주세요.</p>}
-      <div className="erp-table-scroll"><table className="erp-table"><caption className="erp-sr-only">선택 창고의 구성품 재고 및 예상 원가</caption><thead><tr><th>구성품</th><th>세트당 수량</th><th>현재 재고</th><th>필요 수량</th><th>부족 수량</th><th>평균 원가 (원)</th><th>예상 출고원가 (원)</th></tr></thead><tbody>{value.rows.map(row => <tr key={row.itemId}><td>{row.name}<small className="erp-cell-note">{row.code} · {row.unit}{row.pendingCost ? ' · 원가 미확정 이관분 제외' : ''}</small></td><td>{number(row.perSet)}</td><td>{number(row.quantity)}</td><td>{number(row.needed)}</td><td>{row.shortage ? number(row.shortage) : '없음'}</td><td>{number(row.averagePrice)}</td><td>{number(row.estimatedCost)}</td></tr>)}</tbody></table></div>
+      <div className="erp-bundle-parts">{value.rows.map(row => <article className="erp-bundle-part" key={row.itemId} aria-label={`${row.name} 구성품`}>
+        <h5>{row.name}</h5><small className="wf-muted">{row.code} · {row.unit}</small>
+        {row.pendingCost && <p className="erp-notice">원가 미확정 이관분 제외</p>}
+        <dl><div><dt>세트당 수량</dt><dd>{number(row.perSet)}</dd></div><div><dt>현재 재고</dt><dd>{number(row.quantity)}</dd></div>
+          <div><dt>필요 수량</dt><dd>{number(row.needed)}</dd></div><div><dt>부족 수량</dt><dd className={row.shortage ? 'erp-error' : undefined}>{row.shortage ? number(row.shortage) : '없음'}</dd></div>
+          <div><dt>평균 원가</dt><dd>{number(row.averagePrice)}원</dd></div><div><dt>예상 출고원가</dt><dd>{number(row.estimatedCost)}원</dd></div></dl>
+      </article>)}</div>
       <p className="wf-muted">선택 창고의 이동평균원가 기준입니다. 여러 출고 행의 공통 구성품은 검증·미리보기에서 합산 검증합니다. 최종 확정 시 최신 재고·원가를 다시 확인합니다.</p>
     </>}
   </section>;
