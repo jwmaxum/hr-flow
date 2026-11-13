@@ -3,6 +3,7 @@ const {erpMaster:master}=require('./erp-service');
 const M=require('./erp-ledger-model');
 const {minor}=require('./erp-finance-model');
 const {settlementReport}=require('./erp-settlement-model');
+const {recoveryState,recoveryBalances}=require('./erp-recovery-service');
 
 function createShipmentHandler({db,now,context,load}) {
   return async(request,input,parent)=>{
@@ -21,9 +22,9 @@ function createShipmentHandler({db,now,context,load}) {
       if(listing){
         const snapshot=M.hash({data,filters,asOf});
         if(offset&&input.snapshot!==snapshot)fail('failed-precondition','출고·수금 내역이 변경되었습니다. 처음부터 다시 조회해 주세요.');
-        const search=master.normalize(filters.search);
-        const rows=report.documents.filter(d=>d.date>=filters.from&&d.date<=filters.to&&(!search||master.normalize(`${d.documentNo} ${d.partnerName}`).includes(search))&&
-          (filters.status==='ALL'||filters.status==='OPEN'&&d.balance>0||filters.status==='PAID'&&d.balance===0||filters.status==='REFUND'&&d.balance<0));
+        const search=master.normalize(filters.search),recoveries=recoveryBalances(data,report,asOf);
+        const rows=report.documents.map(d=>({...d,recoveryCredit:recoveries.get(d.id)?.credit||0})).filter(d=>d.date>=filters.from&&d.date<=filters.to&&(!search||master.normalize(`${d.documentNo} ${d.partnerName}`).includes(search))&&
+          (filters.status==='ALL'||filters.status==='OPEN'&&d.balance>0||filters.status==='PAID'&&d.balance===0&&!d.recoveryCredit||filters.status==='REFUND'&&(d.balance<0||d.recoveryCredit>0)));
         return {companyId:parent.id,asOf,snapshot,rows:rows.slice(offset,offset+30),total:rows.length,nextOffset:rows.length>offset+30?offset+30:null};
       }
       const doc=report.documents.find(d=>d.id===input.documentId);
@@ -48,7 +49,7 @@ function createShipmentHandler({db,now,context,load}) {
       const sum=key=>M.signed(events.reduce((total,row)=>total+row[key],0));
       const group=report.summaries.find(r=>r.partnerId===doc.partnerId&&r.currency===doc.currency);
       return {companyId:parent.id,asOf,document:{...doc,supplyMinor:sum('supply'),taxMinor:sum('tax')},rows,events,
-        allocations:report.allocations.filter(a=>a.lines.some(l=>l.documentId===doc.id)),unallocated:group?.unallocated||0,partnerBalance:group?.balance||0,
+        allocations:report.allocations.filter(a=>a.lines.some(l=>l.documentId===doc.id)),unallocated:group?.unallocated||0,partnerBalance:group?.balance||0,recovery:recoveryState(data,doc,asOf,report),
         suggestedDate:[asOf,data.ledger.lastDate,data.state.lastDate,data.settlementState.lastDate].filter(Boolean).sort().at(-1)};
     });
   };

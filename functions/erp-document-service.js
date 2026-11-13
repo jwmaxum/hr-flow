@@ -23,7 +23,7 @@ function view(id, doc, full = true) {
     currency: doc.input.currency, totalMinor: (doc.snapshot || doc.preview)?.totals.totalMinor ?? null,
     pdfReady: Boolean(doc.pdf), updatedAt: doc.updatedAt, createdAt: doc.createdAt,
     replacesId: doc.replacesId || '', replacesNumber: doc.replacesNumber || '', replacementId: doc.replacementId || '',
-    cancelledAt: doc.cancelledAt || '', cancelReason: doc.cancelReason || '',
+    cancelledAt: doc.cancelledAt || '', cancelReason: doc.cancelReason || '',returnCancelledOnly:doc.returnRecovery?.cancelledOnly===true,
     ...(full ? { input: doc.input, preview: publicSnapshot(doc.snapshot || doc.preview), fingerprint: doc.fingerprint || '' } : {}) };
 }
 
@@ -191,10 +191,11 @@ function createErpDocumentService({ db, bucket, renderPdf, now = () => new Date(
     return { document: view(ref.id, latest), name: `${latest.status === 'CANCELLED' ? '취소된원본_' : ''}${latest.number}.pdf`, mimeType: 'application/pdf', base64: object.bytes.toString('base64') };
   }
   const audit = (tx, parent, user, id, action, extra = {}) => tx.create(parent.collection('erpAudit').doc(), { companyId: parent.id, actorId: user.uid, recordId: id, kind: 'ISSUED_DOCUMENT', action, at: now().toISOString(), ...extra });
+  const returnRevision=require('./erp-return-document').createReturnDocument({db,now,context,record,refFor,sourceRows,usageRef,view,audit,checkRevision});
   return async request => {
     const fields = { meta: [], saveProfile: ['profile', 'expectedVersion'], list: ['cursor','sourceDocumentNo'], get: ['id'], sources: ['documentNo', 'kind'],
       save: ['id', 'expectedRevision', 'input'], issue: ['id', 'expectedRevision', 'fingerprint', 'confirm'], pdf: ['id'], previewPdf: ['id', 'expectedRevision'],
-      cancel: ['id', 'expectedRevision', 'reason', 'confirm'], revise: ['id', 'sourceId'] };
+      cancel: ['id', 'expectedRevision', 'reason', 'confirm'], revise: ['id', 'sourceId'],returnRevision:['id','sourceId','expectedRevision','issueDate','reason','confirm'] };
     const input = request.data;
     if (!input || !Object.hasOwn(fields, input.action)) fail('invalid-argument', '지원하지 않는 거래서류 요청입니다.');
     exactObject(input, ['action', 'companyId', ...fields[input.action]]);
@@ -240,6 +241,7 @@ function createErpDocumentService({ db, bucket, renderPdf, now = () => new Date(
           quantity: row.quantityScaled / 10000, available: source.links.get(row.id).cancelledBy ? 0 : Math.max(0, row.quantityScaled - (source.links.get(row.id).returnedQuantityScaled || 0) - source.usages.get(row.id).quantityScaled) / 10000 })) };
     });
     const ref = refFor(user.companyId, input.id);
+    if(input.action==='returnRevision')return returnRevision(request,input,user,parent,ref);
     if (input.action === 'get') return db.runTransaction(async tx => { await context(request, tx); return { document: view(ref.id, await record(tx, ref, user.companyId)) }; });
     if (input.action === 'pdf') return ensurePdf(request, ref);
     if (input.action === 'save') return db.runTransaction(async tx => {

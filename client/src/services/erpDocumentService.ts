@@ -15,13 +15,13 @@ export interface DocumentSnapshot { kind: DocumentKind; issueDate: string; curre
   buyer: { name: string; address: string }; totals: { supplyMinor: number; taxMinor: number; totalMinor: number } }
 export interface TradeDocument { id: string; companyId: string; kind: DocumentKind; status: 'DRAFT' | 'ISSUED' | 'CANCELLED'; revision: number; edition: number;
   number: string; issueDate: string; buyerName: string; currency: string; totalMinor: number | null; pdfReady: boolean; updatedAt: string; createdAt: string;
-  replacesId: string; replacesNumber: string; replacementId: string; cancelledAt: string; cancelReason: string;
+  replacesId: string; replacesNumber: string; replacementId: string; cancelledAt: string; cancelReason: string;returnCancelledOnly?:boolean;
   input?: DocumentInput; preview?: DocumentSnapshot | null; fingerprint?: string }
 export interface DocumentMeta { profile: PrintProfile; branding: PrintBranding; companyNameEn: string; canIssue: boolean }
 export interface DocumentCursor { updatedAt: string; id: string }
 export interface SourceDocument { documentNo: string; date: string; currency: string; partnerId: string; partnerName: string;
   rows: { id: string; code: string; name: string; specification: string; unit: string; price: number; quantity: number; available: number }[] }
-export interface DocumentResult { document: TradeDocument; idempotent?: boolean; warning?: string }
+export interface DocumentResult { document: TradeDocument; idempotent?: boolean; warning?: string; cancelledOnly?:boolean }
 export interface DocumentPdf { document?: TradeDocument; name: string; mimeType: string; base64: string }
 const invoke = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpDocuments', { timeout: 120000 });
 async function call<T>(companyId: string, action: string, data: Record<string, unknown> = {}): Promise<T> {
@@ -40,4 +40,5 @@ export const erpDocumentService = {
   pdf: (companyId: string, document: TradeDocument, preview = false) => call<DocumentPdf>(companyId, preview ? 'previewPdf' : 'pdf', { id: document.id, ...(preview ? { expectedRevision: document.revision } : {}) }),
   cancel: (companyId: string, document: TradeDocument, reason: string) => call<DocumentResult>(companyId, 'cancel', { id: document.id, expectedRevision: document.revision, reason, confirm: true }),
   revise: (companyId: string, id: string, sourceId: string) => call<DocumentResult>(companyId, 'revise', { id, sourceId }),
+  returnRevision:(companyId:string,id:string,document:TradeDocument,issueDate:string,reason:string)=>call<DocumentResult>(companyId,'returnRevision',{id,sourceId:document.id,expectedRevision:document.revision,issueDate,reason,confirm:true}),
 };

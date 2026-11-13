@@ -45,6 +45,7 @@ function DraftEditor({ companyId, document, items, partners, busy, onSave, onIss
   const [source, setSource] = useState<SourceDocument | null>(initialSource && initialSource.documentNo === document.input?.sourceDocumentNo ? initialSource : null), [sourceBusy, setSourceBusy] = useState(false), [error, setError] = useState('');
   const alive = useRef(true), errorRef = useRef<HTMLParagraphElement>(null), proforma = form.kind === 'PROFORMA';
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(()=>{let active=true;if(lockedSource&&document.replacesId&&document.input?.sourceDocumentNo){setSourceBusy(true);void api.sources(companyId,document.input.sourceDocumentNo,document.kind).then(value=>{if(active)setSource(value);}).catch(e=>{if(active)setError(getErrorMessage(e));}).finally(()=>{if(active)setSourceBusy(false);});}return()=>{active=false;};},[companyId,lockedSource,document.id,document.replacesId,document.input?.sourceDocumentNo,document.kind]);
   function change(patch: Partial<DocumentInput>) { setForm(current => ({ ...current, ...patch })); setDirty(true); setConfirmed(false); onDirty(true); }
   async function loadSource() {
     if (sourceBusy || busy) return; setSourceBusy(true); setError('');
@@ -112,19 +113,23 @@ function DraftEditor({ companyId, document, items, partners, busy, onSave, onIss
   </form>;
 }
 
-export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '', embedded = false }: { companyId: string; initialSourceDocumentNo?: string; embedded?: boolean }) {
+export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '', embedded = false,returnWorkflow=false }: { companyId: string; initialSourceDocumentNo?: string; embedded?: boolean;returnWorkflow?:boolean }) {
   const [initialSource, setInitialSource] = useState<SourceDocument | null>(null);
   const [meta, setMeta] = useState<DocumentMeta | null>(null), [documents, setDocuments] = useState<TradeDocument[]>([]), [cursor, setCursor] = useState<DocumentCursor | null>(null);
   const [items, setItems] = useState<ErpRecord[]>([]), [partners, setPartners] = useState<ErpRecord[]>([]), [itemCursor, setItemCursor] = useState<ErpCursor | null>(null), [partnerCursor, setPartnerCursor] = useState<ErpCursor | null>(null);
   const [selected, setSelected] = useState<TradeDocument | null>(null), [busy, setBusy] = useState(true), [dirty, setDirty] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [reason, setReason] = useState(''), [cancelChecked, setCancelChecked] = useState(false);
+  const [returnDate,setReturnDate]=useState(today()),[returnReason,setReturnReason]=useState(''),[returnChecked,setReturnChecked]=useState(false);
   const live = useRef(true), pending = useRef(false), errorRef = useRef<HTMLParagraphElement>(null), revisionIds = useRef(new Map<string, string>());
   useEffect(() => {
     let active=true;live.current = true;
     const sourceRequest=initialSourceDocumentNo?api.sources(companyId,initialSourceDocumentNo,'STATEMENT').catch(failure=>{if(!embedded)throw failure;if(active)setError(getErrorMessage(failure));return null;}):Promise.resolve(null);
-    void Promise.all([api.meta(companyId), api.list(companyId, undefined, embedded ? initialSourceDocumentNo : undefined), erpService.list(companyId, 'items', '', 'name'), erpService.list(companyId, 'partners', '', 'name'), sourceRequest]).then(([m, list, i, p, source]) => {
+    void Promise.all([api.meta(companyId), api.list(companyId, undefined, embedded ? initialSourceDocumentNo : undefined), erpService.list(companyId, 'items', '', 'name'), erpService.list(companyId, 'partners', '', 'name'), sourceRequest]).then(async ([m, list, i, p, source]) => {
       if (!active) return; setMeta(m); setDocuments(list.documents); setCursor(list.cursor); setItems(i.records); setItemCursor(i.nextCursor); setPartners(p.records); setPartnerCursor(p.nextCursor);
-      if (source && (!embedded || source.rows.some(row => row.available > 0))) {
+      if(returnWorkflow&&list.documents.some(doc=>doc.kind==='STATEMENT')){
+        const target=list.documents.find(doc=>doc.kind==='STATEMENT'&&doc.status==='ISSUED')||list.documents.find(doc=>doc.kind==='STATEMENT');
+        if(target){const loaded=await api.get(companyId,target.id);if(active)setSelected(loaded.document);}
+      }else if (source && (!embedded || source.rows.some(row => row.available > 0))) {
         const draft = blank(companyId, 'STATEMENT');
         draft.input = { ...draft.input!, sourceDocumentNo: source.documentNo, currency: source.currency, partnerId: source.partnerId,
           lines: source.rows.filter(row => row.available > 0).map(row => ({ sourceId: row.id, quantity: String(row.available), notes: '' })) };
@@ -132,14 +137,14 @@ export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '', emb
       }
     }).catch(failure => { if (active) setError(getErrorMessage(failure)); }).finally(() => { if (active) setBusy(false); });
     return () => { active=false;live.current = false; };
-  }, [companyId, initialSourceDocumentNo, embedded]);
+  }, [companyId, initialSourceDocumentNo, embedded,returnWorkflow]);
   async function run(action: () => Promise<void>) {
     if (pending.current || busy) return; pending.current = true; setBusy(true); setError(''); setNotice('');
     try { await action(); } catch (failure) { if (live.current) { setError(getErrorMessage(failure)); setTimeout(() => errorRef.current?.focus(), 0); } }
     finally { pending.current = false; if (live.current) setBusy(false); }
   }
   async function refresh() { const list = await api.list(companyId, undefined, embedded ? initialSourceDocumentNo : undefined); if (live.current) { setDocuments(list.documents); setCursor(list.cursor); } }
-  function select(doc: TradeDocument) { setSelected(doc); setDirty(false); setReason(''); setCancelChecked(false); }
+  function select(doc: TradeDocument) { setSelected(doc); setInitialSource(null);setDirty(false); setReason(''); setCancelChecked(false);setReturnChecked(false);setReturnReason(''); }
   async function result(action: Promise<DocumentResult>, message: string) {
     const response = await action; if (!live.current) return; select(response.document); setNotice(response.warning || message); await refresh();
   }
@@ -167,10 +172,19 @@ export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '', emb
         <p className="erp-form-note">발행본과 재고 처리는 별개입니다. 문서 취소·정정·재다운로드로 입출고 원장이 바뀌지 않습니다.</p>
         {selected.status === 'CANCELLED' && <p className="erp-notice">취소된 문서입니다. {selected.cancelReason} · {selected.cancelledAt.slice(0, 10)}<br />PDF는 취소 전 발행 원본이며, 유효한 문서로 사용하지 마세요.</p>}
         <button className="wf-btn wf-btn-primary" disabled={busy} onClick={() => void run(() => download(selected))}><Download size={16} />{selected.status === 'CANCELLED' ? '취소된 원본 PDF 내려받기' : selected.pdfReady ? '발행 PDF 내려받기' : 'PDF 생성·내려받기'}</button>
+        {returnWorkflow&&selected.kind==='STATEMENT'&&selected.status==='ISSUED'&&<section className="erp-document-cancel" aria-label="반품 반영 거래명세표 정정"><h3>반품 반영 거래명세표 정정</h3><p>현재 발행본을 취소하고, 이 명세표의 품목 중 반품 후 남은 발행 가능 수량으로 정정 초안을 만듭니다. 전량 반품이면 취소만 기록합니다. 원본 PDF는 보관되며, 마감된 발행본은 ADMIN이 월마감을 재개방해야 합니다.</p>
+          <label className="wf-field"><span>정정 발행일</span><input className="wf-input" disabled={busy} type="date" value={returnDate} onChange={e=>setReturnDate(e.target.value)}/></label><label className="wf-field"><span>반품 정정 사유</span><input className="wf-input" disabled={busy} maxLength={500} value={returnReason} onChange={e=>setReturnReason(e.target.value)}/></label>
+          <label className="erp-active-field"><input type="checkbox" disabled={busy} checked={returnChecked} onChange={e=>setReturnChecked(e.target.checked)}/>원본을 보관하고 반품 수량에 맞춰 취소·정정함을 확인했습니다.</label>
+          <button className="wf-btn wf-btn-primary" disabled={busy||!returnChecked||returnReason.trim().length<3||!returnDate} onClick={()=>void run(async()=>{
+            const key=`return:${selected.id}:${selected.revision}:${returnDate}:${returnReason}`;if(!revisionIds.current.has(key))revisionIds.current.set(key,crypto.randomUUID());
+            const response=await api.returnRevision(companyId,revisionIds.current.get(key)!,selected,returnDate,returnReason);
+            await result(Promise.resolve(response),response.cancelledOnly?'남은 발행 수량이 없어 거래명세표를 취소했습니다. 원본 PDF는 보관됩니다.':'반품 수량을 반영한 정정 초안을 만들었습니다. 저장·금액 확인 후 발행해 주세요.');
+          })}>반품 반영 취소·정정 초안 만들기</button>
+        </section>}
         {selected.status === 'ISSUED' ? <div className="erp-document-cancel"><label className="wf-field"><span>문서 취소 사유</span><input className="wf-input" disabled={busy} minLength={3} maxLength={500} value={reason} onChange={event => setReason(event.target.value)} /></label>
           <label className="erp-active-field"><input type="checkbox" checked={cancelChecked} disabled={busy} onChange={event => setCancelChecked(event.target.checked)} />문서만 취소하고 재고는 유지함을 확인했습니다.</label>
           <button className="wf-btn" disabled={busy || !cancelChecked || reason.trim().length < 3} onClick={() => void run(() => result(api.cancel(companyId, selected, reason), '문서를 취소했습니다. 원본 PDF는 보존됩니다.'))}>발행 문서 취소</button></div> :
-          <div className="erp-actions"><button className="wf-btn" disabled={busy} onClick={() => void run(async () => {
+          selected.returnCancelledOnly?<p className="erp-notice">전량 반품 또는 남은 발행 수량이 없어 정정본 발행을 생략했습니다. 원본 PDF와 취소 이력은 보관됩니다.</p>:<div className="erp-actions"><button className="wf-btn" disabled={busy} onClick={() => void run(async () => {
             if (selected.replacementId) return result(api.get(companyId, selected.replacementId), '연결된 정정본을 열었습니다.');
             if (!revisionIds.current.has(selected.id)) revisionIds.current.set(selected.id, crypto.randomUUID());
             await result(api.revise(companyId, revisionIds.current.get(selected.id)!, selected.id), '정정 초안을 만들었습니다. 수정·저장 후 새 번호로 발행해 주세요.');

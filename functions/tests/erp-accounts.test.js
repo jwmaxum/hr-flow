@@ -49,6 +49,8 @@ const paidOptions={receiptMode:'REUSE_FIRST',confirmNew:false,notes:'자체 입�
 const paidPreview=async(documentId,extra={})=>(await finance(req({action:'paymentPreview',id:'paid-'+(++seq),input:{documentId,date:'2026-11-12',...paidOptions,...extra}}))).job;
 const paidCommit=job=>finance(req({action:'paymentCommit',id:job.id,fingerprint:job.fingerprint}));
 const dashboard=month=>finance(req({action:'dashboard',month}));
+const recoveryPreview=async(documentId,type,amount,extra={})=>(await finance(req({action:'shipmentRecoveryPreview',id:'recover-'+(++seq),input:{documentId,type,amount,date:'2026-11-12',notes:'반품 후 정산 검증',...(type==='REFUND'?{method:'BANK',reference:'환불확인',confirmPaid:true}:{}),...extra}}))).job;
+const recoveryCommit=job=>finance(req({action:'shipmentRecoveryCommit',id:job.id,fingerprint:job.fingerprint}));
 
 test('aging counts UTC calendar days across leap years and omits future financial events',()=>{
   const {settlementReport}=require('../erp-settlement-model');
@@ -57,6 +59,42 @@ test('aging counts UTC calendar days across leap years and omits future financia
   const r=settlementReport(data,'2024-03-01');assert.deepEqual(r.totals,[{currency:'USD',balance:135,refundDue:0}]);assert.equal(r.documents[0].overdueDays,2);assert.equal(r.documents[0].overdueAmount,135);assert.equal(settlementReport(data,'2024-03-02').documents[0].overdueAmount,100);
 });
 test('receivables, bundles and customer custody remain atomic and tenant-scoped',async t=>{try{
+  await t.test('return recovery preserves mixed allocations, supports partial releases and refunds exactly once',async()=>{
+    await reset();const [sale]=await post('출고',[line()]);const first=(await settlements()).documents[0];await post('출고',[line('PART','1','300')]);const second=(await settlements()).documents.find(d=>d.id!==first.id);
+    const receipt=await preview(finance,payment({amount:'990'}));await commit(finance,receipt);
+    await settle(await settlementPreview({type:'ALLOCATE',receiptId:receipt.id,lines:[{documentId:first.id,amount:'660'},{documentId:second.id,amount:'330'}]}));
+    await correct('SALES_RETURN',sale.id,'1');await reject(recoveryPreview(first.id,'REFUND','1'));
+    const beforeStock=await stock('part'),firstRelease=await recoveryPreview(first.id,'RELEASE','100'),stale=await recoveryPreview(first.id,'RELEASE','100');
+    const concurrent=await Promise.all([recoveryCommit(firstRelease),recoveryCommit(firstRelease)]);assert.equal(concurrent.filter(r=>r.idempotent).length,1);await reject(recoveryCommit(stale));
+    let r=await settlements();assert.deepEqual(r.documents.map(d=>[d.id,d.allocated]).sort(),[[first.id,560],[second.id,330]].sort());
+    await reject(settle(firstRelease));await recoveryCommit(await recoveryPreview(first.id,'RELEASE','230'));await reject(recoveryPreview(first.id,'RELEASE','1'));
+    let d=await finance(req({action:'shipmentDetail',documentId:first.id}));assert.deepEqual([d.recovery.released,d.recovery.credit,d.recovery.refundable,d.document.balance],[330,330,330,0]);
+    assert.equal((await finance(req({action:'shipmentList',from:'2026-11-01',to:'2026-11-12',status:'REFUND'}))).rows[0].id,first.id);
+    const refund=await recoveryPreview(first.id,'REFUND','100');await recoveryCommit(refund);assert.equal((await recoveryCommit(refund)).idempotent,true);
+    await recoveryCommit(await recoveryPreview(first.id,'REFUND','230'));await reject(recoveryPreview(first.id,'REFUND','1'));
+    d=await finance(req({action:'shipmentDetail',documentId:first.id}));assert.deepEqual([d.recovery.refunded,d.recovery.refundable,d.recovery.partnerBalance],[330,0,0]);assert.deepEqual(await stock('part'),beforeStock);
+    r=await settlements();assert.equal(r.documents.find(d=>d.id===second.id).allocated,330);assert.equal(r.receipts.find(r=>r.id===receipt.id).amount,990);
+    assert.equal((await records('erpAudit')).filter(r=>r.action==='SHIPMENT_RECOVERY_REFUND').length,2);
+  });
+  await t.test('document refund cap respects other invoices, refund reversals and cancelled source receipts',async()=>{
+    await reset();const [sale]=await post('출고',[line()]),doc=(await settlements()).documents[0];await paidCommit(await paidPreview(doc.id));const receipt=(await records('erpReceipts'))[0];
+    await post('출고',[line('PART','1','300')]);await correct('SALES_RETURN',sale.id,'2');await recoveryCommit(await recoveryPreview(doc.id,'RELEASE','660'));
+    let detail=await finance(req({action:'shipmentDetail',documentId:doc.id}));assert.deepEqual([detail.recovery.credit,detail.recovery.refundable],[660,330]);
+    await reject(recoveryPreview(doc.id,'REFUND','331'));const refund=await recoveryPreview(doc.id,'REFUND','330');await recoveryCommit(refund);
+    await commit(finance,await preview(finance,{type:'CANCEL',sourceId:refund.id}));detail=await finance(req({action:'shipmentDetail',documentId:doc.id}));assert.equal(detail.recovery.refundable,330);assert.ok(detail.recovery.history.some(r=>r.type==='REFUND_CANCELLED'));
+    await commit(finance,await preview(finance,{type:'CANCEL',sourceId:receipt.id}));detail=await finance(req({action:'shipmentDetail',documentId:doc.id}));assert.equal(detail.recovery.credit,0);await reject(recoveryPreview(doc.id,'REFUND','1'));
+  });
+  await t.test('recovery rejects cross-role access, stale previews, bad precision and closed periods',async()=>{
+    await reset();const [sale]=await post('출고',[line('PART','2','1')],{currency:'USD',exchangeRate:'1400'}),doc=(await settlements()).documents[0];await paidCommit(await paidPreview(doc.id));await correct('SALES_RETURN',sale.id,'1');
+    for(const amount of ['0','-1','0.001','1e2'])await reject(recoveryPreview(doc.id,'RELEASE',amount),'invalid-argument');
+    const job=await recoveryPreview(doc.id,'RELEASE','1.10');
+    for(const uid of [null,'member','manager','root','foreign'])await reject(finance(req({action:'shipmentRecoveryCommit',id:job.id,fingerprint:job.fingerprint},uid)),uid?'permission-denied':'unauthenticated');
+    await parent().collection('erpGovernance').doc('control').set({companyId:'a',revision:1,closedThrough:'2026-11-12'},{merge:true});await reject(recoveryCommit(job));
+    await parent().collection('erpGovernance').doc('control').update({closedThrough:''});await recoveryCommit(job);
+    await reject(recoveryPreview(doc.id,'REFUND','1.10',{confirmPaid:false}),'invalid-argument');
+    const refund=await recoveryPreview(doc.id,'REFUND','1.10');await commit(finance,await preview(finance,payment({type:'REFUND',currency:'USD',amount:'0.10'})));await reject(recoveryCommit(refund));
+    assert.equal((await finance(req({action:'shipmentDetail',documentId:doc.id}))).recovery.refundable,100);
+  });
   await t.test('shipment workspace registers partial receipts atomically and reconciles returns at current date',async()=>{
     await reset();const rows=await post('출고',[line()]);const doc=(await settlements()).documents[0];
     const query={action:'shipmentList',from:'2026-11-01',to:'2026-11-12',search:'buyer',status:'OPEN'};

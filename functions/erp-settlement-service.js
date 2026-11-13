@@ -91,7 +91,7 @@ function createSettlementHandler({ db, now, context, load }) {
       else Object.assign(normalized,{documentId:master.identifier(v.documentId),expectedDate:v.expectedDate===''?'':M.date(v.expectedDate),assigneeId:v.assigneeId===''?'':master.identifier(v.assigneeId)});
     }
     return db.runTransaction(async tx=>{
-      await context(request,tx);const snap=await tx.get(ref),old=snap.data();if(old){master.verifyTenant(old,parent.id);if(old.kind==='PAYMENT_CONFIRMATION')fail('failed-precondition','입금완료 전용 미리보기를 사용해 주세요.');}
+      await context(request,tx);const snap=await tx.get(ref),old=snap.data();if(old){master.verifyTenant(old,parent.id);if(old.kind)fail('failed-precondition','해당 업무의 전용 미리보기를 사용해 주세요.');}
       if(input.action==='settlementPreview') {
         if(old){if(M.hash(old.input)!==M.hash(normalized))fail('already-exists','내용이 변경되었습니다. 새로 검증해 주세요.');return {job:old};}
         const job={id,companyId:parent.id,input:normalized,status:'PENDING',createdAt:now().toISOString(),createdBy:user.uid};

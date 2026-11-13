@@ -71,6 +71,24 @@ async function inventory() {
 }
 
 test('ERP PDF issuance, source allocation and private archive', async t => { try {
+  await t.test('return correction atomically preserves original PDF and creates only remaining statement quantities',async()=>{
+    const source=await reset(),original=(await issue(await save(input(source,'STATEMENT','2')))).document;
+    const other=(await issue(await save(input(source,'STATEMENT','3')))).document,originalPdf=await call('pdf',{id:original.id});
+    const p=await corrections(request({action:'preview',id:'return-correct-part',input:{type:'SALES_RETURN',sourceId:source.sourceId,quantity:'1',date:'2026-11-12',reason:'부분 반품'}}));await corrections(request({action:'commit',id:p.correction.id,fingerprint:p.correction.fingerprint}));
+    const before=await inventory(),args={id:'return-draft',sourceId:original.id,expectedRevision:original.revision,issueDate:'2026-11-12',reason:'반품 수량 정정',confirm:true};
+    const result=await call('returnRevision',args);assert.equal(result.cancelledOnly,false);assert.equal(result.document.input.lines[0].quantity,'1');assert.equal(result.document.replacesId,original.id);
+    assert.equal((await call('returnRevision',args)).idempotent,true);assert.equal((await load(other.id)).status,'ISSUED');assert.equal((await call('pdf',{id:original.id})).base64,originalPdf.base64);assert.equal((await load(original.id)).status,'CANCELLED');
+    await denied(call('returnRevision',{...args,reason:'다른 반품 사유'}),'already-exists');await denied(call('returnRevision',{...args,id:'another-return-draft'}),'aborted');
+    const fresh=await save(result.document.input,result.document.id,result.document.revision),issued=(await issue(fresh)).document;assert.equal(issued.totalMinor,330);assert.equal(issued.edition,2);assert.notEqual(issued.number,original.number);assert.deepEqual(await inventory(),before);
+  });
+  await t.test('full return cancels statement without an empty replacement and respects governance and tenant checks',async()=>{
+    const source=await reset(),original=(await issue(await save(input(source,'STATEMENT')))).document;
+    const p=await corrections(request({action:'preview',id:'return-correct-all',input:{type:'SALES_RETURN',sourceId:source.sourceId,quantity:'5',date:'2026-11-12',reason:'전량 반품'}}));await corrections(request({action:'commit',id:p.correction.id,fingerprint:p.correction.fingerprint}));
+    const args={id:'no-empty-return-draft',sourceId:original.id,expectedRevision:original.revision,issueDate:'2026-11-12',reason:'전량 반품 명세표 취소',confirm:true};
+    for(const uid of ['foreign','member',null])await denied(call('returnRevision',args,uid),uid?'permission-denied':'unauthenticated');
+    await parent().collection('erpGovernance').doc('control').set({companyId:'a',revision:1,closedThrough:'2026-11-12'},{merge:true});await denied(call('returnRevision',args),'failed-precondition');assert.equal((await load(original.id)).status,'ISSUED');
+    await parent().collection('erpGovernance').doc('control').update({closedThrough:''});const result=await call('returnRevision',args);assert.equal(result.cancelledOnly,true);assert.equal(result.document.status,'CANCELLED');assert.equal((await parent().collection('erpIssuedDocuments').doc(args.id).get()).exists,false);assert.equal((await call('returnRevision',args)).idempotent,true);
+  });
   await t.test('source-filtered archive includes only the selected shipment and rejects foreign access',async()=>{
     const source=await reset(),draft=await save(input(source,'STATEMENT'));
     await save(input(source,'PROFORMA'));
