@@ -1,3 +1,4 @@
+import * as erpAccess from '../src/utils/erpAccess.ts';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -8,6 +9,7 @@ const source=ts.transpileModule(readFileSync(new URL('../src/services/erpImportS
 function fixture(){
   const state={auth:{currentUser:{uid:'admin'}},session:{userData:{uid:'admin',companyId:'a',role:'ADMIN',status:'ACTIVE'},companyData:{id:'a',status:'ACTIVE'},sessionReady:true},reply:{companyId:'a',records:[]},calls:[],hook:null},module={exports:{}};
   vm.runInNewContext(source,{module,exports:module.exports,require(name){
+    if(name==='../utils/erpAccess')return erpAccess;
     if(name==='../firebase')return {auth:state.auth,functions:{}};
     if(name==='../store/authStore')return {useAuthStore:{getState:()=>state.session}};
     if(name==='firebase/functions')return {httpsCallable(){return async data=>{state.calls.push(data);state.hook?.();return {data:state.reply};};}};

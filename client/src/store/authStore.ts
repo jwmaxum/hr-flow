@@ -35,7 +35,7 @@ export interface UserData {
   email: string;
   name: string;
   role: Role;
-  erpAccess?: 'NONE' | 'VIEW' | 'INBOUND' | 'OUTBOUND' | 'BOTH';
+  erpAccess?: 'NONE' | 'VIEW' | 'INBOUND' | 'OUTBOUND' | 'BOTH' | 'MANAGER';
   companyId: string; // 소속 회사 ID (SUPER_ADMIN은 'PLATFORM')
   teamId?: string;
   divisionId?: string;

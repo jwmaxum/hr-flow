@@ -1,3 +1,4 @@
+import {erpAccessOf} from '../utils/erpAccess';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bell, BookOpen, Check, Loader2, RefreshCw, X } from 'lucide-react';
@@ -263,5 +264,5 @@ export function NotificationBell(props: NotificationBellProps) {
   const companyId = userData?.uid === props.currentUserId && recipientRole && userData.status !== 'RESIGNED'
     ? userData.companyId : '';
   // A different company/account/role gets a new state tree before effects run.
-  return <>{sessionReady&&companyId&&(recipientRole==='ADMIN'||['VIEW','INBOUND','OUTBOUND','BOTH'].includes(userData?.erpAccess||''))&&<ErpClosingAlert key={`closing:${props.currentUserId}:${companyId}:${userData?.erpAccess}`} companyId={companyId} onNavigate={props.onNavigate}/>} {sessionReady&&recipientRole==='ADMIN'&&companyId&&<ErpApprovalAlert key={`${props.currentUserId}:${companyId}`} companyId={companyId} onNavigate={props.onNavigate}/>}<NotificationInbox key={`${props.currentUserId}:${companyId}:${recipientRole}`} {...props} companyId={companyId} recipientRole={recipientRole || 'MEMBER'} /></>;
+  return <>{sessionReady&&companyId&&erpAccessOf(userData)!=='NONE'&&<ErpClosingAlert key={`closing:${props.currentUserId}:${companyId}:${userData?.erpAccess}`} companyId={companyId} onNavigate={props.onNavigate}/>} {sessionReady&&recipientRole==='ADMIN'&&companyId&&<ErpApprovalAlert key={`${props.currentUserId}:${companyId}`} companyId={companyId} onNavigate={props.onNavigate}/>}<NotificationInbox key={`${props.currentUserId}:${companyId}:${recipientRole}`} {...props} companyId={companyId} recipientRole={recipientRole || 'MEMBER'} /></>;
 }

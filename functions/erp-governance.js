@@ -2,14 +2,14 @@ const { authorizeContext, fail } = require('./security-context');
 const { createHash } = require('node:crypto');
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
 const digest = value => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-const accessOf = user => user.role === 'ADMIN' ? 'ADMIN' : ['VIEW','INBOUND','OUTBOUND','BOTH'].includes(user.erpAccess) ? user.erpAccess : 'NONE';
+const accessOf = user => (user.status||'ACTIVE')!=='ACTIVE'?'NONE':user.role === 'ADMIN' ? 'ADMIN' : user.role==='SUB_ADMIN'&&user.erpAccess==='MANAGER'?'MANAGER':['SUB_ADMIN','MEMBER'].includes(user.role)&&['VIEW','INBOUND','OUTBOUND','BOTH'].includes(user.erpAccess) ? user.erpAccess : 'NONE';
 function requireAction(user,domain,action){
   const reads={master:['itemSearch','list','inventory','purchaseHistory','bundleEstimate'],report:['meta','report','export']};
   if(accessOf(user)==='VIEW'&&!reads[domain]?.includes(action))fail('permission-denied','ERP 조회 전용 권한입니다. 등록·수정·취소는 담당 권한과 ADMIN 승인이 필요합니다.');
 }
 function requireDirection(user, direction) {
   const access = accessOf(user);
-  if (access !== 'ADMIN' && access !== 'BOTH' && access !== (direction === '입고' ? 'INBOUND' : direction === '출고' ? 'OUTBOUND' : 'INVALID')) fail('permission-denied','지정된 입고·출고 담당 업무만 처리할 수 있습니다.');
+  if (!['ADMIN','MANAGER','BOTH'].includes(access) && access !== (direction === '입고' ? 'INBOUND' : direction === '출고' ? 'OUTBOUND' : 'INVALID')) fail('permission-denied','지정된 입고·출고 담당 업무만 처리할 수 있습니다.');
 }
 async function authorizeErp(args) {
   const user = await authorizeContext({...args, roles:['ADMIN','SUB_ADMIN','MEMBER']});
@@ -32,14 +32,30 @@ async function checkImport(user, input, job) {
 async function checkCorrection(user, input, tx, parent) {
   if (user.role === 'ADMIN') return;
   if(accessOf(user)==='VIEW')fail('permission-denied','조회 전용 사용자는 변경을 요청할 수 없습니다.');
-  if (input.type === 'TRANSFER') {if(accessOf(user)!=='BOTH')fail('permission-denied','창고 이동은 입출고 전체 담당 권한이 필요합니다.');return;}
-  if (['COUNT','VALUE'].includes(input.type)) return; // Always queued for ADMIN approval.
+  if (input.type === 'TRANSFER') {if(!['BOTH','MANAGER'].includes(accessOf(user)))fail('permission-denied','창고 이동은 입출고 전체 담당 권한이 필요합니다.');return;}
+  if (['COUNT','VALUE'].includes(input.type)) return;
   const source = await tx.get(parent.collection('erpMovements').doc(input.sourceId));
   if (!source.exists || source.data().companyId !== parent.id) fail('not-found','원거래를 찾을 수 없습니다.');
   requireDirection(user,source.data().direction);
 }
 const tracked = new Set(['erpItems','erpWarehouses','erpPartners','erpMovements','erpInventory','erpMovementLinks','erpDocuments','erpReceipts','erpSettlements','erpCustodyJobs','erpCustodyLots','erpIssuedDocuments','erpPrintSettings']);
 const timed = new Set(['erpMovements','erpReceipts','erpSettlements','erpDocuments','erpCustodyJobs','erpIssuedDocuments']);
+
+// The ERP option never promotes an HR role or grants finance/governance rights.
+async function managerDirectChange(user,domain,request,result,changed,tx,parent){
+  if(accessOf(user)!=='MANAGER')return false;
+  if(domain==='correction'){
+    const input=result.correction?.input;
+    if(['COUNT','VALUE','SALES_RETURN','PURCHASE_RETURN'].includes(input?.type))return true;
+    if(input?.type!=='CANCEL')return false;
+    const source=(await tx.get(parent.collection('erpMovements').doc(input.sourceId))).data();
+    return source?.companyId===parent.id && source.type==='MOVEMENTS';
+  }
+  if(domain!=='master'||request.data.kind!=='items')return false;
+  const rows=changed.filter(r=>r.path.startsWith('erpItems/'));
+  const allowed=new Set(['purchasePrice','salePrice','revision','updatedAt','updatedBy']);
+  return rows.length===1&&rows.every(r=>r.before&&r.after&&Object.keys({...r.before,...r.after}).every(k=>allowed.has(k)||digest(r.before[k]??null)===digest(r.after[k]??null)));
+}
 
 // Buffer writes so closing, permissions, approval and append-only history are
 // checked in the SAME transaction as every existing ERP writer. Never wrap a
@@ -69,9 +85,10 @@ function governedService(factory, domain) {
         const correction=domain==='correction'&&request.data.action==='commit'&&result.correction?.input.type!=='TRANSFER';
         const masterEdit=domain==='master'&&request.data.action==='save'&&changed.some(r=>r.before&&['erpItems','erpWarehouses','erpPartners'].some(c=>r.path.startsWith(c+'/')));
         const needsApproval=correction||masterEdit;
+        const managerDirect=needsApproval&&await managerDirectChange(user,domain,request,result,changed,tx,parent);
         const at=now().toISOString(),operationId=digest([domain,request.data]);
         const approvalRef=parent.collection('erpApprovals').doc(operationId);
-        if(needsApproval&&user.role!=='ADMIN'){
+        if(needsApproval&&user.role!=='ADMIN'&&!managerDirect){
           const old=await tx.get(approvalRef);
           if(old.exists&&old.data().status!=='PENDING')fail('failed-precondition','이미 처리된 승인 요청입니다. 변경 내용을 다시 입력하고 새로 검증해 주세요.');
           if(!old.exists){
@@ -83,7 +100,7 @@ function governedService(factory, domain) {
           return {...result,approvalRequested:true,approvalId:operationId,...(result.correction?{correction:{...result.correction,status:'AWAITING_APPROVAL'}}:{}),...(result.record?{record:null}:{})};
         }
         const approval=request.erpApproval;
-        if(needsApproval&&user.role==='ADMIN'&&!approval){
+        if(needsApproval&&(user.role==='ADMIN'||managerDirect)&&!approval){
           const pendingApproval=await tx.get(approvalRef);
           if(pendingApproval.data()?.status==='PENDING')fail('failed-precondition','승인 대기 중인 변경입니다. 승인 요청 화면에서 승인·반려해 주세요.');
         }
@@ -101,7 +118,7 @@ function governedService(factory, domain) {
         const chunks=[];let chunk=[],size=0;
         for(const row of changed){const n=Buffer.byteLength(JSON.stringify(row));if(n>800000)fail('resource-exhausted','변경 이력 크기를 초과했습니다. 입력을 나누어 주세요.');if(size+n>800000){chunks.push(chunk);chunk=[];size=0;}chunk.push(row);size+=n;}if(chunk.length)chunks.push(chunk);
         for(const w of pending)tx[w.method](...w.args);
-        chunks.forEach((changes,i)=>tx.create(parent.collection('erpChangeHistory').doc(),{companyId:parent.id,operationId,domain,action:request.data.action,actorId:user.uid,actorName:user.name||user.email||user.uid,requestedBy:approval?.requestedBy||user.uid,approvedBy:needsApproval?user.uid:null,approvalId:approval?.id||null,reason:approval?.reason||result.correction?.input.reason||'',at,part:i+1,parts:chunks.length,changes}));
+        chunks.forEach((changes,i)=>tx.create(parent.collection('erpChangeHistory').doc(),{companyId:parent.id,operationId,domain,action:request.data.action,actorId:user.uid,actorName:user.name||user.email||user.uid,requestedBy:approval?.requestedBy||user.uid,approvedBy:needsApproval&&!managerDirect?user.uid:null,approvalId:approval?.id||null,...(managerDirect?{authorization:'ERP_MANAGER_DIRECT',actorErpAccess:'MANAGER'}:{}),reason:approval?.reason||result.correction?.input.reason||'',at,part:i+1,parts:chunks.length,changes}));
         tx.set(stateRef,{...state,revision:state.revision+1});
         return result;
       });

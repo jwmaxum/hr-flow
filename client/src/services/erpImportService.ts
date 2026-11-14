@@ -1,3 +1,4 @@
+import {erpAccessOf,erpCanOperate} from '../utils/erpAccess';
 import type {PaymentOptions,PaymentSummary} from './erpAccountService';
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../firebase';
@@ -41,7 +42,7 @@ export interface ErpSourceFile { name: string; mimeType: string; base64: string 
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpImport', { timeout: 120000 });
 function scope(companyId: string) {
   const { userData, companyData, sessionReady } = useAuthStore.getState();
-  if (!auth.currentUser || auth.currentUser.uid !== userData?.uid || userData.companyId !== companyId || userData.role !== 'ADMIN' && !['INBOUND','OUTBOUND','BOTH'].includes(userData.erpAccess || '') ||
+  if (!auth.currentUser || auth.currentUser.uid !== userData?.uid || userData.companyId !== companyId || !erpCanOperate(erpAccessOf(userData)) ||
     userData.mustChangePassword || (userData.status && userData.status !== 'ACTIVE') || !sessionReady || companyData?.id !== companyId || companyData.status !== 'ACTIVE' || companyData.subscriptionStatus === 'EXPIRED') throw new Error('현재 회사 관리자로 다시 로그인해 주세요.');
   return `${userData.uid}:${companyId}:${userData.role}:${userData.erpAccess || 'NONE'}`;
 }

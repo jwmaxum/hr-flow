@@ -38,6 +38,36 @@ async function reset(){
   await commitMove(await previewMove('입고'));await completeChecklist();
 }
 test('ERP monthly close, approval and delegation invariants',async t=>{try{
+  await t.test('ERP manager is an explicit SUB_ADMIN option with direct inventory and price changes only',async()=>{
+    await reset();await deny(grant('member','MANAGER'));await deny(call('grant',{uid:'manager',access:'MANAGER',expectedAccess:'NONE',reason:'스스로 권한 부여'},'manager'));
+    await grant('manager','MANAGER');assert.equal((await call('status',{},'manager')).access,'MANAGER');
+    const inbound=await previewMove('입고','manager');await commitMove(inbound,'manager');const outbound=await previewMove('출고','manager');await commitMove(outbound,'manager');
+    const value=await correction('VALUE','manager');const results=await Promise.all([commitCor(value,'manager'),commitCor(value,'manager')]);assert.ok(results.every(r=>r.correction.status==='COMMITTED'));assert.equal((await docs('erpApprovals')).length,0);assert.equal((await docs('erpInventory'))[0].value,300);
+    let price=await masters(req({action:'save',kind:'items',id:'item',expectedRevision:1,values:{...values,purchasePrice:123,salePrice:234}},'manager'));assert.equal(price.record.purchasePrice,123);assert.equal(price.approvalRequested,undefined);
+    const mixed=await masters(req({action:'save',kind:'items',id:'item',expectedRevision:2,values:{...values,purchasePrice:124,name:'이름도 변경'}},'manager'));assert.equal(mixed.approvalRequested,true);assert.equal((await docs('erpItems'))[0].name,values.name);assert.equal((await docs('erpItems'))[0].purchasePrice,123);
+    const history=(await docs('erpChangeHistory')).filter(h=>h.authorization==='ERP_MANAGER_DIRECT');assert.equal(history.length,2);assert.ok(history.every(h=>h.actorId==='manager'&&h.requestedBy==='manager'&&h.approvedBy===null&&h.approvalId===null));
+    assert.ok(history.some(h=>h.changes.some(c=>c.path.startsWith('erpInventory/')&&c.after.value===300)));
+    for(const action of ['directory','history','closePreview','approvalAlerts'])await deny(call(action,action==='closePreview'?{month:'2026-11'}:{},'manager'));
+    await deny(finance(req({action:'dashboard',month:'2026-11'},'manager')));await deny(imports(req({action:'list'},'manager')));
+    await deny(call('decide',{id:mixed.approvalId,decision:'APPROVE',reason:'자기 승인 시도'},'manager'));
+  });
+  await t.test('ERP manager returns and outgoing cancellation commit directly with append-only history',async()=>{
+    await reset();await grant('manager','MANAGER');await commitMove(await previewMove('입고','manager'));
+    await commitMove(await previewMove('출고','manager'));const sale=(await docs('erpMovements')).find(r=>r.direction==='출고');
+    const returned=(await corrections(req({action:'preview',id:'manager-return',input:{type:'SALES_RETURN',sourceId:sale.id,date:'2026-11-12',quantity:'1',reason:'담당자 판매반품'}},'manager'))).correction;
+    assert.equal(returned.settlement,undefined);assert.equal((await commitCor(returned,'manager')).correction.status,'COMMITTED');assert.equal((await docs('erpInventory'))[0].quantity,3);
+    const next=await previewMove('출고','manager');await commitMove(next,'manager');const last=(await docs('erpMovements')).find(r=>r.importId===next.id&&r.direction==='출고');
+    const cancel=(await corrections(req({action:'preview',id:'manager-cancel',input:{type:'CANCEL',sourceId:last.id,date:'2026-11-12',reason:'담당자 출고 취소'}},'manager'))).correction;
+    assert.equal((await commitCor(cancel,'manager')).correction.status,'COMMITTED');assert.equal((await docs('erpInventory'))[0].quantity,3);assert.equal((await docs('erpApprovals')).length,0);
+  });
+  await t.test('manager privilege changes, existing pending requests and closing are rechecked at commit',async()=>{
+    await reset();await grant('manager','BOTH');const pending=await correction('VALUE','manager'),queued=await commitCor(pending,'manager');await grant('manager','MANAGER');
+    await deny(commitCor(pending,'manager'),'failed-precondition');assert.equal((await docs('erpInventory'))[0].value,200);await call('decide',{id:queued.approvalId,decision:'REJECT',reason:'새 담당자 재검토'});
+    const stale=await correction('VALUE','manager');await grant('manager','BOTH');assert.equal((await commitCor(stale,'manager')).approvalRequested,true);
+    await grant('manager','MANAGER');await db.doc('UserProfile/manager').update({role:'MEMBER'});await deny(call('status',{},'manager'));await deny(commitCor(stale,'manager'));await db.doc('UserProfile/manager').update({role:'SUB_ADMIN',status:'RESIGNED'});await deny(call('status',{},'manager'));
+    await reset();await grant('manager','MANAGER');const beforeClose=await correction('VALUE','manager');await close(await closePreview());await deny(commitCor(beforeClose,'manager'),'failed-precondition');assert.equal((await docs('erpInventory'))[0].value,200);
+    await deny(call('reopen',{month:'2026-11',revision:(await call('status')).state.revision,reason:'권한 없는 재개방'},'manager'));
+  });
   await t.test('explicit scoped grants, wrong direction, foreign grants and revoked pending writes',async()=>{
     await reset();await deny(masters(req({action:'list',kind:'items'},'member')));await deny(call('directory',{},'member'));await deny(call('grant',{uid:'member',access:'BOTH',expectedAccess:'NONE',reason:'위조 요청'},'manager'));await deny(call('grant',{uid:'foreign',access:'BOTH',expectedAccess:'NONE',reason:'다른 회사'}));
     await grant('member','INBOUND');assert.equal((await masters(req({action:'inventory',itemId:'item'},'member'))).quantity,2);

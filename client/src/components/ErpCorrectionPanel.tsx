@@ -1,3 +1,4 @@
+import {erpAccessOf} from '../utils/erpAccess';
 import {useAuthStore} from '../store/authStore';
 import { useEffect, useRef, useState } from 'react';
 import { erpService } from '../services/erpService';
@@ -11,7 +12,7 @@ const number = (value: number) => value.toLocaleString('ko-KR', { maximumFractio
 export function ErpCorrectionPanel({ companyId, type: initialType, source, date: initialDate, onClose, onCommitted, onStatement }: {
   companyId: string; type: CorrectionType; source?: ReportRow; date: string; onClose: () => void; onCommitted: (correction:Correction) => Promise<void>;onStatement?:(documentNo:string)=>void;
 }) {
-  const isAdmin=useAuthStore(s=>s.userData?.role==='ADMIN');
+  const access=useAuthStore(s=>erpAccessOf(s.userData));
   const [type,setType] = useState(initialType), [date,setDate] = useState(initialDate), [reason,setReason] = useState('');
   const [quantity,setQuantity] = useState(''), [value,setValue] = useState('');
   const [itemId,setItemId] = useState(source?.itemId || ''), [warehouseId,setWarehouseId] = useState(source?.warehouseId || '');
@@ -21,6 +22,7 @@ export function ErpCorrectionPanel({ companyId, type: initialType, source, date:
   const [busy,setBusy] = useState(false), [error,setError] = useState(''), [notice,setNotice] = useState('');
   const live = useRef(true), heading = useRef<HTMLHeadingElement>(null), attempt = useRef<{key:string;id:string}|null>(null);
   const adjusting = type === 'COUNT' || type === 'VALUE';
+  const canConfirm=access==='ADMIN'||access==='MANAGER'&&(type!=='CANCEL'||source?.type==='MOVEMENTS');
   useEffect(() => {
     live.current = true; heading.current?.focus();
     if (initialType === 'COUNT' || initialType === 'VALUE') void Promise.all([erpService.list(companyId,'items','','name'),erpService.list(companyId,'warehouses','','name')]).then(([a,b]) => {
@@ -63,7 +65,7 @@ export function ErpCorrectionPanel({ companyId, type: initialType, source, date:
     {preview&&<div className="erp-correction-preview"><h3 className="wf-section-title">변동 미리보기 · {preview.rows.length}행</h3><div className="erp-table-scroll" tabIndex={0} role="region" aria-label="조정 전후 재고"><table className="erp-table"><thead><tr><th>품목·창고</th><th>처리</th><th>수량 전 → 후</th><th>금액 전 → 후 (원)</th><th>원거래 반품 공급가</th></tr></thead><tbody>{preview.rows.map(row=><tr key={row.rowNo}><td>{row.name}<small className="erp-cell-note">{row.warehouseName}</small></td><td>{row.direction}</td><td>{number(row.beforeQuantity)} → {number(row.afterQuantity)} {row.unit}</td><td>{number(row.beforeValue)} → {number(row.afterValue)}</td><td>{row.refundKRW==null?'—':`${number(row.refundKRW)}원`}<small className="erp-cell-note">{row.refundSupply==null?'':`${number(row.refundSupply)} + 세액 ${number(row.refundTax||0)} ${row.currency}`}</small></td></tr>)}</tbody></table></div>
       {preview.settlement&&<ErpReturnSummary value={preview.settlement} pending={preview.status!=='COMMITTED'}/>}
       {preview.status==='COMMITTED'&&preview.settlement&&onStatement&&<button className="wf-btn wf-btn-primary" onClick={()=>onStatement(preview.settlement!.documentNo)}>거래명세표 정정</button>}
-      {preview.status==='AWAITING_APPROVAL'?<p role="status" className="erp-notice">ADMIN 승인 대기 중입니다. 승인 전에는 재고가 변경되지 않습니다.</p>:preview.status==='COMMITTED'?<p role="status" className="erp-success">처리 완료. 원장과 재고가 함께 반영되었습니다.</p>:<><label className="erp-active-field"><input type="checkbox" checked={confirmed} disabled={busy||dirty} onChange={e=>setConfirmed(e.target.checked)} />사유와 전체 변동 내역을 확인했습니다.</label>{dirty&&<p className="erp-notice">입력이 변경되었습니다. 미리보기를 다시 실행해 주세요.</p>}<button className="wf-btn wf-btn-primary" disabled={busy||dirty||!confirmed} onClick={()=>void run(async()=>{const result=await erpLedgerService.commit(companyId,preview);if(!live.current)return;setPreview(result.correction);setConfirmed(false);await onCommitted(result.correction);})}>{isAdmin?'취소·반품·조정 확정':'ADMIN 승인 요청'}</button></>}
+      {preview.status==='AWAITING_APPROVAL'?<p role="status" className="erp-notice">ADMIN 승인 대기 중입니다. 승인 전에는 재고가 변경되지 않습니다.</p>:preview.status==='COMMITTED'?<p role="status" className="erp-success">처리 완료. 원장과 재고가 함께 반영되었습니다.</p>:<><label className="erp-active-field"><input type="checkbox" checked={confirmed} disabled={busy||dirty} onChange={e=>setConfirmed(e.target.checked)} />사유와 전체 변동 내역을 확인했습니다.</label>{dirty&&<p className="erp-notice">입력이 변경되었습니다. 미리보기를 다시 실행해 주세요.</p>}<button className="wf-btn wf-btn-primary" disabled={busy||dirty||!confirmed} onClick={()=>void run(async()=>{const result=await erpLedgerService.commit(companyId,preview);if(!live.current)return;setPreview(result.correction);setConfirmed(false);await onCommitted(result.correction);})}>{canConfirm?'취소·반품·조정 확정':'ADMIN 승인 요청'}</button></>}
     </div>}
   </section>;
 }

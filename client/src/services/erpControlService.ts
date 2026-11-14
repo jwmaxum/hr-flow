@@ -2,7 +2,8 @@ import {httpsCallable} from 'firebase/functions';
 import {functions} from '../firebase';
 import {erpScope} from './erpLedgerService';
 import {downloadErpFile} from './erpImportService';
-export type ErpAccess='NONE'|'VIEW'|'INBOUND'|'OUTBOUND'|'BOTH'|'ADMIN';
+import type {ErpAccess} from '../utils/erpAccess';
+export type {ErpAccess} from '../utils/erpAccess';
 export interface CloseTask {key:string;label:string;assigneeUid:string;assigneeName:string;confirmed:boolean;submission:{by:string;name:string;at:string;note:string}|null}
 export interface ClosePlan {companyId:string;month:string;revision:number;status:'OPEN'|'CLOSED';dueDate:string;ownerUid:string;ownerName:string;notes:string;items:CloseTask[];pendingCount:number;myPendingCount:number;actionCount:number;awaitingAdminCount:number;overdue:boolean;today:string}
 export interface CloseAlerts {pendingCount:number;overdueCount:number;hasMore:boolean;checkedAt:string}
@@ -15,7 +16,7 @@ export interface CloseChecklist {companyId:string;month:string;revision:number;i
 export interface ApprovalAlerts {pendingCount:number;hasMore:boolean;checkedAt:string;items:{id:string;requesterName:string;domain:string;createdAt:string;date:string}[]}
 export interface Archive {id:string;month:string;version:number;closedAt:string;closedByName:string;reason:string;inventoryValue:number;salesKRW:number;purchasesKRW:number;pendingCount:number;files:{name:string;mimeType:string;size:number;sha256:string}[];checklist?:CloseChecklist}
 export interface Change {path:string;before:Record<string,unknown>|null;after:Record<string,unknown>|null}
-export interface History {id:string;at:string;actorName:string;action:string;domain:string;reason:string;approvedBy:string|null;requestedBy:string;changes:Change[]}
+export interface History {authorization?:'ERP_MANAGER_DIRECT';id:string;at:string;actorName:string;action:string;domain:string;reason:string;approvedBy:string|null;requestedBy:string;changes:Change[]}
 export interface ClosePreview {revision:number;version:number;checklist:CloseChecklist;checklistReady:boolean;dashboard:{month:string;snapshot:string;inventoryValue:number;salesKRW:number;purchasesKRW:number;pendingCount:number}}
 const callable=httpsCallable<Record<string,unknown>,unknown>(functions,'manageErpControl',{timeout:300000});
 export async function erpControl<T>(companyId:string,action:string,data:Record<string,unknown>={}):Promise<T>{

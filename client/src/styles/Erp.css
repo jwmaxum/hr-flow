@@ -1,4 +1,13 @@
 .erp-page { color: var(--wf-text); }
+.erp-navigation { margin: 16px 0 20px; }
+.erp-menu-row { display: flex; align-items: stretch; gap: 12px; flex-wrap: wrap; }
+.erp-main-menu { display: flex; flex: 1; gap: 6px; flex-wrap: wrap; }
+.erp-main-menu button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: 1 1 135px; min-height: 48px; padding: 10px 14px; border: 1px solid var(--wf-border); border-radius: 10px; color: var(--wf-text); background: var(--wf-surface, #fff); cursor: pointer; white-space: nowrap; }
+.erp-main-menu button[aria-current="page"], .erp-admin-menu[aria-current="page"] { color: var(--wf-accent); background: var(--wf-accent-light, #fceefb); border-color: var(--wf-accent); font-weight: 700; }
+.erp-main-menu button:disabled { opacity: .55; cursor: not-allowed; }
+.erp-menu-permissions { margin: 10px 0 0; font-size: 13px; }
+.erp-sub-menu { margin-top: 12px; }
+@media (max-width: 600px) { .erp-main-menu { flex-basis: 100%; } .erp-main-menu button { flex-basis: calc(50% - 6px); } .erp-admin-menu { margin-left: auto; } }
 .erp-item-picker { min-width: 0; }
 .erp-item-options { border: 1px solid var(--wf-border); border-radius: 8px; padding: 8px; background: var(--wf-surface, #fff); }
 .erp-item-options [role="listbox"] { max-height: 240px; overflow-y: auto; overscroll-behavior: contain; }
