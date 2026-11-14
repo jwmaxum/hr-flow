@@ -241,6 +241,8 @@
 }
 
 .erp-work-home { display: grid; gap: 20px; }
+.erp-movement [tabindex="-1"]:focus, .erp-collection [tabindex="-1"]:focus { outline: 2px solid var(--wf-primary,#923278); outline-offset: 4px; scroll-margin: 100px 0; }
+.erp-error .wf-btn { margin: 8px 0 0 12px; }
 .erp-work-home > .wf-panel { padding: 20px; min-width: 0; }
 .erp-work-home .erp-list-head { padding: 0; flex-wrap: wrap; }
 .erp-start-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }

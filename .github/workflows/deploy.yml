@@ -119,6 +119,7 @@ jobs:
           name: isolated-browser-e2e
           path: |
             test-results/e2e/results.json
+            test-results/e2e/erp-usability-*.json
             test-results/e2e/artifacts/**/*.png
           if-no-files-found: ignore
           retention-days: 7

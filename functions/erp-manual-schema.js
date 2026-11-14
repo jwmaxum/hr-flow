@@ -1,4 +1,5 @@
 const {paymentOptions}=require('./erp-payment-service');
+const {atInput}=require('./erp-input-error');
 const { fail } = require('./security-context');
 const { exactObject, date, hash, decimal } = require('./erp-ledger-model');
 const { parseMatrix, HEADERS, SHEETS } = require('./erp-import-schema');
@@ -8,8 +9,8 @@ const { erpMaster: master } = require('./erp-service');
 function manualInput(input) {
   exactObject(input, ['direction','date','warehouseId','partnerId','partner','currency','exchangeRate','priceBasis','lines','allowNewItems','allowNewPartners','payment']);
   if (!['입고','출고'].includes(input.direction) || !Array.isArray(input.lines) || !input.lines.length || input.lines.length > 50) fail('invalid-argument', '입출고 구분과 1~50개 품목을 확인해 주세요.');
-  date(input.date); master.identifier(input.warehouseId);
-  if (input.partnerId) master.identifier(input.partnerId);
+  atInput('date',()=>date(input.date)); atInput('warehouseId',()=>master.identifier(input.warehouseId));
+  if (input.partnerId) atInput('partnerId',()=>master.identifier(input.partnerId));
   else exactObject(input.partner, ['code','name','country','registrationNumber']);
   if (input.partnerId && input.partner) fail('invalid-argument', '기존 거래처 또는 신규 거래처 중 하나를 선택해 주세요.');
   for (const key of ['allowNewItems','allowNewPartners']) if (typeof input[key] !== 'boolean') fail('invalid-argument', '신규 등록 확인을 선택해 주세요.');
@@ -21,7 +22,7 @@ function manualInput(input) {
     if(input.payment.status==='PAID'){const {receiptMode,confirmNew,notes}=input.payment;paymentOptions({receiptMode,confirmNew,notes});}
     else exactObject(input.payment,['status']);
   }
-  for (const line of input.lines) {
+  for (const [index,line] of input.lines.entries()) atInput('movementLine',()=>{
     exactObject(line, ['code','name','specification','unit','taxType','quantity','price','notes','fulfillment','custodyLotId','borrowValue','amountMode','totalAmount','vatMode']);
     if (line.amountMode !== undefined && !['UNIT','TOTAL'].includes(line.amountMode)) fail('invalid-argument','금액 입력방식을 확인해 주세요.');
     if (line.amountMode === 'TOTAL') {
@@ -33,7 +34,7 @@ function manualInput(input) {
     if (!['DIRECT','HOLD','BORROW'].includes(mode) || input.direction !== '출고' && mode !== 'DIRECT') fail('invalid-argument','보관·차용은 출고에서만 선택합니다.');
     if (mode === 'BORROW') { master.identifier(line.custodyLotId); decimal(line.borrowValue,0,'차용 평가금액',9e12); }
     else if (line.custodyLotId || line.borrowValue != null && line.borrowValue !== '') fail('invalid-argument','차용 출고에만 보관품과 평가금액을 입력합니다.');
-  }
+  },index+1);
   if (Buffer.byteLength(JSON.stringify(input)) > 100000) fail('invalid-argument', '입력 자료가 너무 큽니다.');
   return hash(input);
 }

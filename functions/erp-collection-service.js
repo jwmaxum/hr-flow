@@ -1,4 +1,5 @@
 const {fail}=require('./security-context');
+const {atInput}=require('./erp-input-error');
 const {erpMaster:master}=require('./erp-service');
 const M=require('./erp-ledger-model');
 const {currencies,minor}=require('./erp-finance-model');
@@ -8,18 +9,18 @@ const {flushPayment}=require('./erp-payment-service');
 function normalize(value){
   M.exactObject(value,['mode','partnerId','currency','date','receivedDate','amount','method','reference','notes','receiptId','lines','confirmDistinct']);
   if(!['NEW','EXISTING'].includes(value.mode)||!currencies.includes(value.currency)||typeof value.confirmDistinct!=='boolean')fail('invalid-argument','수금 방식·통화를 확인해 주세요.');
-  const input={mode:value.mode,partnerId:master.identifier(value.partnerId),currency:value.currency,date:M.date(value.date),notes:M.text(value.notes,'입금 확인 메모',500,true),confirmDistinct:value.confirmDistinct};
+  const input={mode:value.mode,partnerId:atInput('partnerId',()=>master.identifier(value.partnerId)),currency:value.currency,date:atInput('date',()=>M.date(value.date)),notes:atInput('collectionNotes',()=>M.text(value.notes,'입금 확인 메모',500,true)),confirmDistinct:value.confirmDistinct};
   if(value.mode==='NEW'){
     if(!['BANK','CASH','CARD','OTHER'].includes(value.method))fail('invalid-argument','입금 방법을 확인해 주세요.');
-    Object.assign(input,{amountMinor:minor(value.amount,value.currency),method:value.method,reference:M.text(value.reference,'입금 참조번호',100),receivedDate:M.date(value.receivedDate)});
+    Object.assign(input,{amountMinor:atInput('collectionAmount',()=>minor(value.amount,value.currency)),method:value.method,reference:M.text(value.reference,'입금 참조번호',100),receivedDate:atInput('receivedDate',()=>M.date(value.receivedDate))});
     if(!input.amountMinor||input.receivedDate>input.date)fail('invalid-argument','실제 입금일은 원장 반영일 이하여야 하며 입금액은 0보다 커야 합니다.');
     if(value.receiptId)fail('invalid-argument','새 입금과 기존 수금을 동시에 선택할 수 없습니다.');
   }else{
-    input.receiptId=master.identifier(value.receiptId);
+    input.receiptId=atInput('collectionReceipt',()=>master.identifier(value.receiptId));
     if(value.amount||value.receivedDate||value.method||value.reference||value.confirmDistinct)fail('invalid-argument','기존 수금의 입금일·금액은 변경할 수 없습니다.');
   }
   if(!Array.isArray(value.lines)||value.lines.length>50)fail('invalid-argument','배분 문서는 최대 50건입니다.');
-  input.lines=value.lines.map(line=>{M.exactObject(line,['documentId','amount']);const amountMinor=minor(line.amount,value.currency);if(!amountMinor)fail('invalid-argument','배분액은 0보다 커야 합니다.');return {documentId:master.identifier(line.documentId),amountMinor};});
+  input.lines=value.lines.map((line,index)=>atInput('collectionAllocation',()=>{M.exactObject(line,['documentId','amount']);const amountMinor=minor(line.amount,value.currency);if(!amountMinor)fail('invalid-argument','배분액은 0보다 커야 합니다.');return {documentId:master.identifier(line.documentId),amountMinor};},index+1));
   if(new Set(input.lines.map(l=>l.documentId)).size!==input.lines.length||input.mode==='EXISTING'&&!input.lines.length)fail('invalid-argument','배분 문서를 중복 없이 선택해 주세요.');
   return input;
 }
