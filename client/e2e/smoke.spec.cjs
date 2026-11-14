@@ -712,7 +712,7 @@ test('ERP role start screens and today work preserve permissions and open the se
       const response=await probe(actor,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/manageErpControl`,{method:'POST',body:{data:{companyId:fixtures.companyA,action:'workQueue'}}});expect(response.status).toBe(200);expect(JSON.parse(Buffer.from(response.bytes).toString()).result.sections.map(s=>s.key)).toEqual(['approvals','closing']);
     }
     await mp.getByRole('region',{name:'월마감 담당 업무',exact:true}).getByRole('button',{name:/업무 열기$/}).click();await expect(mp.getByLabel('일정 조회 월',{exact:true})).toHaveValue('2026-10');await mp.goBack();
-    await mp.getByRole('heading',{name:'재고관리 ERP',exact:true}).scrollIntoViewIfNeeded();await mp.screenshot({path:testInfo.outputPath('erp-today-view.png'),fullPage:true});expect(await mp.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await expect(mp.getByRole('region',{name:'오늘 할 일',exact:true})).toHaveAttribute('aria-busy','false');await mp.getByRole('heading',{name:'재고관리 ERP',exact:true}).scrollIntoViewIfNeeded();await mp.screenshot({path:testInfo.outputPath('erp-today-view.png'),fullPage:true});expect(await mp.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
     await page.goto('/#/erp');await expect(home).toBeVisible();expect(await readErpInventory(fixtures.companyB)).toEqual(beforeOther);
   }finally{if(granted!==(original.erpAccess||'NONE'))await grant(original.erpAccess||'NONE');}
 });
