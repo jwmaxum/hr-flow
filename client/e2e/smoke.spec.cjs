@@ -1,7 +1,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { test, expect } = require('@playwright/test');
 const { PROJECT_ID, WEB_ORIGIN, HOSTS, assertE2EEnvironment } = require('../../scripts/e2e/safety.cjs');
-const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture, seedErpSearchItems } = require('../../scripts/e2e/fixtures.cjs');
+const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture, seedErpSearchItems,seedErpStockStates } = require('../../scripts/e2e/fixtures.cjs');
 const { workbook: erpWorkbook, opening: erpOpening, movement: erpMovement } = require('../../functions/tests/erp-import-fixtures.cjs');
 
 assertE2EEnvironment();
@@ -420,7 +420,7 @@ test('ERP company masters and name search show independent inventory on desktop 
   const pendingPanel=owner.page.getByRole('region',{name:'품목 재고현황'});
   await expect(pendingPanel.getByText('이관 대기 수량 (원본 기준)',{exact:true})).toBeVisible({timeout:65000});
   await expect(pendingPanel.getByText('2026-11-11 기준 · 원본 수량 209 EA',{exact:true})).toBeVisible();
-  await expect(pendingPanel.getByText('원가 미확정',{exact:true})).toHaveCount(2);
+  await expect(pendingPanel.getByText('원가 미확정 대기',{exact:true})).toBeVisible();await expect(pendingPanel.getByText('미확정',{exact:true})).toBeVisible();
   await owner.page.screenshot({path:testInfo.outputPath('erp-pending-inventory.png'),fullPage:true});
   const stock = await seedErpBalance(fixtures.companyA, 'ERP-001', 'WH-001');
   await owner.page.getByLabel('품목명 검색', { exact: true }).fill('자동점검 A');
@@ -682,6 +682,27 @@ test('ERP outgoing item search matches partial models and ignores stale queries 
   await page.getByRole('button',{name:'품목 행 추가',exact:true}).click();const second=page.getByRole('combobox',{name:'등록 품목 선택 *',exact:true}).nth(1);await second.fill('omr322');await expect(page.getByRole('listbox',{name:'품목 검색 결과',exact:true}).getByRole('option')).toHaveCount(2,{timeout:65000});await second.scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-searchable-items.png'),fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await page.getByRole('listbox',{name:'품목 검색 결과',exact:true}).getByRole('option',{name:/SG-9000/}).click();await expect(page.getByLabel('품목코드 *',{exact:true}).nth(0)).toHaveValue('SG-9001');await expect(page.getByLabel('품목코드 *',{exact:true}).nth(1)).toHaveValue('SG-9000');
   await second.fill('없는모델XYZ');await expect(page.getByText('일치하는 사용 중 품목이 없습니다.',{exact:true})).toBeVisible({timeout:65000});await expect(page.getByLabel('품목코드 *',{exact:true}).nth(1)).toHaveValue('');
+});
+
+test('ERP ownership states and warehouse kit capacity share clear labels without pooling customer goods',async({browser},testInfo)=>{
+  test.setTimeout(300000);await clearErpFixture(fixtures.companyA);const foreign=await readErpInventory(fixtures.companyB);
+  const actor=await actorFor(browser,testInfo);await login(actor,fixtures.accounts.adminA);const page=actor.page;page.setDefaultTimeout(30000);
+  async function call(data){const response=await probe(actor,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/manageErp`,{method:'POST',body:{data:{companyId:fixtures.companyA,...data}}});expect(response.status).toBe(200);return JSON.parse(Buffer.from(response.bytes).toString()).result;}
+  for(const [id,name,active]of [['state-hq','본사',true],['state-lab','연구소',true],['state-off','사용 중지 창고',false],['state-empty','신규 창고',true]])await call({action:'save',kind:'warehouses',id,expectedRevision:0,values:{code:id,name,active,address:'',notes:''}});
+  for(const [id,name]of [['state-a','상태검증A'],['state-b','상태검증B']])await call({action:'save',kind:'items',id,expectedRevision:0,values:{code:id,name,active:true,specification:'',unit:'EA',purchasePrice:100,salePrice:200,taxType:'과세',group:'',notes:''}});
+  await call({action:'save',kind:'items',id:'state-set',expectedRevision:0,values:{code:'state-set',name:'상태검증세트',active:true,specification:'',unit:'SET',purchasePrice:0,salePrice:500,taxType:'과세',group:'',notes:'',itemType:'BUNDLE',components:[{itemId:'state-a',quantity:'2'},{itemId:'state-b',quantity:'1'}]}});
+  await seedErpStockStates(fixtures.companyA);const before=await readErpInventory(fixtures.companyA);
+  await page.goto('/#/erp');await openErp(page,'품목·재고현황');await page.getByRole('button',{name:'상태검증A 재고 보기',exact:true}).click();
+  const panel=page.getByRole('region',{name:'품목 재고현황',exact:true}),states=panel.locator('dl[aria-label="소유·보관·차용·원가 상태"]').first();
+  for(const [label,amount]of [['회사 소유 재고','28EA'],['고객 소유 보관품','8EA'],['차용 미반환','3EA'],['원가 미확정 대기','209EA']])await expect(states.locator(':scope > div').filter({has:page.getByText(label,{exact:true})}).locator('dd')).toHaveText(amount,{timeout:65000});
+  await expect(panel.getByText('창고 미지정 · 출고·자산 제외',{exact:true})).toBeVisible();await expect(panel.getByText('PRIVATE_OWNER',{exact:true})).toHaveCount(0);await states.scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-stock-states.png'),fullPage:true});
+  await page.getByRole('button',{name:'상태검증세트 재고 보기',exact:true}).click();const kits=panel.getByRole('region',{name:'창고별 세트 출고 가능 수량',exact:true});
+  const hq=kits.getByRole('article',{name:'본사 세트 현황',exact:true}),lab=kits.getByRole('article',{name:'연구소 세트 현황',exact:true}),off=kits.getByRole('article',{name:'사용 중지 창고 세트 현황',exact:true});
+  await expect(hq.getByText('출고 가능 2세트',{exact:true})).toBeVisible({timeout:65000});await expect(hq.getByText('250원',{exact:true})).toBeVisible();await expect(lab.getByText('출고 가능 0세트',{exact:true})).toBeVisible();await expect(off.getByText('출고 가능 0세트',{exact:true})).toBeVisible();
+  const empty=kits.getByRole('article',{name:'신규 창고 세트 현황',exact:true});await expect(empty.getByText('출고 가능 0세트',{exact:true})).toBeVisible();await empty.locator('summary').click();await expect(empty.getByText('미등록',{exact:true})).toHaveCount(2);await empty.locator('summary').click();
+  await hq.locator('summary').click();await expect(hq.getByText('상태검증A',{exact:false}).first()).toBeVisible();await hq.scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-stock-kit-warehouses.png'),fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  const result=await call({action:'bundleEstimate',warehouseId:'state-hq',components:[{itemId:'state-a',quantity:'2'},{itemId:'state-b',quantity:'1'}],quantity:'2'});expect(result).toMatchObject({availableSets:2,estimatedCost:500,canShip:true});expect(result.rows[0]).toMatchObject({quantity:7,customerHeld:8,borrowedOutstanding:3,pendingQuantity:209});
+  expect(await readErpInventory(fixtures.companyA)).toEqual(before);expect(await readErpInventory(fixtures.companyB)).toEqual(foreign);
 });
 
 test('ERP unified collections reuse one deposit across partner and shipment screens without duplicate receipts',async({browser},testInfo)=>{

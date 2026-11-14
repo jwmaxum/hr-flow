@@ -1,3 +1,4 @@
+import {ErpInventoryPanel} from '../components/ErpInventoryPanel';
 import {ErpNavigation} from '../components/ErpNavigation';
 import {erpAccessOf,erpCanOperate,erpAccessNames} from '../utils/erpAccess';
 import type {ErpAccess} from '../utils/erpAccess';
@@ -28,7 +29,6 @@ const ErpOpeningPanel = lazy(() => import('../components/ErpOpeningPanel').then(
 const ErpCustodyPanel = lazy(() => import('../components/ErpCustodyPanel').then(module => ({ default: module.ErpCustodyPanel })));
 
 const names: Record<ErpKind, string> = { items: '품목', warehouses: '창고', partners: '거래처' };
-const number = (value: number) => value.toLocaleString('ko-KR', { maximumFractionDigits: 4 });
 type Field = { key: string; label: string; required?: boolean; max?: number; numeric?: boolean; options?: [string, string][] };
 const fields: Record<ErpKind, Field[]> = {
   items: [
@@ -126,28 +126,6 @@ function MasterEditor({ companyId, kind, record, onClose, onSaved }: {
       <div className="erp-actions"><button className="wf-btn" type="button" onClick={onClose} disabled={busy}>취소</button>
         <button className="wf-btn wf-btn-primary" type="submit" disabled={busy}>{busy ? '저장 중…' : '저장'}</button></div>
     </form>
-  </section>;
-}
-
-function InventoryPanel({ value, loading, error, onRetry, onEdit, onOpening, canManage, canOpenOpening }: {
-  value: InventoryResult | null; loading: boolean; error: string; onRetry: () => void; onEdit: () => void; onOpening: () => void; canManage: boolean; canOpenOpening:boolean;
-}) {
-  return <section className="wf-panel erp-inventory" aria-label="품목 재고현황" aria-busy={loading}>
-    <div className="wf-panel-head"><h2 className="wf-section-title">재고현황</h2><button className="wf-btn" onClick={onRetry} disabled={loading} aria-label="재고 새로고침"><RefreshCw size={16} aria-hidden="true" /></button></div>
-    {loading ? <p role="status" className="erp-empty">재고를 확인하고 있습니다.</p> : error ? <p role="alert" className="erp-error">{error}</p> : value ? <>
-      <div className="erp-item-heading"><span className="erp-code">{value.item.code}</span><h3>{value.item.name}</h3><p className="wf-muted">{value.item.specification || '규격 미입력'} · {value.item.unit}</p>
-        {!value.item.active && <span className="wf-status wf-status-warning">사용 중지</span>}</div>
-      <dl className="erp-stock-totals"><div><dt>{value.virtual ? '구성품으로 출고 가능한 조합수량' : value.status === 'PENDING_COST' ? '이관 대기 수량 (원본 기준)' : '현재 재고수량'}</dt><dd>{value.status === 'PENDING_COST' ? (value.pendingOpening?.quantity == null ? '수량 미입력' : number(value.pendingOpening.quantity)) : value.quantity === null ? '—' : number(value.quantity)}<small>{value.status === 'PENDING_COST' ? value.pendingOpening?.unit : value.item.unit}</small></dd></div>
-        {canManage && <><div><dt>전체 재고금액</dt><dd>{value.status === 'PENDING_COST' ? <small>원가 미확정</small> : <>{value.value == null ? '—' : number(value.value)}<small>원</small></>}</dd></div><div><dt>평균 재고단가</dt><dd>{value.status === 'PENDING_COST' ? <small>원가 미확정</small> : <>{value.averagePrice == null ? '—' : number(value.averagePrice)}<small>원</small></>}</dd></div></>}</dl>
-      {value.virtual && <p className="erp-notice">조합상품의 별도 재고자산은 없습니다. 출고 가능 수량은 창고별 구성품 보유량으로 계산하며 구성품 원가에서 차감합니다.</p>}{canManage && !value.virtual && <p className="wf-muted">평균 재고단가 = 전체 창고의 재고금액 ÷ 현재 재고수량</p>}
-      {value.status === 'UNINITIALIZED' && <p className="erp-notice"><strong>재고 미등록</strong><br />기초재고 또는 입출고가 반영되면 창고별 수량을 확인할 수 있습니다.</p>}
-      {value.pendingOpening && <div className="erp-notice" aria-label="원가 미확정 이관 대기"><strong>원가 확인 후 재고 확정 필요</strong><p>{value.pendingOpening.basisDate} 기준 · 원본 수량 {value.pendingOpening.quantity == null ? '공란' : `${number(value.pendingOpening.quantity)} ${value.pendingOpening.unit}`}</p><p>{value.pendingOpening.source}</p><p>원본의 이관 대기 수량입니다. 출고 가능한 확정 재고와 재고자산에는 포함되지 않습니다. 실제 원가 확인 후 기초재고 원가 확정에서 수량·금액을 확정해 주세요. 기본 매입단가만 수정해도 재고가 확정되지는 않습니다.</p>{canOpenOpening&&<button className="wf-btn wf-btn-primary" disabled={!value.item.active} onClick={onOpening}>원가 입력·기초재고 확정</button>}</div>}
-      {canManage && <dl className="erp-prices">{!value.virtual && <div><dt>기본 매입단가</dt><dd>{number(value.item.purchasePrice ?? 0)}원</dd></div>}<div><dt>기본 판매단가</dt><dd>{number(value.item.salePrice ?? 0)}원</dd></div></dl>}
-      {value.warehouses.length > 0 && <div className="erp-table-scroll"><table className="erp-table"><caption className="erp-sr-only">창고별 재고</caption><thead><tr><th>창고</th><th className="erp-number">수량</th>{canManage && <th className="erp-number">금액 (원)</th>}</tr></thead>
-        <tbody>{value.warehouses.map(row => <tr key={row.warehouseId}><td>{row.warehouseName}<small className="erp-cell-note">{row.warehouseCode}{row.warehouseActive ? '' : ' · 사용 중지'}</small></td><td className="erp-number">{number(row.quantity)}</td>{canManage && <td className="erp-number">{number(row.value ?? 0)}</td>}</tr>)}</tbody></table></div>}
-      <div className="erp-inventory-footer"><small className="wf-muted">조회 {new Date(value.checkedAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}</small>
-        {canManage && <button className="wf-btn" onClick={onEdit}><Pencil size={14} aria-hidden="true" />품목 수정</button>}</div>
-    </> : <div className="erp-empty"><PackageSearch size={32} aria-hidden="true" /><p>품목명을 입력하거나 목록에서 품목을 선택해 주세요.</p></div>}
   </section>;
 }
 
@@ -267,7 +245,7 @@ function ErpWorkspace({companyId,companyName,canManage,access,route,initialItem}
         {cursor && <div className="erp-more"><button className="wf-btn" onClick={() => void more()} disabled={loading}>더 보기</button></div>}
       </section>
       {editor && canOperate ? <MasterEditor key={`${kind}:${editor.record?.id || 'new'}:${editor.record?.revision || 0}`} companyId={companyId} kind={kind} record={editor.record}
-        onClose={() => { setEditor(null); requestAnimationFrame(() => addButton.current?.focus()); }} onSaved={saved} /> : kind === 'items' ? <InventoryPanel value={stock} loading={stockLoading} error={stockError} canManage={canManage||manager} canOpenOpening={canManage}
+        onClose={() => { setEditor(null); requestAnimationFrame(() => addButton.current?.focus()); }} onSaved={saved} /> : kind === 'items' ? <ErpInventoryPanel value={stock} loading={stockLoading} error={stockError} canManage={canManage||manager} canOpenOpening={canManage}
           onOpening={()=>openOpening(stock?.item.id||'')} onRetry={() => { if (selected) { stockGeneration.current++; setStock(null); setSelected({ ...selected }); } }} onEdit={() => { if (stock) setEditor({ record: stock.item }); }} /> : null}
     </div>}
   </main>;

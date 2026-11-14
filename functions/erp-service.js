@@ -121,73 +121,7 @@ function createErpService({ db, now = () => new Date() }) {
         return { rows, nextCursor: snapshots.size > 50 ? scanned.at(-1).id : null };
       });
     }
-    if (action === 'inventory') {
-      const itemId = identifier(data.itemId);
-      return db.runTransaction(async tx => {
-        await context(request, tx);
-        const item = await tx.get(companyRef.collection('erpItems').doc(itemId));
-        if (!item.exists) fail('not-found', '품목을 찾을 수 없습니다.');
-        verifyTenant(item.data(), companyId);
-        // Imported reference quantities awaiting cost are not posted stock or zero-value assets.
-        let pendingOpening = null;
-        const pending = item.data().pendingOpening;
-        if (pending?.status === 'PENDING_COST') {
-          const M = require('./erp-ledger-model');
-          M.date(pending.basisDate);
-          if (pending.quantity !== null && (!Number.isFinite(pending.quantity) || pending.quantity < 0 || !Number.isSafeInteger(Math.round(pending.quantity * 10000)))) fail('failed-precondition','이관 대기 수량을 확인해 주세요.');
-          pendingOpening = {basisDate:pending.basisDate,quantity:pending.quantity,source:text(pending.source,'원본 위치',200,true),unit:text(pending.unit,'원본 단위',20,true)};
-        }
-        if (item.data().itemType === 'BUNDLE') {
-          const components = item.data().components, stockByPart = [], allWarehouses = new Set();
-          if (!components?.length || components.length > 20) fail('failed-precondition','조합 구성을 확인해 주세요.');
-          for (const component of components) {
-            const part = await tx.get(companyRef.collection('erpItems').doc(identifier(component.itemId)));
-            if (!part.exists) fail('failed-precondition','구성품을 찾을 수 없습니다.'); verifyTenant(part.data(),companyId);
-            const stocks = await tx.get(companyRef.collection('erpInventory').where('itemId','==',component.itemId).limit(501));
-            if (stocks.size > 500) fail('resource-exhausted','구성품 창고 수를 확인해 주세요.');
-            const byWarehouse = new Map();
-            for (const snap of stocks.docs) {
-              const row=snap.data();verifyTenant(row,companyId);
-              if (byWarehouse.has(row.warehouseId) || !Number.isFinite(row.quantity) || row.quantity < 0) fail('failed-precondition','구성품 재고를 확인해 주세요.');
-              byWarehouse.set(row.warehouseId,part.data().active ? Math.round(row.quantity*10000) : 0); allWarehouses.add(row.warehouseId);
-            }
-            stockByPart.push({quantityScaled:component.quantityScaled,byWarehouse});
-          }
-          const rows=[];
-          for (const warehouseId of allWarehouses) {
-            const warehouse=await tx.get(companyRef.collection('erpWarehouses').doc(identifier(warehouseId)));
-            if(!warehouse.exists)fail('failed-precondition','구성품 창고를 확인해 주세요.');verifyTenant(warehouse.data(),companyId);
-            const quantity=Math.min(...stockByPart.map(part=>Math.floor((part.byWarehouse.get(warehouseId)||0)/part.quantityScaled)));
-            rows.push({warehouseId,warehouseCode:warehouse.data().code,warehouseName:warehouse.data().name,warehouseActive:warehouse.data().active,quantity,updatedAt:null,value:0});
-          }
-          return {item:view('items',item.id,item.data(),true),virtual:true,status:'RECORDED',quantity:rows.reduce((sum,row)=>sum+row.quantity,0),
-            value:0,averagePrice:null,currency:'KRW',warehouses:rows,checkedAt:now().toISOString()};
-        }
-        const balances = await tx.get(companyRef.collection('erpInventory').where('itemId', '==', itemId).limit(501));
-        if (balances.size > 500) fail('resource-exhausted', '창고별 재고가 너무 많습니다. 관리자에게 문의해 주세요.');
-        const warehouseIds = [...new Set(balances.docs.map(row => identifier(row.data().warehouseId)))];
-        const warehouseDocs = await Promise.all(warehouseIds.map(id => tx.get(companyRef.collection('erpWarehouses').doc(id))));
-        const warehouses = new Map(warehouseDocs.map(row => [row.id, row.data()]));
-        const seen = new Set();
-        const rows = balances.docs.map(row => {
-          const balance = row.data(), warehouse = warehouses.get(balance.warehouseId);
-          verifyTenant(balance, companyId);
-          verifyTenant(warehouse, companyId);
-          if (seen.has(balance.warehouseId)) fail('failed-precondition', '창고별 재고 중복을 확인해 주세요.');
-          seen.add(balance.warehouseId);
-          if (!Number.isFinite(balance.quantity) || !Number.isSafeInteger(Math.round(balance.quantity * 10000)) ||
-            !Number.isSafeInteger(balance.value) || balance.currency !== 'KRW') fail('failed-precondition', '재고 집계 자료를 확인해 주세요.');
-          return { warehouseId: balance.warehouseId, warehouseCode: warehouse.code, warehouseName: warehouse.name,
-            warehouseActive: warehouse.active, quantity: balance.quantity,
-            value: balance.value, updatedAt: balance.updatedAt || null };
-        });
-        const quantity = rows.length ? rows.reduce((sum, row) => sum + Math.round(row.quantity * 10000), 0) / 10000 : null;
-        const value = rows.length ? rows.reduce((sum, row) => sum + row.value, 0) : null;
-        if (quantity !== null && !Number.isSafeInteger(Math.round(quantity * 10000)) || value !== null && !Number.isSafeInteger(value)) fail('failed-precondition', '재고 합계 범위를 확인해 주세요.');
-        return { item: view('items', item.id, item.data(), true), pendingOpening, status: rows.length ? 'RECORDED' : pendingOpening ? 'PENDING_COST' : 'UNINITIALIZED',
-          quantity, value, averagePrice: quantity > 0 ? value / quantity : null, currency: 'KRW', warehouses: rows, checkedAt: now().toISOString() };
-      });
-    }
+    if (action === 'inventory') return require('./erp-stock-state').inventory({db,request,companyRef,context,now,master:{identifier,verifyTenant},view});
     const kind = data.kind;
     if (!Object.hasOwn(COLLECTIONS, kind)) fail('invalid-argument', '기준정보 종류를 확인해 주세요.');
     if (kind === 'partners' && !canManage) fail('permission-denied', '거래처 관리는 회사 관리자 권한이 필요합니다.');

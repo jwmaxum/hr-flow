@@ -20,8 +20,10 @@ export interface InventoryResult {
   pendingOpening?: {basisDate: string; quantity: number | null; source: string; unit: string} | null;
   currency?: string; averagePrice?: number | null; checkedAt: string;
   virtual?: boolean;
+  customerHeld?:number; borrowedOutstanding?:number;
   warehouses: { warehouseId: string; warehouseCode: string; warehouseName: string; warehouseActive: boolean;
-    quantity: number; value?: number; updatedAt: string | null }[];
+    quantity: number; value?: number|null; updatedAt: string | null;recorded?:boolean;customerHeld?:number;borrowedOutstanding?:number;
+    estimatedCost?:number|null;canShip?:boolean;components?:BundleEstimate['rows'] }[];
 }
 export interface PurchaseHistory {
   rows: { id: string; date: string; documentNo: string; warehouseName: string; quantity: number; price: number | null;
@@ -29,7 +31,7 @@ export interface PurchaseHistory {
   nextCursor: string | null;
 }
 export interface BundleEstimate {
-  rows: {itemId: string; code: string; name: string; unit: string; perSet: number; quantity: number; needed: number; shortage: number; availableSets: number; averagePrice: number | null; estimatedCost: number | null; pendingCost: boolean}[];
+  rows: {itemId: string; code: string; name: string; unit: string; recorded?:boolean;active?:boolean;perSet: number; quantity: number; needed: number; shortage: number; availableSets: number; averagePrice: number | null; estimatedCost: number | null; pendingCost: boolean;pendingQuantity?:number|null;pendingUnit?:string;customerHeld?:number;borrowedOutstanding?:number}[];
   canShip: boolean; availableSets: number; estimatedCost: number | null; checkedAt: string;
 }
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErp');

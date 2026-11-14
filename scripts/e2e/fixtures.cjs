@@ -278,4 +278,12 @@ async function seedErpSearchItems(companyId){
   batch.set(collection.doc('zz-search-white'),item('SG-9001','OMR322WT 화이트 장치','화이트'));
   batch.set(collection.doc('zz-search-inactive'),item('SG-OFF','OMR322 사용중지','',false));await batch.commit();
 }
-module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture,seedErpSearchItems };
+async function seedErpStockStates(companyId){
+  const current=runtime();if(companyId!==current.fixtures.companyA)throw new Error('Only generated company A may receive stock state fixtures.');
+  const parent=current.db.doc(`companies/${companyId}`),batch=current.db.batch();
+  for(const [itemId,warehouseId,quantity,value]of [['state-a','state-hq',7,700],['state-b','state-hq',2,100],['state-a','state-lab',1,100],['state-b','state-lab',4,200],['state-a','state-off',20,2000],['state-b','state-off',20,1000]])batch.set(parent.collection('erpInventory').doc(itemId+'-'+warehouseId),{companyId,itemId,warehouseId,quantity,value,currency:'KRW'});
+  batch.update(parent.collection('erpItems').doc('state-a'),{pendingOpening:{status:'PENDING_COST',basisDate:'2026-11-11',quantity:209,unit:'EA',source:'합성 재고.xlsx 원본!C9'}});
+  batch.set(parent.collection('erpCustodyLots').doc('state-lot'),{companyId,itemId:'state-a',warehouseId:'state-hq',ownerPartnerId:'private-owner',ownerName:'PRIVATE_OWNER',availableQuantityScaled:80000,borrowedQuantityScaled:30000,deliveredQuantityScaled:10000});
+  batch.set(parent.collection('erpBorrowings').doc('state-loan'),{companyId,itemId:'state-a',warehouseId:'state-hq',lotId:'state-lot',ownerPartnerId:'private-owner',quantityScaled:30000,outstandingQuantityScaled:30000,outstandingValue:123456});await batch.commit();
+}
+module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture,seedErpSearchItems,seedErpStockStates };
