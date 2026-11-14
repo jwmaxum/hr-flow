@@ -933,7 +933,7 @@ test('ERP pending opening costs confirm real quantities and assets once on deskt
   await call('manageErp',{action:'save',kind:'items',id:'pending-part',expectedRevision:0,values:{code:'ERP-001',name:'원가 확인 대기 품목',unit:'EA',specification:'',taxType:'과세',group:'',active:true,notes:'',purchasePrice:0,salePrice:20}});
   await seedErpPendingOpening(fixtures.companyA);await page.goto('/#/erp?menu=stock&view=items');
   await page.getByRole('button',{name:'원가 확인 대기 품목 재고 보기',exact:true}).click();
-  await page.getByRole('button',{name:'기초재고 원가 확정',exact:true}).click();
+  await page.getByRole('button',{name:'원가 입력·기초재고 확정',exact:true}).click();
   const panel=page.getByRole('region',{name:'기초재고 원가 확정',exact:true});
   await expect(panel.getByRole('checkbox',{name:'ERP-001 확정 선택',exact:true})).toBeChecked({timeout:65000});
   await panel.getByRole('combobox',{name:'확정 창고 *',exact:true}).selectOption('opening');
