@@ -7,7 +7,12 @@ const {settlementReport}=require('./erp-settlement-model');
 const {pendingOf}=require('./erp-stock-state');
 
 const MAX=100, DISPLAY=10;
-const dateOf=value=>typeof value==='string'?value.slice(0,10):'';
+const dateOf=value=>{
+  if(typeof value!=='string'||!value)return '';
+  if(/^\d{4}-\d{2}-\d{2}$/.test(value))return value;
+  const date=new Date(value);
+  return Number.isNaN(date.getTime())?'':new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul'}).format(date);
+};
 function section(key,rows,hasMore=false){
   rows.sort((a,b)=>a.priority-b.priority||(a.date||'9999').localeCompare(b.date||'9999')||a.id.localeCompare(b.id));
   return {key,status:'READY',count:rows.length,hasMore,rows:rows.slice(0,DISPLAY)};

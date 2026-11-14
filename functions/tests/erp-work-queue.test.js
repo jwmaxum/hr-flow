@@ -37,9 +37,9 @@ async function reset(){
 }
 test('role-aware work queue stays read-only and reconciles existing workflows',async t=>{try{
   await t.test('ADMIN sees each category with Seoul dates, correct references and minimal projections',async()=>{
-    await reset();const before=(await parent.collection('erpAudit').get()).size,r=await queue();
+    await reset();await parent.collection('erpApprovals').doc('approval-in').update({createdAt:now().toISOString()});const before=(await parent.collection('erpAudit').get()).size,r=await queue();
     assert.equal(r.today,'2026-11-14');assert.equal(r.access,'ADMIN');assert.equal(r.sections.length,6);assert.ok(r.sections.every(s=>s.status==='READY'));
-    assert.equal(get(r,'approvals').count,5);assert.equal(get(r,'closing').rows[0].source,'2026-10');assert.equal(get(r,'closing').rows[0].badge,'오늘 마감');
+    assert.equal(get(r,'approvals').count,5);assert.equal(get(r,'approvals').rows.find(row=>row.id==='approval-in').date,'2026-11-14');assert.equal(get(r,'statements').rows[0].date,'2026-11-14');assert.equal(get(r,'closing').rows[0].source,'2026-10');assert.equal(get(r,'closing').rows[0].badge,'오늘 마감');
     const recovery=get(r,'recovery').rows[0];assert.equal(recovery.amountMinor,1100);assert.equal(recovery.unallocatedMinor,600);assert.equal(recovery.badge,'수금 배분 확인');assert.equal(recovery.source,'OUT-1');assert.equal(recovery.date,'2026-11-14');
     assert.equal(get(r,'borrowed').rows[0].quantity,3);assert.equal(get(r,'borrowed').rows[0].dateLabel,'차용일');assert.equal(get(r,'opening').rows[0].quantity,209);assert.equal(get(r,'statements').count,1);assert.equal(get(r,'statements').rows[0].draftId,'draft');
     assert.ok(!JSON.stringify(r).includes('PRIVATE_'));assert.equal((await parent.collection('erpAudit').get()).size,before);
