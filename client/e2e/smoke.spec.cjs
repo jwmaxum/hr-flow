@@ -685,6 +685,26 @@ test('ERP outgoing item search matches partial models and ignores stale queries 
   await second.fill('없는모델XYZ');await expect(page.getByText('일치하는 사용 중 품목이 없습니다.',{exact:true})).toBeVisible({timeout:65000});await expect(page.getByLabel('품목코드 *',{exact:true}).nth(1)).toHaveValue('');
 });
 
+test('ERP inbound item search keeps new registration first and selects partial models before posting',async({browser},testInfo)=>{
+  test.setTimeout(300000);await clearErpFixture(fixtures.companyA);await seedErpSearchItems(fixtures.companyA);
+  const otherBefore=await readErpInventory(fixtures.companyB),actor=await actorFor(browser,testInfo);await login(actor,fixtures.accounts.adminA);const page=actor.page;page.setDefaultTimeout(65000);
+  async function call(name,data){const r=await probe(actor,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/${name}`,{method:'POST',body:{data:{companyId:fixtures.companyA,...data}}});expect(r.status).toBe(200);return JSON.parse(Buffer.from(r.bytes).toString()).result;}
+  await call('manageErp',{action:'save',kind:'items',id:'search-bundle',expectedRevision:0,values:{code:'SEARCH-SET',name:'OMR322 조합',active:true,unit:'SET',purchasePrice:0,salePrice:500,taxType:'과세',itemType:'BUNDLE',components:[{itemId:'zz-search-black',quantity:'1'},{itemId:'zz-search-white',quantity:'1'}]}});
+  await call('manageErp',{action:'save',kind:'warehouses',id:'warehouse',expectedRevision:0,values:{code:'WH-01',name:'본사 창고',active:true,address:'',notes:''}});
+  await call('manageErp',{action:'save',kind:'partners',id:'supplier',expectedRevision:0,values:{code:'SUPPLIER',name:'입고 검색 검증 거래처',active:true,country:'KR',type:'SUPPLIER',notes:''}});
+  const before=await readErpInventory(fixtures.companyA);
+  await page.goto('/#/erp?menu=inbound&view=inbound');const picker=page.getByRole('combobox',{name:'등록 품목 선택 *',exact:true}),list=page.getByRole('listbox',{name:'품목 검색 결과',exact:true});
+  await picker.fill('322');await expect(list.getByRole('option')).toHaveCount(3);await expect(list.getByRole('option').first()).toHaveAccessibleName('신규 품목 등록');await expect(list.getByRole('option',{name:/SEARCH-SET|SG-OFF/})).toHaveCount(0);
+  await picker.press('ArrowDown');await picker.press('ArrowDown');await picker.press('Enter');await expect(page.getByLabel('품목코드 *',{exact:true})).toHaveValue('SG-9000');await expect(page.getByLabel('규격',{exact:true})).toHaveValue('OMR322BK');
+  await picker.fill('9001');await expect(list.getByRole('option')).toHaveCount(2);await list.getByRole('option',{name:/SG-9001/}).click();await expect(page.getByLabel('품목명 *',{exact:true})).toHaveValue('OMR322WT 화이트 장치');
+  await picker.fill('장치');await expect(list.getByRole('option')).toHaveCount(3);await expect(list.getByRole('option').first()).toHaveAccessibleName('신규 품목 등록');await picker.scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-inbound-search.png'),fullPage:true});
+  await picker.fill('새로운미등록품번');await expect(list).toHaveAttribute('aria-busy','false');await expect(list.getByRole('option')).toHaveCount(1);await picker.press('ArrowDown');await picker.press('Enter');await expect(picker).toHaveValue('신규 품목 등록');await expect(page.getByLabel('품목코드 *',{exact:true})).toBeEditable();
+  await page.getByLabel('품목코드 *',{exact:true}).fill('NEW-SEARCH-001');await page.getByLabel('품목명 *',{exact:true}).fill('검색에서 등록한 합성 품목');await page.getByLabel('입고수량 *',{exact:true}).fill('2');await page.getByLabel('신규 입고단가 (KRW) *',{exact:true}).fill('100');
+  await page.getByRole('combobox',{name:'입고 창고 *',exact:true}).selectOption('warehouse');await page.getByRole('combobox',{name:'거래처 *',exact:true}).selectOption('supplier');await page.getByRole('checkbox',{name:'신규 품목을 이 회사에 등록하는 데 동의합니다.',exact:true}).check();
+  await page.getByRole('button',{name:'검증·미리보기',exact:true}).click();const preview=page.getByRole('region',{name:'입출고 미리보기',exact:true});await expect(preview.getByRole('heading',{name:'입고 미리보기',exact:true})).toBeFocused();expect(await readErpInventory(fixtures.companyA)).toEqual(before);
+  await preview.getByRole('checkbox',{name:'수량·단가·거래처와 재고 변동을 확인했습니다.',exact:true}).check();await preview.getByRole('button',{name:'입고 확정',exact:true}).click();await expect(preview.getByRole('heading',{name:'입고 확정 완료',exact:true})).toBeFocused();const after=await readErpInventory(fixtures.companyA);expect(after.balances).toEqual([{quantity:2,value:200}]);expect(after.itemCount).toBe(before.itemCount+1);expect(await readErpInventory(fixtures.companyB)).toEqual(otherBefore);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+});
+
 test('ERP usability recovery preserves entry drafts and allocates grouped receipts for actual ERP roles',async({browser},testInfo)=>{
   test.setTimeout(480000);await clearErpFixture(fixtures.companyA);
   const otherBefore=await readErpInventory(fixtures.companyB),admin=await actorFor(browser,testInfo);await login(admin,fixtures.accounts.adminA);
@@ -701,7 +721,7 @@ test('ERP usability recovery preserves entry drafts and allocates grouped receip
     const item=(await call('manageErp',{action:'list',kind:'items',search:'0001',searchBy:'code'})).records[0];
     const inbound=await actorFor(browser,testInfo);await login(inbound,fixtures.accounts.memberA);const ip=inbound.page;ip.setDefaultTimeout(65000);await ip.goto('/#/erp');
     let started=Date.now();await ip.getByRole('button',{name:'입고 등록하기',exact:true}).click();
-    await ip.getByRole('combobox',{name:'등록 품목 선택 *',exact:true}).selectOption(item.id);
+    await ip.getByRole('combobox',{name:'등록 품목 선택 *',exact:true}).fill(item.code);await ip.getByRole('option',{name:/0001 · 합성 품목/}).click();
     await ip.getByRole('combobox',{name:'입고 창고 *',exact:true}).selectOption('warehouse');await ip.getByRole('combobox',{name:'거래처 *',exact:true}).selectOption('ux-buyer');
     await ip.getByLabel('입고수량 *',{exact:true}).fill('2');await ip.getByLabel('신규 입고단가 (KRW) *',{exact:true}).fill('1e2');await ip.getByRole('button',{name:'검증·미리보기',exact:true}).click();
     const preview=ip.getByRole('region',{name:'입출고 미리보기',exact:true});await expect(preview.getByRole('heading',{name:'입고 미리보기',exact:true})).toBeFocused();
