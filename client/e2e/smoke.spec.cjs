@@ -179,11 +179,14 @@ async function login(actor, account, { denied = false, passwordRequired = false,
 async function openErp(page,label){
   const groups={'품목·재고현황':'품목·재고','입출고 총괄·원장':'품목·재고','창고 이동':'품목·재고','보관·차용':'품목·재고','Excel 업로드':'입고','기초재고 원가 확정':'입고','출고등록':'판매·출고','출고 문서 관리':'판매·출고','거래서류 발행':'판매·출고','미수금·수금':'미수금·수금'};
   const group=groups[label];
-  if(group){await page.getByRole('navigation',{name:'ERP 주 메뉴',exact:true}).getByRole('button',{name:group,exact:true}).click();if(group===label)return;}
-  else await page.getByRole('button',{name:'관리자 관리',exact:true}).click();
+  const main=group?page.getByRole('navigation',{name:'ERP 주 메뉴',exact:true}).getByRole('button',{name:group,exact:true}):page.getByRole('button',{name:'관리자 관리',exact:true});
+  if(await main.getAttribute('aria-current')!=='page')await main.click();
+  await expect(main).toHaveAttribute('aria-current','page');
+  if(group===label)return;
   const sub=page.getByRole('navigation',{name:'ERP 세부 업무',exact:true});
   const target=label;
   const button=sub.getByRole('button',{name:target,exact:true});if(await button.getAttribute('aria-pressed')!=='true')await button.click();
+  await expect(button).toHaveAttribute('aria-pressed','true');
 }
 
 async function createExpense(actor, file, label) {
