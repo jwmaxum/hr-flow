@@ -113,7 +113,7 @@ function DraftEditor({ companyId, document, items, partners, busy, onSave, onIss
   </form>;
 }
 
-export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '', embedded = false,returnWorkflow=false }: { companyId: string; initialSourceDocumentNo?: string; embedded?: boolean;returnWorkflow?:boolean }) {
+export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '', initialDraftId = '', embedded = false,returnWorkflow=false }: { companyId: string; initialSourceDocumentNo?: string; initialDraftId?:string; embedded?: boolean;returnWorkflow?:boolean }) {
   const [initialSource, setInitialSource] = useState<SourceDocument | null>(null);
   const [meta, setMeta] = useState<DocumentMeta | null>(null), [documents, setDocuments] = useState<TradeDocument[]>([]), [cursor, setCursor] = useState<DocumentCursor | null>(null);
   const [items, setItems] = useState<ErpRecord[]>([]), [partners, setPartners] = useState<ErpRecord[]>([]), [itemCursor, setItemCursor] = useState<ErpCursor | null>(null), [partnerCursor, setPartnerCursor] = useState<ErpCursor | null>(null);
@@ -123,10 +123,12 @@ export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '', emb
   const live = useRef(true), pending = useRef(false), errorRef = useRef<HTMLParagraphElement>(null), revisionIds = useRef(new Map<string, string>());
   useEffect(() => {
     let active=true;live.current = true;
+    const pickedRequest=initialDraftId?api.get(companyId,initialDraftId):Promise.resolve(null);
     const sourceRequest=initialSourceDocumentNo?api.sources(companyId,initialSourceDocumentNo,'STATEMENT').catch(failure=>{if(!embedded)throw failure;if(active)setError(getErrorMessage(failure));return null;}):Promise.resolve(null);
-    void Promise.all([api.meta(companyId), api.list(companyId, undefined, embedded ? initialSourceDocumentNo : undefined), erpService.list(companyId, 'items', '', 'name'), erpService.list(companyId, 'partners', '', 'name'), sourceRequest]).then(async ([m, list, i, p, source]) => {
+    void Promise.all([api.meta(companyId), api.list(companyId, undefined, embedded ? initialSourceDocumentNo : undefined), erpService.list(companyId, 'items', '', 'name'), erpService.list(companyId, 'partners', '', 'name'), sourceRequest,pickedRequest]).then(async ([m, list, i, p, source,picked]) => {
       if (!active) return; setMeta(m); setDocuments(list.documents); setCursor(list.cursor); setItems(i.records); setItemCursor(i.nextCursor); setPartners(p.records); setPartnerCursor(p.nextCursor);
-      if(returnWorkflow&&list.documents.some(doc=>doc.kind==='STATEMENT')){
+      if(picked){setSelected(picked.document);}
+      else if(returnWorkflow&&list.documents.some(doc=>doc.kind==='STATEMENT')){
         const target=list.documents.find(doc=>doc.kind==='STATEMENT'&&doc.status==='ISSUED')||list.documents.find(doc=>doc.kind==='STATEMENT');
         if(target){const loaded=await api.get(companyId,target.id);if(active)setSelected(loaded.document);}
       }else if (source && (!embedded || source.rows.some(row => row.available > 0))) {
@@ -137,7 +139,7 @@ export function ErpDocumentsPanel({ companyId, initialSourceDocumentNo = '', emb
       }
     }).catch(failure => { if (active) setError(getErrorMessage(failure)); }).finally(() => { if (active) setBusy(false); });
     return () => { active=false;live.current = false; };
-  }, [companyId, initialSourceDocumentNo, embedded,returnWorkflow]);
+  }, [companyId, initialSourceDocumentNo, initialDraftId, embedded,returnWorkflow]);
   async function run(action: () => Promise<void>) {
     if (pending.current || busy) return; pending.current = true; setBusy(true); setError(''); setNotice('');
     try { await action(); } catch (failure) { if (live.current) { setError(getErrorMessage(failure)); setTimeout(() => errorRef.current?.focus(), 0); } }

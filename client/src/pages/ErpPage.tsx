@@ -1,3 +1,4 @@
+import {ErpWorkQueue} from '../components/ErpWorkQueue';
 import {ErpInventoryPanel} from '../components/ErpInventoryPanel';
 import {ErpNavigation} from '../components/ErpNavigation';
 import {erpAccessOf,erpCanOperate,erpAccessNames} from '../utils/erpAccess';
@@ -145,9 +146,9 @@ function ErpWorkspace({companyId,companyName,canManage,access,route,initialItem}
   const kind:ErpKind=view==='warehouses'||view==='partners'?view:'items';
   const showMaster=!route.denied&&['items','warehouses','partners'].includes(view||'');
   const movement:{direction:'입고'|'출고';item:ErpRecord|null;key:string}|null=view==='inbound'||view==='outbound'?{direction:view==='inbound'?'입고':'출고',item:initialItem,key:view}:null;
-  function openView(next:ErpView,menu?:ErpMenu,source='',item:ErpRecord|null=null){
+  function openView(next:ErpView,menu?:ErpMenu,source='',item:ErpRecord|null=null,draft=''){
     const group=menu||(erpTasks[route.menu].some(t=>t.view===next)?route.menu:erpMenuFor(next));
-    navigate(erpPath(next,group,source),{state:item?{erpItem:item}:null});
+    navigate(erpPath(next,group,source,draft),{state:item?{erpItem:item}:null});
   }
   function openOpening(itemId=''){openView('opening','inbound',itemId);}
   const [search, setSearch] = useState(''), [searchBy, setSearchBy] = useState<'name' | 'code'>('name');
@@ -216,16 +217,17 @@ function ErpWorkspace({companyId,companyName,canManage,access,route,initialItem}
     {manager&&<p className="erp-notice">ERP관리자: 입출고 정정·재고 수량/금액 조정·품목 단가만 변경하는 수정은 승인 없이 반영하고 이력을 남깁니다. 다른 기준정보 변경과 기존 승인 대기 요청은 ADMIN 승인을 따릅니다.</p>}
     {notice && <p role="status" className="erp-success">{notice}</p>}
     {route.denied?<section className="wf-panel" role="alert"><h2>이 업무에 접근할 권한이 없습니다.</h2><p>현재 ERP 담당 업무 범위에서 메뉴를 선택해 주세요. 권한 변경은 회사 ADMIN에게 요청하세요.</p></section>:
-      view==='closing'?<Suspense fallback={<p role="status">마감 일정을 불러오고 있습니다.</p>}><ErpClosingPlanPanel companyId={companyId}/></Suspense>:
-      view==='access'||view==='approvals'||view==='close'||view==='history'?<Suspense fallback={<p role="status">관리 화면을 불러오고 있습니다.</p>}><ErpControlPanel companyId={companyId} initialTab={view} embedded/></Suspense>:
+      view==='today'?<ErpWorkQueue companyId={companyId} access={access} onOpen={(target,source,draft)=>openView(target,undefined,source,null,draft)}/>:
+      view==='closing'?<Suspense fallback={<p role="status">마감 일정을 불러오고 있습니다.</p>}><ErpClosingPlanPanel companyId={companyId} initialMonth={route.source}/></Suspense>:
+      view==='access'||view==='approvals'||view==='close'||view==='history'?<Suspense fallback={<p role="status">관리 화면을 불러오고 있습니다.</p>}><ErpControlPanel companyId={companyId} initialTab={view} initialApprovalId={view==='approvals'?route.source:''} embedded/></Suspense>:
       view==='dashboard'?<Suspense fallback={<p role="status">대시보드를 불러오고 있습니다.</p>}><ErpDashboardPanel companyId={companyId} onFinance={()=>openView('finance','receivables')} onLedger={()=>openView('report','stock')}/></Suspense>:
       view==='finance'?<Suspense fallback={<p role="status">미수금을 불러오고 있습니다.</p>}><ErpFinancePanel companyId={companyId} onDocument={source=>openView('shipments','sales',source)}/></Suspense>:
       view==='shipments'?<Suspense fallback={<p role="status">출고 문서를 불러오고 있습니다.</p>}><ErpShipmentsPanel companyId={companyId} initialDocumentNo={route.source} onFinance={()=>openView('finance','receivables')}/></Suspense>:
-      view==='custody'?<Suspense fallback={<p role="status">보관·차용을 불러오고 있습니다.</p>}><ErpCustodyPanel companyId={companyId}/></Suspense>:
+      view==='custody'?<Suspense fallback={<p role="status">보관·차용을 불러오고 있습니다.</p>}><ErpCustodyPanel companyId={companyId} initialBorrowingId={route.source}/></Suspense>:
       view==='opening'?<Suspense fallback={<p role="status">기초재고를 불러오고 있습니다.</p>}><ErpOpeningPanel companyId={companyId} initialItemId={route.source} onInventory={showInventory}/></Suspense>:
       movement?<Suspense fallback={<p role="status">입출고 등록을 불러오고 있습니다.</p>}><ErpMovementPanel key={movement.key} companyId={companyId} direction={movement.direction} initialItem={movement.item} onInventory={showInventory} onShipment={source=>openView('shipments','sales',source)} onStatement={source=>openView('documents','sales',source)}/></Suspense>:
       view==='transfer'?<Suspense fallback={<p role="status">창고 이동을 불러오고 있습니다.</p>}><ErpTransferPanel companyId={companyId}/></Suspense>:
-      view==='documents'?<Suspense fallback={<p role="status">거래서류를 불러오고 있습니다.</p>}><ErpDocumentsPanel companyId={companyId} initialSourceDocumentNo={route.source} returnWorkflow/></Suspense>:
+      view==='documents'?<Suspense fallback={<p role="status">거래서류를 불러오고 있습니다.</p>}><ErpDocumentsPanel companyId={companyId} initialSourceDocumentNo={route.source} initialDraftId={route.draft} returnWorkflow/></Suspense>:
       view==='report'?<ErpReportPanel companyId={companyId} canManage={canOperate} onStatement={canManage?source=>openView('documents','sales',source):undefined}/>:
       view==='import'?<ErpImportPanel companyId={companyId} onInventory={showInventory}/>:
       <div className={`erp-layout ${kind!=='items'&&!editor?'erp-layout-single':''}`}>

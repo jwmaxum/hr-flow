@@ -20,7 +20,7 @@ export interface History {authorization?:'ERP_MANAGER_DIRECT';id:string;at:strin
 export interface ClosePreview {revision:number;version:number;checklist:CloseChecklist;checklistReady:boolean;dashboard:{month:string;snapshot:string;inventoryValue:number;salesKRW:number;purchasesKRW:number;pendingCount:number}}
 const callable=httpsCallable<Record<string,unknown>,unknown>(functions,'manageErpControl',{timeout:300000});
 export async function erpControl<T>(companyId:string,action:string,data:Record<string,unknown>={}):Promise<T>{
-  const admin=!['status','approvals','closePlans','closeAlerts','closePlanGet','closeTaskSubmit'].includes(action),mode=admin?true:false;
+  const admin=!['workQueue','status','approvals','closePlans','closeAlerts','closePlanGet','closeTaskSubmit'].includes(action),mode=admin?true:false;
   const scope=erpScope(companyId,mode),response=await callable({...data,companyId,action});
   if(scope!==erpScope(companyId,mode))throw new Error('로그인 사용자 또는 ERP 권한이 변경되었습니다.');
   if(action==='decide')window.dispatchEvent(new Event('erp:approvals-changed'));

@@ -29,15 +29,19 @@ function createClosePlans({db,now,context,stateOf,audit,checklist}){
     const unique=[...new Set(uids.map(master.identifier))],docs=await tx.getAll(...unique.map(uid=>db.collection('UserProfile').doc(uid))),users=new Map();
     docs.forEach(d=>{const u=d.data();if(!u||u.companyId!==parent.id||!['ADMIN','SUB_ADMIN','MEMBER'].includes(u.role)||(u.status||'ACTIVE')!=='ACTIVE'||accessOf(u)==='NONE')fail('failed-precondition','담당자는 현재 회사의 활성 ERP 접근자 중에서 선택해 주세요.');users.set(d.id,u);});return users;
   }
-  async function handle(request,v,parent){
-    if(v.action==='closePlans'||v.action==='closeAlerts')return db.runTransaction(async tx=>{
-      const user=await context(request,tx,false);
+  async function list(tx,parent,user){
       let query=parent.collection('erpClosePlans').where('status','==','OPEN').orderBy('month','asc');
       if(user.role!=='ADMIN')query=query.where('assigneeUids','array-contains',user.uid);
       const docs=await tx.get(query.limit(101)),plans=[];
       for(const doc of docs.docs.slice(0,100)){const p=doc.data();if(p.companyId!==parent.id||!allowed(user,p))fail('permission-denied','마감 일정 접근 권한을 확인해 주세요.');plans.push(view(p,await checklist.read(tx,parent,p.month),user));}
+    return {plans,hasMore:docs.size>100,today:today()};
+  }
+  async function handle(request,v,parent){
+    if(v.action==='closePlans'||v.action==='closeAlerts')return db.runTransaction(async tx=>{
+      const user=await context(request,tx,false);
+      const {plans,hasMore}=await list(tx,parent,user);
       const actionable=plans.filter(p=>p.actionCount>0);
-      return v.action==='closeAlerts'?{pendingCount:actionable.length,overdueCount:actionable.filter(p=>p.overdue).length,hasMore:docs.size>100,checkedAt:now().toISOString()}:{plans,hasMore:docs.size>100,today:today()};
+      return v.action==='closeAlerts'?{pendingCount:actionable.length,overdueCount:actionable.filter(p=>p.overdue).length,hasMore,checkedAt:now().toISOString()}:{plans,hasMore,today:today()};
     });
     const month=monthOf(v.month);
     return db.runTransaction(async tx=>{
@@ -79,7 +83,7 @@ function createClosePlans({db,now,context,stateOf,audit,checklist}){
   }
   function finish(tx,parent,plan,status,user){if(plan)tx.set(parent.collection('erpClosePlans').doc(plan.month),{...plan,status,revision:plan.revision+1,updatedAt:now().toISOString(),updatedBy:user.uid,
     ...(status==='OPEN'?{items:plan.items.map(r=>({...r,submission:null}))}:{})});}
-  return {handle,read,finish};
+  return {handle,read,finish,list};
 }
 function planSections(plan){return plan?[{name:'마감 일정 담당자',columns:[{label:'확인 항목',width:2},{label:'담당자',width:1},{label:'완료 보고',width:1.5},{label:'보고 메모',width:2}],rows:plan.items.map(r=>[CHECKS.find(([key])=>key===r.key)[1],r.assigneeName,r.submission?.at||'미보고',r.submission?.note||'']),note:`마감 예정일 ${plan.dueDate} · 총괄 ${plan.ownerName} · ${plan.notes}`}]:[];}
 module.exports={createClosePlans,planSections};

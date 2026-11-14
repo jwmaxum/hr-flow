@@ -286,4 +286,12 @@ async function seedErpStockStates(companyId){
   batch.set(parent.collection('erpCustodyLots').doc('state-lot'),{companyId,itemId:'state-a',warehouseId:'state-hq',ownerPartnerId:'private-owner',ownerName:'PRIVATE_OWNER',availableQuantityScaled:80000,borrowedQuantityScaled:30000,deliveredQuantityScaled:10000});
   batch.set(parent.collection('erpBorrowings').doc('state-loan'),{companyId,itemId:'state-a',warehouseId:'state-hq',lotId:'state-lot',ownerPartnerId:'private-owner',quantityScaled:30000,outstandingQuantityScaled:30000,outstandingValue:123456});await batch.commit();
 }
-module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture,seedErpSearchItems,seedErpStockStates };
+async function seedErpWorkQueue(companyId){
+  const current=runtime();if(companyId!==current.fixtures.companyA)throw Error('Only generated company A may receive work queue fixtures.');
+  const parent=current.db.doc(`companies/${companyId}`),batch=current.db.batch(),member=current.fixtures.accounts.memberA;
+  batch.update(parent.collection('erpItems').doc('todo-item'),{pendingOpening:{status:'PENDING_COST',basisDate:'2026-11-11',quantity:209,unit:'EA',source:'합성 원가 대기 자료'}});
+  batch.set(parent.collection('erpApprovals').doc('todo-approval'),{companyId,status:'PENDING',requestedBy:member.uid,requesterName:'시작화면 담당자',createdAt:'2026-11-13T00:00:00Z',date:'2026-11-13',domain:'master',reason:'시작 화면 승인 검증',summary:[],request:{privateField:'PRIVATE_REQUEST'}});
+  batch.set(parent.collection('erpBorrowings').doc('todo-loan'),{companyId,lotId:'todo-lot',itemId:'todo-item',code:'TODO-ITEM',name:'오늘업무 품목',unit:'EA',warehouseId:'todo-wh',warehouseName:'본사',ownerPartnerId:'todo-partner',ownerName:'검증 소유자',buyerPartnerId:'todo-partner',buyerName:'검증 판매처',quantityScaled:30000,outstandingQuantityScaled:30000,outstandingValue:300,date:'2026-11-12'});
+  await batch.commit();
+}
+module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture,seedErpSearchItems,seedErpStockStates,seedErpWorkQueue };

@@ -4,9 +4,9 @@ import {erpControl} from '../services/erpControlService';
 import type {ClosePlan,ErpOperator} from '../services/erpControlService';
 import {getErrorMessage} from '../utils/errors';
 const previousMonth=()=>{const d=new Date();return new Date(Date.UTC(d.getFullYear(),d.getMonth()-1,1)).toISOString().slice(0,7);};
-export function ErpClosingPlanPanel({companyId}:{companyId:string}){
+export function ErpClosingPlanPanel({companyId,initialMonth=''}:{companyId:string;initialMonth?:string}){
   const admin=useAuthStore(s=>s.userData?.role==='ADMIN');
-  const [month,setMonth]=useState(previousMonth),[reload,setReload]=useState(0),[plans,setPlans]=useState<ClosePlan[]>([]),[more,setMore]=useState(false),[error,setError]=useState('');
+  const [month,setMonth]=useState(()=>/^20\d{2}-(0[1-9]|1[0-2])$/.test(initialMonth)?initialMonth:previousMonth()),[reload,setReload]=useState(0),[plans,setPlans]=useState<ClosePlan[]>([]),[more,setMore]=useState(false),[error,setError]=useState('');
   useEffect(()=>{let active=true;void erpControl<{plans:ClosePlan[];hasMore:boolean}>(companyId,'closePlans').then(r=>{if(active){setPlans(r.plans);setMore(r.hasMore);setError('');}}).catch(e=>{if(active)setError(getErrorMessage(e));});return()=>{active=false;};},[companyId,reload]);
   return <section className="wf-panel erp-control" aria-label="월마감 일정 및 담당자">
     <div className="erp-list-head"><h2 className="wf-section-title">월마감 일정·담당자</h2><button className="wf-btn" onClick={()=>setReload(n=>n+1)}>일정 새로고침</button></div>

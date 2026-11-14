@@ -239,3 +239,18 @@
   .erp-shipments > .wf-panel, .erp-shipment-detail > .wf-panel { padding: 16px; }
   .erp-shipment-detail > .wf-panel > .erp-stock-totals { grid-template-columns: 1fr; }
 }
+
+.erp-work-home { display: grid; gap: 20px; }
+.erp-work-home > .wf-panel { padding: 20px; min-width: 0; }
+.erp-work-home .erp-list-head { padding: 0; flex-wrap: wrap; }
+.erp-start-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.erp-start-actions .wf-btn { min-height: 44px; }
+.erp-work-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; margin-top: 20px; }
+.erp-work-card { border: 1px solid var(--wf-border,#e5e7eb); border-radius: 12px; padding: 18px; min-width: 0; }
+.erp-work-card h3 { font-size: 16px; }
+.erp-work-list { list-style: none; padding: 0; margin: 12px 0; }
+.erp-work-list li { border-top: 1px solid var(--wf-border,#e5e7eb); padding: 14px 0; overflow-wrap: anywhere; }
+.erp-work-list h4 { margin: 8px 0; font-size: 15px; }
+.erp-work-list p { font-size: 13px; margin: 6px 0; }
+.erp-work-list .wf-btn { margin-top: 6px; min-height: 40px; }
+@media(max-width:760px) { .erp-work-home > .wf-panel { padding: 16px; } .erp-work-grid { grid-template-columns: minmax(0,1fr); } .erp-work-card { padding: 14px; } }

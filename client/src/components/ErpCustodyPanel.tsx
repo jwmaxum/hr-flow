@@ -5,12 +5,12 @@ import type { ErpRecord } from '../services/erpService';
 import { getErrorMessage } from '../utils/errors';
 const number = (v: number) => v.toLocaleString('ko-KR', {maximumFractionDigits: 4});
 const labels: Record<string, string> = {REGISTER: '기존 판매분 보관 등록', DELIVER: '소유 거래처에 인도', REPAY: '차용품 현물 반환', CANCEL: '보관 처리 취소'};
-export function ErpCustodyPanel({companyId}: {companyId: string}) {
+export function ErpCustodyPanel({companyId,initialBorrowingId=''}: {companyId: string;initialBorrowingId?:string}) {
   const [data, setData] = useState<CustodyList | null>(null), [items, setItems] = useState<ErpRecord[]>([]), [warehouses, setWarehouses] = useState<ErpRecord[]>([]), [partners, setPartners] = useState<ErpRecord[]>([]);
-  const [input, setInput] = useState<CustodyInput>({type: 'REGISTER', date: erpToday(), notes: '', quantity: '', itemId: '', warehouseId: '', ownerPartnerId: '', reference: ''});
+  const [input, setInput] = useState<CustodyInput>({type: initialBorrowingId?'REPAY':'REGISTER',borrowingId:initialBorrowingId, date: erpToday(), notes: '', quantity: '', itemId: '', warehouseId: '', ownerPartnerId: '', reference: ''});
   const [job, setJob] = useState<CustodyJob | null>(null), [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(true), [error, setError] = useState('');
   const live = useRef(true), lock = useRef(false), attempt = useRef(crypto.randomUUID());
-  useEffect(() => {live.current = true; void Promise.all([api.list(companyId), erpChoices(companyId, 'items'), erpChoices(companyId, 'warehouses'), erpChoices(companyId, 'partners')]).then(([d, i, w, p]) => {if (live.current) {setData(d); setItems(i); setWarehouses(w); setPartners(p);}}).catch(e => {if (live.current) setError(getErrorMessage(e));}).finally(() => {if (live.current) setBusy(false);}); return () => {live.current = false;};}, [companyId]);
+  useEffect(() => {live.current = true; void Promise.all([api.list(companyId), erpChoices(companyId, 'items'), erpChoices(companyId, 'warehouses'), erpChoices(companyId, 'partners')]).then(([d, i, w, p]) => {if (live.current) {setData(d);if(initialBorrowingId&&!d.borrowings.some(r=>r.id===initialBorrowingId&&r.outstandingQuantityScaled>0))setError('선택한 차용은 반환 완료되었거나 현재 조회할 수 없습니다. 현황을 확인해 주세요.'); setItems(i); setWarehouses(w); setPartners(p);}}).catch(e => {if (live.current) setError(getErrorMessage(e));}).finally(() => {if (live.current) setBusy(false);}); return () => {live.current = false;};}, [companyId,initialBorrowingId]);
   function change(patch: Partial<CustodyInput>) {setInput(v => ({...v, ...patch})); setJob(null); setConfirmed(false); setError(''); attempt.current = crypto.randomUUID();}
   async function run(work: () => Promise<void>) {if (busy || lock.current) return; lock.current = true; setBusy(true); setError(''); try {await work();} catch (e) {if (live.current) setError(getErrorMessage(e));} finally {lock.current = false; if (live.current) setBusy(false);}}
   async function refresh() {const result = await api.list(companyId); if (live.current) setData(result);}
