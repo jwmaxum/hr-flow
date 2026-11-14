@@ -241,7 +241,7 @@ function ErpWorkspace({companyId,companyName,canManage,access,route,initialItem}
       view==='closing'?<Suspense fallback={<p role="status">마감 일정을 불러오고 있습니다.</p>}><ErpClosingPlanPanel companyId={companyId}/></Suspense>:
       view==='access'||view==='approvals'||view==='close'||view==='history'?<Suspense fallback={<p role="status">관리 화면을 불러오고 있습니다.</p>}><ErpControlPanel companyId={companyId} initialTab={view} embedded/></Suspense>:
       view==='dashboard'?<Suspense fallback={<p role="status">대시보드를 불러오고 있습니다.</p>}><ErpDashboardPanel companyId={companyId} onFinance={()=>openView('finance','receivables')} onLedger={()=>openView('report','stock')}/></Suspense>:
-      view==='finance'?<Suspense fallback={<p role="status">미수금을 불러오고 있습니다.</p>}><ErpFinancePanel companyId={companyId}/></Suspense>:
+      view==='finance'?<Suspense fallback={<p role="status">미수금을 불러오고 있습니다.</p>}><ErpFinancePanel companyId={companyId} onDocument={source=>openView('shipments','sales',source)}/></Suspense>:
       view==='shipments'?<Suspense fallback={<p role="status">출고 문서를 불러오고 있습니다.</p>}><ErpShipmentsPanel companyId={companyId} initialDocumentNo={route.source} onFinance={()=>openView('finance','receivables')}/></Suspense>:
       view==='custody'?<Suspense fallback={<p role="status">보관·차용을 불러오고 있습니다.</p>}><ErpCustodyPanel companyId={companyId}/></Suspense>:
       view==='opening'?<Suspense fallback={<p role="status">기초재고를 불러오고 있습니다.</p>}><ErpOpeningPanel companyId={companyId} initialItemId={route.source} onInventory={showInventory}/></Suspense>:

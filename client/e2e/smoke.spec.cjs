@@ -684,6 +684,36 @@ test('ERP outgoing item search matches partial models and ignores stale queries 
   await second.fill('없는모델XYZ');await expect(page.getByText('일치하는 사용 중 품목이 없습니다.',{exact:true})).toBeVisible({timeout:65000});await expect(page.getByLabel('품목코드 *',{exact:true}).nth(1)).toHaveValue('');
 });
 
+test('ERP unified collections reuse one deposit across partner and shipment screens without duplicate receipts',async({browser},testInfo)=>{
+  test.setTimeout(300000);await clearErpFixture(fixtures.companyA);
+  const owner=await actorFor(browser,testInfo);await login(owner,fixtures.accounts.adminA);const page=owner.page;page.setDefaultTimeout(30000);
+  async function call(name,data){const response=await probe(owner,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/${name}`,{method:'POST',body:{data:{companyId:fixtures.companyA,...data}}});expect(response.status,`${name}/${data.action}`).toBe(200);return JSON.parse(Buffer.from(response.bytes).toString()).result;}
+  await call('manageErp',{action:'save',kind:'warehouses',id:'collection-warehouse',expectedRevision:0,values:{code:'WH-01',name:'본사 창고',active:true,address:'',notes:''}});
+  for(const[type,rows]of [['OPENING',[erpOpening()]],['MOVEMENTS',[erpMovement({2:'출고',3:'COLLECT-A',11:3,12:200}),erpMovement({1:2,2:'출고',3:'COLLECT-B',11:1,12:200})]]]){
+    const p=await call('manageErpImport',{action:'preview',id:randomUUID(),type,source:await erpWorkbook(type,rows),options:{allowNewItems:true,allowNewPartners:true}});expect(p.import.preview.canCommit).toBe(true);await call('manageErpImport',{action:'commit',id:p.import.id,fingerprint:p.import.preview.fingerprint});
+  }
+  const inventory=await readErpInventory(fixtures.companyA);
+  await page.goto('/#/erp');await openErp(page,'미수금·수금');
+  await page.getByRole('region',{name:'거래처별 미수금',exact:true}).getByRole('button',{name:'수금 등록',exact:true}).click();
+  const form=page.getByRole('region',{name:'통합 수금 등록',exact:true});
+  await form.getByLabel('원장 반영일 *',{exact:true}).fill('2026-11-12');await form.getByLabel('실제 입금일 *',{exact:true}).fill('2026-11-11');
+  await form.getByLabel('새 입금액 *',{exact:true}).fill('300');await form.getByLabel('입금 참조번호',{exact:true}).fill('ONE-DEPOSIT');await form.getByLabel('입금 확인 메모 *',{exact:true}).fill('두 문서 부분수금 확인');
+  await form.getByLabel('수금 배분액 COLLECT-A',{exact:true}).fill('100');await form.getByLabel('수금 배분액 COLLECT-B',{exact:true}).fill('50');
+  await form.getByRole('button',{name:'수금 검증·미리보기',exact:true}).click();
+  await expect(form.getByText('거래처 미수잔액: 880 → 580 KRW',{exact:true})).toBeVisible({timeout:65000});await expect(form.getByText('미배분 순수금: 0 → 150 KRW',{exact:true})).toBeVisible();
+  await form.getByRole('checkbox',{name:'실제 입금·재사용 수금과 문서별 배분 결과를 확인했습니다.',exact:true}).check();await form.getByRole('button',{name:'수금·배분 확정',exact:true}).click();await expect(form.getByRole('status')).toContainText('함께 반영했습니다.',{timeout:65000});
+  await form.scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-unified-partner-collection.png'),fullPage:true});
+  await form.getByRole('button',{name:'출고 상세 보기',exact:true}).first().click();
+  const detail=page.getByRole('region',{name:'선택 출고 문서',exact:true});await expect(detail.getByRole('heading',{name:'COLLECT-A · 합성 거래처',exact:true})).toBeVisible({timeout:65000});
+  await form.getByLabel('원장 반영일 *',{exact:true}).fill('2026-11-12');await form.getByLabel('실제 입금일 *',{exact:true}).fill('2026-11-11');await form.getByLabel('새 입금액 *',{exact:true}).fill('300');await form.getByLabel('수금 배분액 COLLECT-A',{exact:true}).fill('150');await form.getByLabel('입금 확인 메모 *',{exact:true}).fill('같은 입금 재사용 검증');
+  await form.getByRole('button',{name:'수금 검증·미리보기',exact:true}).click();await expect(form.getByRole('alert')).toContainText('중복 의심 수금',{timeout:65000});await expect(form.getByRole('button',{name:'수금·배분 확정',exact:true})).toHaveCount(0);
+  await form.getByRole('button',{name:'이 수금 재사용',exact:true}).click();await expect(form.getByLabel('수금 방식',{exact:true})).toHaveValue('EXISTING');
+  await form.getByRole('button',{name:'수금 검증·미리보기',exact:true}).click();await expect(form.getByText('거래처 미수잔액: 580 → 580 KRW',{exact:true})).toBeVisible({timeout:65000});await expect(form.getByText('새 입금 0 · 기존 수금 재사용 150 · 배분 합계 150 KRW',{exact:true})).toBeVisible();
+  await form.getByRole('checkbox',{name:'실제 입금·재사용 수금과 문서별 배분 결과를 확인했습니다.',exact:true}).check();await form.getByRole('button',{name:'수금·배분 확정',exact:true}).click();await expect(form.getByRole('status')).toContainText('함께 반영했습니다.',{timeout:65000});
+  const report=await call('manageErpFinance',{action:'settlementReport',to:'2026-11-12'});expect(report.receipts).toHaveLength(1);expect(report.allocations).toHaveLength(2);expect(report.documents.find(d=>d.documentNo==='COLLECT-A')).toMatchObject({allocated:250,balance:410});expect(report.documents.find(d=>d.documentNo==='COLLECT-B')).toMatchObject({allocated:50,balance:170});expect(report.receipts[0]).toMatchObject({amount:300,available:0,receivedDate:'2026-11-11'});expect(await readErpInventory(fixtures.companyA)).toEqual(inventory);
+  await form.scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-unified-reused-collection.png'),fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+});
+
 test('ERP shipment workspace collects partial payments, returns stock and issues linked statements on desktop and mobile',async({browser},testInfo)=>{
   test.setTimeout(600000);await clearErpFixture(fixtures.companyA);
   const foreignBefore=await readErpInventory(fixtures.companyB),owner=await actorFor(browser,testInfo);await login(owner,fixtures.accounts.adminA);const page=owner.page;page.setDefaultTimeout(30000);
@@ -696,8 +726,10 @@ test('ERP shipment workspace collects partial payments, returns stock and issues
   const lookup=page.getByRole('region',{name:'출고 문서 조회',exact:true});await lookup.getByLabel('출고 시작일',{exact:true}).fill('2026-11-01');await lookup.getByLabel('출고 종료일',{exact:true}).fill('2026-11-30');await lookup.getByRole('button',{name:'출고 문서 조회',exact:true}).click();
   await page.getByRole('button',{name:'WORKSPACE-001 상세 보기',exact:true}).click();
   const detail=page.getByRole('region',{name:'선택 출고 문서',exact:true});await expect(detail.getByText('공급가액 1,500 + 부가세 150',{exact:true})).toBeVisible({timeout:65000});
-  const receipt=page.getByRole('region',{name:'출고 문서 수금 등록',exact:true});await receipt.getByLabel('수금일 *',{exact:true}).fill('2026-11-12');await receipt.getByLabel('이 문서에 반영할 수금액 *',{exact:true}).fill('500');await receipt.getByLabel('입금 참조번호',{exact:true}).fill('부분입금-01');await receipt.getByLabel('입금 확인 메모 *',{exact:true}).fill('자체 은행 확인');await receipt.getByRole('button',{name:'문서 수금 미리보기',exact:true}).click();
-  await expect(receipt.getByText('문서 미수잔액: 1,650 → 1,150 KRW',{exact:true})).toBeVisible({timeout:65000});await receipt.getByRole('checkbox',{name:'기존 수금·새 입금액과 문서 잔액을 확인했습니다.',exact:true}).check();await receipt.getByRole('button',{name:'문서 수금 확정',exact:true}).click();await expect(receipt.getByText('수금과 문서 배분을 함께 반영했습니다.',{exact:true})).toBeVisible({timeout:65000});
+  const receipt=page.getByRole('region',{name:'통합 수금 등록',exact:true});
+  await receipt.getByLabel('원장 반영일 *',{exact:true}).fill('2026-11-12');await receipt.getByLabel('실제 입금일 *',{exact:true}).fill('2026-11-12');await receipt.getByLabel('새 입금액 *',{exact:true}).fill('500');await receipt.getByLabel('수금 배분액 WORKSPACE-001',{exact:true}).fill('500');await receipt.getByLabel('입금 참조번호',{exact:true}).fill('부분입금-01');await receipt.getByLabel('입금 확인 메모 *',{exact:true}).fill('자체 은행 확인');await receipt.getByRole('button',{name:'수금 검증·미리보기',exact:true}).click();
+  await expect(receipt.getByText('거래처 미수잔액: 1,650 → 1,150 KRW',{exact:true})).toBeVisible({timeout:65000});await receipt.getByRole('checkbox',{name:'실제 입금·재사용 수금과 문서별 배분 결과를 확인했습니다.',exact:true}).check();await receipt.getByRole('button',{name:'수금·배분 확정',exact:true}).click();await expect(receipt.getByText('수금과 문서 배분을 함께 반영했습니다.',{exact:true})).toBeVisible({timeout:65000});
+  await detail.getByRole('button',{name:'품목·매출·원가',exact:true}).click();await expect(detail.getByRole('region',{name:'출고 품목과 매출 원가'})).toContainText('원출고 공급가액 1,500원 · 출고원가 500원 · 매출총이익 1,000원');
   await detail.getByRole('heading',{name:'WORKSPACE-001 · 합성 거래처',exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-shipment-receipt.png'),fullPage:true});
   // Delay the superseded StrictMode request until after issuance; stale bootstrap must not replace the issued document.
   let releaseSource,sourceDelivered,sourceCalls=0;const heldSource=new Promise(resolve=>{releaseSource=resolve;}),deliveredSource=new Promise(resolve=>{sourceDelivered=resolve;});
@@ -710,8 +742,8 @@ test('ERP shipment workspace collects partial payments, returns stock and issues
   const pending=page.waitForEvent('download',{timeout:65000});await detail.getByRole('button',{name:'발행 PDF 내려받기',exact:true}).click({timeout:30000});const file=await pending,stream=await file.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);const bytes=Buffer.concat(chunks);expect(bytes.subarray(0,5).toString()).toBe('%PDF-');expect(bytes.length).toBeGreaterThan(10000);await file.saveAs(testInfo.outputPath('erp-shipment-statement.pdf'));
   await detail.locator('.erp-document-editor').scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-shipment-statement.png'),fullPage:true});
   const list=await call('manageErpFinance',{action:'shipmentList',from:'2026-11-01',to:'2026-11-30',status:'OPEN'});expect(list.rows).toHaveLength(1);expect(list.rows[0]).toMatchObject({billed:1320,allocated:500,balance:820});expect((await call('manageErpDocuments',{action:'list',sourceDocumentNo:'WORKSPACE-001'})).documents.filter(d=>d.status==='ISSUED')).toHaveLength(1);
-  await detail.getByRole('button',{name:'수금 등록·내역',exact:true}).click();await expect(receipt.getByText('미수잔액 820 KRW · 거래처의 미배분 순수금 0 KRW',{exact:true})).toBeVisible();
-  await receipt.getByLabel('수금일 *',{exact:true}).fill('2026-11-12');await receipt.getByLabel('이 문서에 반영할 수금액 *',{exact:true}).fill('820');await receipt.getByLabel('입금 확인 메모 *',{exact:true}).fill('잔금 은행 확인');await receipt.getByRole('button',{name:'문서 수금 미리보기',exact:true}).click();await receipt.getByRole('checkbox',{name:'기존 수금·새 입금액과 문서 잔액을 확인했습니다.',exact:true}).check();await receipt.getByRole('button',{name:'문서 수금 확정',exact:true}).click();await expect(receipt.getByText('미수잔액이 없어 추가 수금이 필요하지 않습니다.',{exact:true})).toBeVisible({timeout:65000});
+  await detail.getByRole('button',{name:'수금 등록·내역',exact:true}).click();await expect(receipt.getByText('거래처 미수잔액 820 · 미배분 순수금 0 KRW',{exact:true})).toBeVisible({timeout:65000});
+  await receipt.getByLabel('원장 반영일 *',{exact:true}).fill('2026-11-12');await receipt.getByLabel('실제 입금일 *',{exact:true}).fill('2026-11-12');await receipt.getByLabel('새 입금액 *',{exact:true}).fill('820');await receipt.getByLabel('입금 확인 메모 *',{exact:true}).fill('잔금 은행 확인');await receipt.getByRole('button',{name:'수금 검증·미리보기',exact:true}).click();await receipt.getByRole('checkbox',{name:'실제 입금·재사용 수금과 문서별 배분 결과를 확인했습니다.',exact:true}).check();await receipt.getByRole('button',{name:'수금·배분 확정',exact:true}).click();await expect(receipt.getByText('수금과 문서 배분을 함께 반영했습니다.',{exact:true})).toBeVisible({timeout:65000});
   await detail.getByRole('button',{name:'반품 처리',exact:true}).click();await detail.getByRole('button',{name:'0001 반품 처리',exact:true}).click();await correction.getByLabel('처리일',{exact:true}).fill('2026-11-12');await correction.getByLabel('처리 사유',{exact:true}).fill('수금 후 추가 반품');await correction.getByRole('textbox',{name:/반품 수량/}).fill('1');await correction.getByRole('button',{name:'변동 미리보기',exact:true}).click();await correction.getByRole('checkbox',{name:'사유와 전체 변동 내역을 확인했습니다.',exact:true}).check();await correction.getByRole('button',{name:'취소·반품·조정 확정',exact:true}).click();
   await expect(page.getByRole('status').filter({hasText:'반품과 미수금 정산을 반영했습니다.'})).toBeVisible({timeout:65000});
   await expect(correction).toHaveCount(0,{timeout:65000});
@@ -757,21 +789,18 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   await page.route('**/manageErpFinance',async route=>{const action=route.request().postDataJSON()?.data?.action;if(action==='commit')holdInitialReports=false;if(action==='settlementReport'&&holdInitialReports){const work=(async()=>{const response=await route.fetch();await oldSettlement;await route.fulfill({response});})();heldReports.push(work);await work;}else await route.fallback();});
   await openErp(page, '미수금·수금');
   const receivables = page.getByRole('region', {name: '거래처별 미수금', exact: true}); await expect(receivables.getByRole('cell', {name: '1,100', exact: true}).first()).toBeVisible({timeout: 65000});
-  await receivables.getByRole('button', {name: '수금 등록', exact: true}).click(); const collection = page.getByRole('region', {name: '수금 등록', exact: true});
-  await collection.getByLabel('수금 처리일 *', {exact: true}).fill('2026-11-12'); await collection.getByLabel('수금·환불 금액 *', {exact: true}).fill('300'); await collection.getByLabel('수금 처리 사유 *', {exact: true}).fill('부분 입금 확인');
-  await collection.getByRole('button', {name: '수금 검증·미리보기', exact: true}).click(); await expect(collection.getByText('미수잔액: 1,100 → 800 KRW', {exact: true})).toBeVisible({timeout: 65000});
-  await collection.getByRole('checkbox', {name: '거래처·통화·금액과 잔액을 확인했습니다.', exact: true}).check(); await collection.getByRole('button', {name: '수금 처리 확정', exact: true}).click(); await expect(collection.getByText('수금 원장 반영 완료', {exact: true})).toBeVisible({timeout: 65000});
+  holdInitialReports=false;
+  await receivables.getByRole('button', {name: '수금 등록', exact: true}).click(); const collection = page.getByRole('region', {name: '통합 수금 등록', exact: true});
+  await collection.getByLabel('원장 반영일 *', {exact: true}).fill('2026-11-12');await collection.getByLabel('실제 입금일 *', {exact: true}).fill('2026-11-12');await collection.getByLabel('새 입금액 *', {exact: true}).fill('300');await collection.getByLabel('입금 확인 메모 *', {exact: true}).fill('부분 입금 확인');
+  await collection.getByRole('button', {name: '수금 검증·미리보기', exact: true}).click();await expect(collection.getByText('거래처 미수잔액: 1,100 → 800 KRW', {exact: true})).toBeVisible({timeout:65000});
+  await collection.getByRole('checkbox',{name:'실제 입금·재사용 수금과 문서별 배분 결과를 확인했습니다.',exact:true}).check();await collection.getByRole('button',{name:'수금·배분 확정',exact:true}).click();await expect(collection.getByText('수금과 문서 배분을 함께 반영했습니다.',{exact:true})).toBeVisible({timeout:65000});
   const settlements = page.getByRole('region', {name: '출고 문서별 수금 배분·연체', exact: true});
   await settlements.getByRole('button', {name: '문서에 배분', exact: true}).click();
   const saleNumber = saleJob.import.preview.rows[0].documentNo;
-  await settlements.getByRole('textbox', {name: '배분액 ' + saleNumber, exact: true}).fill('300');
-  await settlements.getByLabel('배분·기일 적용일 *', {exact: true}).fill('2026-11-12');
-  await settlements.getByLabel('배분·기일 처리 사유 *', {exact: true}).fill('출고 문서 부분 수금 배분');
-  await settlements.getByRole('button', {name: '배분·기일 검증·미리보기', exact: true}).click();
-  await expect(settlements.getByText('원수금 미배분 잔액: 300 → 0', {exact: true})).toBeVisible({timeout:65000});
-  await settlements.getByRole('checkbox', {name:'문서·금액·적용일을 확인했습니다.',exact:true}).check();
-  await settlements.getByRole('button', {name:'배분·기일 확정',exact:true}).click();
-  await expect(settlements.getByText('배분·지급기일 반영 완료',{exact:true})).toBeVisible({timeout:65000});
+  await expect(collection.getByLabel('수금 방식',{exact:true})).toHaveValue('EXISTING');
+  await collection.getByLabel('수금 배분액 '+saleNumber,{exact:true}).fill('300');await collection.getByLabel('배분 적용일 *',{exact:true}).fill('2026-11-12');await collection.getByLabel('입금 확인 메모 *',{exact:true}).fill('출고 문서 부분 수금 배분');
+  await collection.getByRole('button',{name:'수금 검증·미리보기',exact:true}).click();await expect(collection.getByText('미배분 순수금: 300 → 0 KRW',{exact:true})).toBeVisible({timeout:65000});
+  await collection.getByRole('checkbox',{name:'실제 입금·재사용 수금과 문서별 배분 결과를 확인했습니다.',exact:true}).check();await collection.getByRole('button',{name:'수금·배분 확정',exact:true}).click();await expect(collection.getByText('수금과 문서 배분을 함께 반영했습니다.',{exact:true})).toBeVisible({timeout:65000});
   await settlements.getByRole('button', {name:'지급기일 설정',exact:true}).click();
   await settlements.getByLabel('배분·기일 적용일 *', {exact: true}).fill('2026-11-12');
   await settlements.getByLabel('지급기일 (공란이면 미설정)', {exact: true}).fill('2026-11-12');
@@ -824,10 +853,9 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   await openErp(page, '미수금·수금');
   const manual=page.getByRole('region',{name:'수동 외상매출 관리',exact:true}),table=manual.getByRole('table',{name:'출고 문서 입금상태',exact:true});
   await table.getByRole('row').filter({hasText:saleNumber}).getByRole('button',{name:'입금완료 처리',exact:true}).click();
-  await manual.getByLabel('입금완료 반영일 *',{exact:true}).fill('2026-11-12');await manual.getByLabel('입금 확인 메모 *',{exact:true}).fill('자체 입금 확인 후 잔액 완료');
-  await manual.getByRole('button',{name:'입금완료 검증·미리보기',exact:true}).click();await expect(manual.getByText('문서 미수잔액: 800 → 0 KRW',{exact:true})).toBeVisible({timeout:65000});
-  await manual.getByRole('checkbox',{name:'실제 입금과 기등록 수금·새 수금액을 확인했습니다.',exact:true}).check();await manual.getByRole('button',{name:'입금완료 확정',exact:true}).click();
-  await expect(manual.getByText('입금완료 상태와 미수잔액을 반영했습니다.',{exact:true})).toBeVisible({timeout:65000});
+  await collection.getByLabel('원장 반영일 *',{exact:true}).fill('2026-11-12');await collection.getByLabel('실제 입금일 *',{exact:true}).fill('2026-11-12');await collection.getByLabel('새 입금액 *',{exact:true}).fill('800');await collection.getByLabel('입금 확인 메모 *',{exact:true}).fill('자체 입금 확인 후 잔액 완료');
+  await collection.getByRole('button',{name:'수금 검증·미리보기',exact:true}).click();await expect(collection.getByText('거래처 미수잔액: 1,240 → 440 KRW',{exact:true})).toBeVisible({timeout:65000});
+  await collection.getByRole('checkbox',{name:'실제 입금·재사용 수금과 문서별 배분 결과를 확인했습니다.',exact:true}).check();await collection.getByRole('button',{name:'수금·배분 확정',exact:true}).click();await expect(collection.getByText('수금과 문서 배분을 함께 반영했습니다.',{exact:true})).toBeVisible({timeout:65000});
   await manual.getByRole('checkbox',{name:'미입금 문서만 보기',exact:true}).uncheck();await expect(table.getByRole('row').filter({hasText:saleNumber}).getByText('입금완료',{exact:true})).toBeVisible();
   const updated=await call('manageErpFinance',{action:'report',from:'2026-01-01',to:'2026-12-31'});expect(updated.rows[0].balance).toBe(440);
   await expect(manual.getByRole('button',{name:'거래처 미수명세서 PDF·인쇄',exact:true})).toBeDisabled();

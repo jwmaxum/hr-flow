@@ -43,12 +43,15 @@ function createShipmentHandler({db,now,context,load}) {
         return {id:row.id,itemId:row.itemId,warehouseId:row.warehouseId,warehouseCode:row.warehouseCode||'',warehouseName:row.warehouseName,code:row.code,name:row.name,specification:row.specification,unit:row.unit,
           rowNo:row.rowNo,date:row.date,type:row.type,direction:row.direction,documentNo:row.documentNo,stockMode:row.stockMode||'DIRECT',currency:row.currency,
           quantity:row.quantityScaled/10000,returnedQuantity:returned/10000,returnableQuantity:link.cancelledBy?0:(row.quantityScaled-returned)/10000,cancelledBy:link.cancelledBy||null,
-          price:row.priceScaled/10000,priceBasis:row.priceBasis,taxType:row.taxType,supplyMinor:minor(row.supply,row.currency),taxMinor:minor(row.tax,row.currency),grossMinor:minor(row.total,row.currency),cost:row.cost};
+          price:row.priceScaled/10000,priceBasis:row.priceBasis,taxType:row.taxType,supplyMinor:minor(row.supply,row.currency),taxMinor:minor(row.tax,row.currency),grossMinor:minor(row.total,row.currency),cost:row.cost,
+          components:data.movements.filter(part=>part.bundleParentId===row.id).map(part=>({id:part.id,code:part.code,name:part.name,warehouseName:part.warehouseName,quantity:part.quantityScaled/10000,unit:part.unit,cost:part.cost}))};
       }).sort((a,b)=>a.rowNo-b.rowNo);
       const events=data.events.filter(r=>r.documentId===doc.id&&r.date<=asOf);
       const sum=key=>M.signed(events.reduce((total,row)=>total+row[key],0));
       const group=report.summaries.find(r=>r.partnerId===doc.partnerId&&r.currency===doc.currency);
-      return {companyId:parent.id,asOf,document:{...doc,supplyMinor:sum('supply'),taxMinor:sum('tax')},rows,events,
+      const originalAmounts=originals.reduce((a,row)=>{const effect=M.effectOf(row);return {salesKRW:M.signed(a.salesKRW+effect.salesKRW),costKRW:M.signed(a.costKRW+effect.cogsKRW)};},{salesKRW:0,costKRW:0});
+      const receiptIds=new Set(report.allocations.filter(a=>a.lines.some(l=>l.documentId===doc.id)).map(a=>a.receiptId));
+      return {companyId:parent.id,asOf,document:{...doc,supplyMinor:sum('supply'),taxMinor:sum('tax')},rows,events,originalAmounts,receipts:report.receipts.filter(r=>receiptIds.has(r.id)),
         allocations:report.allocations.filter(a=>a.lines.some(l=>l.documentId===doc.id)),unallocated:group?.unallocated||0,partnerBalance:group?.balance||0,recovery:recoveryState(data,doc,asOf,report),
         suggestedDate:[asOf,data.ledger.lastDate,data.state.lastDate,data.settlementState.lastDate].filter(Boolean).sort().at(-1)};
     });

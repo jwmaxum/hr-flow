@@ -142,7 +142,7 @@ test('receivables, bundles and customer custody remain atomic and tenant-scoped'
     const competing=await paidPreview(doc.id,{amount:'200'});await paidCommit(job);await reject(paidCommit(competing));assert.equal((await paidCommit(job)).idempotent,true);
     const receipts=await records('erpReceipts');assert.equal(receipts.length,2);assert.equal(receipts.find(r=>r.reference==='partial-1').amountMinor,50);assert.equal(receipts.find(r=>r.reference==='partial-1').method,'CASH');
     const detail=()=>finance(req({action:'shipmentDetail',documentId:doc.id}));
-    let d=await detail();assert.deepEqual([d.document.billed,d.document.supplyMinor,d.document.taxMinor,d.document.allocated,d.document.balance],[660,600,60,200,460]);assert.equal(d.rows[0].returnableQuantity,2);
+    let d=await detail();assert.deepEqual([d.document.billed,d.document.supplyMinor,d.document.taxMinor,d.document.allocated,d.document.balance],[660,600,60,200,460]);assert.equal(d.rows[0].returnableQuantity,2);assert.equal(d.receipts.length,2);assert.equal(d.receipts.reduce((sum,r)=>sum+r.amount,0),200);assert.deepEqual(d.originalAmounts,{salesKRW:600,costKRW:200});
     const stale=await paidPreview(doc.id,{amount:'100'});await correct('SALES_RETURN',rows[0].id,'1');await reject(paidCommit(stale));
     d=await detail();assert.deepEqual([d.document.billed,d.document.supplyMinor,d.document.taxMinor,d.document.balance,d.rows[0].returnableQuantity],[330,300,30,130,1]);
     await paidCommit(await paidPreview(doc.id,{amount:'130'}));assert.equal((await finance(req({...query,status:'PAID'}))).total,1);
@@ -162,7 +162,7 @@ test('receivables, bundles and customer custody remain atomic and tenant-scoped'
     await reset();await post('입고',[line('PART2','10','50')]);
     await save('items','set',{...itemValues('SET','세트'),itemType:'BUNDLE',components:[{itemId:'part',quantity:'2'},{itemId:'part2',quantity:'1'}]});
     await post('출고',[line('SET','2','300')]);const doc=(await settlements()).documents[0];
-    let d=await finance(req({action:'shipmentDetail',documentId:doc.id}));assert.equal(d.rows.length,1);assert.equal(d.rows[0].cost,500);
+    let d=await finance(req({action:'shipmentDetail',documentId:doc.id}));assert.equal(d.rows.length,1);assert.equal(d.rows[0].cost,500);assert.equal(d.rows[0].components.length,2);assert.equal(d.rows[0].components.reduce((sum,r)=>sum+r.cost,0),500);assert.deepEqual(d.originalAmounts,{salesKRW:600,costKRW:500});
     await correct('SALES_RETURN',d.rows[0].id,'1');d=await finance(req({action:'shipmentDetail',documentId:doc.id}));assert.equal(d.rows[0].returnableQuantity,1);assert.equal(d.document.billed,330);
     assert.equal((await stock('part')).quantity,8);assert.equal((await stock('part2')).quantity,9);
   });

@@ -17,7 +17,7 @@ function settlementReport(data, to, partnerId = '') {
   }
   const cancelled = new Set(data.paid.filter(row => row.type === 'CANCEL' && row.date <= to).map(row => row.sourceId));
   for (const row of data.paid.filter(row => row.type === 'RECEIPT' && included(row))) receipts.set(row.id, {
-    id: row.id, date: row.date, reference: row.reference || '', partnerId: row.partnerId,
+    id: row.id, date: row.date, receivedDate: row.receivedDate || row.date, reference: row.reference || '', partnerId: row.partnerId,
     partnerName: row.partnerName, currency: row.currency, amount: row.amountMinor,
     allocated: 0, available: 0, cancelled: cancelled.has(row.id),
   });

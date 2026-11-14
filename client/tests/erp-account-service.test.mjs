@@ -52,3 +52,13 @@ test('manual paid confirmation preserves reviewed amount decisions and idempoten
   await f.erpFinance.commitPayment('a',job);assert.deepEqual(JSON.parse(JSON.stringify(f.state.calls[1].data)),{companyId:'a',action:'paymentCommit',id:'paid',fingerprint:'checked'});
   f.state.reply={job:{...job,companyId:'b'}};await assert.rejects(f.erpFinance.commitPayment('a',job),/소속/);
 });
+
+test('unified collections keep explicit reuse allocations and reject changed sessions and foreign previews',async()=>{
+  const f=fixture(),job={id:'collection',companyId:'a',fingerprint:'reviewed'},input={mode:'EXISTING',partnerId:'buyer',currency:'KRW',date:'2026-11-14',receiptId:'original',notes:'확인',confirmDistinct:false,lines:[{documentId:'doc',amount:'300'}]};f.state.reply={job};
+  await f.erpFinance.previewCollection('a','collection',input);
+  assert.deepEqual(JSON.parse(JSON.stringify(f.state.calls[0])),{fn:'manageErpFinance',data:{companyId:'a',action:'collectionPreview',id:'collection',input}});
+  await f.erpFinance.commitCollection('a',job);
+  assert.deepEqual(JSON.parse(JSON.stringify(f.state.calls[1].data)),{companyId:'a',action:'collectionCommit',id:'collection',fingerprint:'reviewed'});
+  f.state.reply={job:{...job,companyId:'b'}};await assert.rejects(f.erpFinance.commitCollection('a',job),/소속/);
+  f.state.reply={job};f.state.hook=()=>{f.state.scope='other';};await assert.rejects(f.erpFinance.previewCollection('a','collection',input),/권한/);
+});
