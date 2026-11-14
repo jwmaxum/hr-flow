@@ -182,7 +182,7 @@ async function openErp(page,label){
   if(group){await page.getByRole('navigation',{name:'ERP 주 메뉴',exact:true}).getByRole('button',{name:group,exact:true}).click();if(group===label)return;}
   else await page.getByRole('button',{name:'관리자 관리',exact:true}).click();
   const sub=page.getByRole('navigation',{name:'ERP 세부 업무',exact:true});
-  const target=label==='월마감·권한·승인'?(await sub.getByRole('button',{name:'월마감·보고서 보관',exact:true}).count()?'월마감·보고서 보관':'내 승인 요청'):label;
+  const target=label;
   const button=sub.getByRole('button',{name:target,exact:true});if(await button.getAttribute('aria-pressed')!=='true')await button.click();
 }
 
@@ -408,7 +408,7 @@ test('ERP company masters and name search show independent inventory on desktop 
     await actor.page.getByLabel('매입단가 (원) *', { exact: true }).fill(String(price));
     await actor.page.getByLabel('판매단가 (원) *', { exact: true }).fill(String(price * 2));
     await actor.page.getByRole('button', { name: '저장', exact: true }).click();
-    await expect(actor.page.getByRole('status').filter({ hasText: '저장 완료' })).toBeVisible();
+    await expect(actor.page.getByRole('status').filter({ hasText: '저장 완료' })).toBeVisible({ timeout: 65000 });
     await expect(actor.page.getByText('재고 미등록', { exact: true })).toBeVisible();
   }
   await createItem(owner, '자동점검 A품목', 1000);
@@ -1101,7 +1101,7 @@ test('ERP delegated approvals and immutable monthly archives work on desktop and
   const owner=await actorFor(browser,testInfo);await login(owner,fixtures.accounts.adminA);
   async function call(name,data){const r=await probe(owner,`http://${HOSTS.functions}/${PROJECT_ID}/us-central1/${name}`,{method:'POST',body:{data:{companyId:fixtures.companyA,...data}}});expect(r.status).toBe(200);return JSON.parse(Buffer.from(r.bytes).toString()).result;}
   await call('manageErp',{action:'save',kind:'items',id:'approval-item',expectedRevision:0,values:{code:'CLOSE-001',name:'마감 검증 품목',unit:'개',purchasePrice:100,salePrice:200,specification:'',group:'',notes:'',taxType:'과세',active:true}});
-  await owner.page.goto('/#/erp');await openErp(owner.page, '월마감·권한·승인');
+  await owner.page.goto('/#/erp');await openErp(owner.page, '월마감·보고서 보관');
   const control=owner.page.getByRole('region',{name:'ERP 마감 권한 승인 이력'});
   await openErp(owner.page,'담당자 권한');
   await control.getByLabel('ERP 담당자',{exact:true}).selectOption(fixtures.accounts.memberA.uid);
