@@ -312,6 +312,13 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "erpReviewInbox", "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "reviewStatus", "order": "ASCENDING"},
+        {"fieldPath": "at", "order": "ASCENDING"}
+      ]
     }
   ],
   "fieldOverrides": []

@@ -109,7 +109,9 @@ function governedService(factory, domain) {
         const chunks=[];let chunk=[],size=0;
         for(const row of changed){const n=Buffer.byteLength(JSON.stringify(row));if(n>800000)fail('resource-exhausted','변경 이력 크기를 초과했습니다. 입력을 나누어 주세요.');if(size+n>800000){chunks.push(chunk);chunk=[];size=0;}chunk.push(row);size+=n;}if(chunk.length)chunks.push(chunk);
         for(const w of pending)tx[w.method](...w.args);
-        chunks.forEach((changes,i)=>tx.create(parent.collection('erpChangeHistory').doc(),{companyId:parent.id,operationId,domain,action:request.data.action,actorId:user.uid,actorName:user.name||user.email||user.uid,requestedBy:approval?.requestedBy||user.uid,approvedBy:needsApproval&&!managerDirect?user.uid:null,approvalId:approval?.id||null,...(managerDirect?{authorization:'ERP_MANAGER_DIRECT',actorErpAccess:'MANAGER'}:{}),reason:approval?.reason||result.correction?.input.reason||'',at,part:i+1,parts:chunks.length,changes}));
+        const history=chunks.map((changes,i)=>({ref:parent.collection('erpChangeHistory').doc(),record:{companyId:parent.id,operationId,domain,action:request.data.action,actorId:user.uid,actorName:user.name||user.email||user.uid,requestedBy:approval?.requestedBy||user.uid,approvedBy:needsApproval&&!managerDirect?user.uid:null,approvalId:approval?.id||null,...(managerDirect?{authorization:'ERP_MANAGER_DIRECT',actorErpAccess:'MANAGER'}:{}),reason:approval?.reason||result.correction?.input.reason||'',at,part:i+1,parts:chunks.length,changes}}));
+        for(const {ref,record} of history)tx.create(ref,record);
+        require('./erp-review-inbox').recordInbox(tx,parent,history.map(({ref,record})=>({...record,id:ref.id})));
         tx.set(stateRef,{...state,revision:state.revision+1});
         return result;
       });

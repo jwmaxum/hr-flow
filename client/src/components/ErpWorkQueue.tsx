@@ -11,7 +11,7 @@ import {getErrorMessage} from '../utils/errors';
 type Kind='approvals'|'recovery'|'borrowed'|'opening'|'closing'|'statements'|'reviews';
 type Row={id:string;title:string;detail:string;date:string;dateLabel:string;badge:string;priority:number;view:ErpView;source:string;draftId?:string;quantity?:number|null;unit?:string;amountMinor?:number;currency?:string;unallocatedMinor?:number};
 interface WorkQueue {companyId:string;access:ErpAccess;today:string;checkedAt:string;sections:{key:Kind;status:'READY'|'ERROR';count:number|null;hasMore:boolean;rows:Row[];message?:string}[]}
-const names:Record<Kind,string>={approvals:'승인 대기',recovery:'미수금 회수·수금 배분',borrowed:'차용 반환',opening:'원가 확정',closing:'월마감 담당 업무',statements:'정정 명세표 발행',reviews:'이번 달 미확인 중요 변경'};
+const names:Record<Kind,string>={approvals:'승인 대기',recovery:'미수금 회수·수금 배분',borrowed:'차용 반환',opening:'원가 확정',closing:'월마감 담당 업무',statements:'정정 명세표 발행',reviews:'누적 미확인 중요 변경'};
 const views:Record<Kind,ErpView>={approvals:'approvals',recovery:'finance',borrowed:'custody',opening:'opening',closing:'closing',statements:'documents',reviews:'dashboard'};
 const number=(value:number)=>value.toLocaleString('ko-KR',{maximumFractionDigits:4});
 const money=(value:number,currency:string)=>`${number(value/(['KRW','JPY'].includes(currency)?1:100))} ${currency}`;
@@ -22,7 +22,7 @@ export function ErpWorkQueue({companyId,access,onOpen}:{companyId:string;access:
     async function refresh(){
       if(!live||running||document.visibilityState==='hidden')return;
       running=true;last=Date.now();setBusy(true);setError('');setValue(null);
-      try{const result=await erpControl<WorkQueue>(companyId,'workQueue',{includeReviews:true});if(result.companyId!==companyId||result.access!==access)throw new Error('ERP 권한이 변경되었습니다. 페이지를 새로고침해 주세요.');if(live)setValue(result);}
+      try{const result=await erpControl<WorkQueue>(companyId,'workQueue',{includeReviews:true,reviewScope:'ALL'});if(result.companyId!==companyId||result.access!==access)throw new Error('ERP 권한이 변경되었습니다. 페이지를 새로고침해 주세요.');if(live)setValue(result);}
       catch(e){if(live)setError(getErrorMessage(e));}
       finally{running=false;if(live)setBusy(false);}
     }
@@ -43,7 +43,7 @@ export function ErpWorkQueue({companyId,access,onOpen}:{companyId:string;access:
       {value&&<><p className="wf-muted">기준일 {value.today} · 조회 {new Date(value.checkedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} · 창을 다시 볼 때 1분 이상 지났으면 갱신합니다.</p>
         <div className="erp-work-grid">{value.sections.map(s=><section className="erp-work-card" key={s.key} aria-label={names[s.key]}>
           <div className="erp-list-head"><h3>{s.key==='approvals'&&!erpCanAdmin(access)?'내 승인 대기':names[s.key]}</h3><strong>{s.count===null?'확인 필요':`${number(s.count)}${s.hasMore?'+':''}건`}</strong></div>
-          {s.status==='ERROR'?<p role="alert" className="erp-error">{s.message}</p>:s.count===0?<p className="wf-muted">{s.key==='reviews'?'이번 달 미확인 중요 변경이 없습니다. 이전 달은 월별 대시보드에서 기간을 선택하세요.':'현재 확인할 업무가 없습니다.'}</p>:<ul className="erp-work-list">{s.rows.map(row=><li key={row.id}>
+          {s.status==='ERROR'?<p role="alert" className="erp-error">{s.message}</p>:s.count===0?<p className="wf-muted">{s.key==='reviews'?'이전 달을 포함한 미확인 중요 변경이 없습니다.':'현재 확인할 업무가 없습니다.'}</p>:<ul className="erp-work-list">{s.rows.map(row=><li key={row.id}>
             <span className={`wf-status ${row.priority===0?'wf-status-warning':''}`}>{row.badge}</span><h4>{row.title}</h4><p>{row.detail}</p>
             <p className="wf-muted">{row.dateLabel}{row.date?` ${row.date}`:''}</p>
             {row.quantity!==undefined&&<p>수량 {row.quantity===null?'원본 수량 미입력':`${number(row.quantity)} ${row.unit}`}</p>}
@@ -51,7 +51,7 @@ export function ErpWorkQueue({companyId,access,onOpen}:{companyId:string;access:
             <button type="button" className="wf-btn" aria-label={`${row.title} 업무 열기`} onClick={()=>onOpen(row.view,row.source,row.draftId)}>업무 열기<ArrowRight size={14} aria-hidden="true"/></button>
           </li>)}</ul>}
           {(s.hasMore||(s.count||0)>s.rows.length)&&<p className="wf-muted">일부 항목을 표시했습니다. 전체 목록에서 나머지 업무를 확인하세요.</p>}
-          <button type="button" className="wf-btn" onClick={()=>onOpen(views[s.key],s.key==='reviews'?'unreviewed':undefined)}>{names[s.key]} 전체 보기</button>
+          <button type="button" className="wf-btn" onClick={()=>onOpen(views[s.key],s.key==='reviews'?'inbox':undefined)}>{names[s.key]} 전체 보기</button>
         </section>)}</div>
       </>}
     </section>

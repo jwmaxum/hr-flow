@@ -1,7 +1,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { test, expect } = require('@playwright/test');
 const { PROJECT_ID, WEB_ORIGIN, HOSTS, assertE2EEnvironment } = require('../../scripts/e2e/safety.cjs');
-const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture, seedErpSearchItems,seedErpStockStates,seedErpWorkQueue } = require('../../scripts/e2e/fixtures.cjs');
+const { seedFixtures, clearFixtures, findExpenseByTitle, readAttachment, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture, seedErpSearchItems,seedErpStockStates,seedErpWorkQueue,seedErpReviewBacklog } = require('../../scripts/e2e/fixtures.cjs');
 const { workbook: erpWorkbook, opening: erpOpening, movement: erpMovement } = require('../../functions/tests/erp-import-fixtures.cjs');
 
 assertE2EEnvironment();
@@ -607,6 +607,29 @@ test('ERP manual inbound and outbound preserve receipt prices, value inventory a
   expect(await readErpInventory(fixtures.companyB)).toEqual(foreignBefore);
 });
 
+test('ERP cumulative inbox includes old months, ages changes and retries reads after ADMIN confirmation',async({browser},testInfo)=>{
+  test.setTimeout(300000);await clearErpFixture(fixtures.companyA);await seedErpReviewBacklog(fixtures.companyA);
+  const before=await readErpInventory(fixtures.companyA),owner=await actorFor(browser,testInfo),page=owner.page;await login(owner,fixtures.accounts.adminA);
+  await page.goto('/#/erp?menu=dashboard&view=dashboard&source=inbox');
+  const inbox=page.getByRole('region',{name:'누적 미확인 점검함',exact:true});
+  await expect(inbox).toHaveAttribute('aria-busy','false',{timeout:65000});
+  await expect(inbox.getByText('선택 조건 34건',{exact:false})).toBeVisible();
+  await expect(inbox.getByRole('row').filter({hasText:'우선 점검 · 40일'})).toHaveCount(1);
+  const first=inbox.getByRole('row').filter({hasText:'우선 점검 · 40일'});await first.locator('summary').click();await expect(first).toContainText('300');
+  await inbox.getByRole('combobox',{name:'미확인 경과일',exact:true}).selectOption('30');await expect(inbox).toHaveAttribute('aria-busy','false');
+  await expect(inbox.getByRole('button',{name:'이 변경 확인 완료',exact:true})).toHaveCount(2);await inbox.getByRole('button',{name:'이 변경 확인 완료',exact:true}).first().click();
+  await expect(inbox.getByRole('status').filter({hasText:'확인 완료 1건'})).toBeVisible();await expect(inbox).toHaveAttribute('aria-busy','false');
+  await expect(page.getByRole('button',{name:'누적 미확인 중요 변경 33건 · 7일 이상 2건 · 30일 이상 1건',exact:true})).toBeVisible({timeout:65000});
+  await inbox.getByRole('combobox',{name:'미확인 경과일',exact:true}).selectOption('7');await expect(inbox).toHaveAttribute('aria-busy','false');await expect(inbox.getByRole('button',{name:'이 변경 확인 완료',exact:true})).toHaveCount(2);
+  await inbox.getByRole('checkbox',{name:'현재 페이지 모두 선택',exact:true}).check();let failRead=false,confirmCalls=0;
+  await page.route('**/manageErpControl',async route=>{const input=route.request().postDataJSON()?.data;if(input?.action==='reviewConfirm'){confirmCalls++;failRead=true;}if(input?.action==='reviewInbox'&&failRead){failRead=false;await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{status:'UNAVAILABLE',message:'Synthetic read retry'}})});return;}await route.fallback();});
+  await inbox.getByRole('button',{name:'선택 2건 확인 완료',exact:true}).click();await expect(inbox.getByRole('alert')).toContainText('확인은 이미 저장되었습니다.',{timeout:65000});
+  await inbox.getByRole('button',{name:'점검함 새로고침',exact:true}).click();await expect(inbox.getByText('선택한 조건의 미확인 중요 변경이 없습니다.',{exact:true})).toBeVisible();expect(confirmCalls).toBe(1);
+  await inbox.getByRole('combobox',{name:'미확인 경과일',exact:true}).selectOption('0');await expect(inbox).toHaveAttribute('aria-busy','false');await expect(inbox.getByRole('button',{name:'이 변경 확인 완료',exact:true})).toHaveCount(30);await inbox.getByRole('button',{name:'다음 미확인 보기',exact:true}).click();await expect(inbox).toHaveAttribute('aria-busy','false');await expect(inbox.getByRole('button',{name:'이 변경 확인 완료',exact:true})).toHaveCount(1);
+  await inbox.getByRole('button',{name:'처음으로',exact:true}).click();await expect(inbox).toHaveAttribute('aria-busy','false');await page.reload();await expect(page.getByRole('button',{name:'누적 미확인 중요 변경 31건 · 7일 이상 0건 · 30일 이상 0건',exact:true})).toBeVisible({timeout:65000});
+  expect(await readErpInventory(fixtures.companyA)).toEqual(before);await inbox.screenshot({path:testInfo.outputPath('erp-cumulative-inbox.png')});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+});
+
 test('ERP five work menus and SUB_ADMIN manager corrections preserve ADMIN boundaries',async({browser},testInfo)=>{
   test.setTimeout(480000);
   await clearErpFixture(fixtures.companyA);const owner=await actorFor(browser,testInfo),page=owner.page;
@@ -672,8 +695,10 @@ test('ERP five work menus and SUB_ADMIN manager corrections preserve ADMIN bound
   await expect(managerReview.getByRole('button',{name:'이 변경 확인 완료',exact:true})).toHaveCount(0);
   const alertBefore=await call('manageErpControl',{action:'reviewAlerts'});expect(alertBefore.pendingCount).toBeGreaterThan(0);
   const originalInventory=await readErpInventory(fixtures.companyA),otherInventory=await readErpInventory(fixtures.companyB);
-  await page.bringToFront();await page.getByRole('button',{name:/이번 달 미확인 중요 변경/}).click();
-  await expect(review.getByRole('combobox',{name:'ADMIN 확인 상태',exact:true})).toHaveValue('UNREVIEWED',{timeout:65000});await expect(review).toHaveAttribute('aria-busy','false',{timeout:65000});await expect(review.getByRole('heading',{name:'주요 변경 점검',exact:true})).toBeFocused({timeout:65000});
+  await page.bringToFront();await page.getByRole('button',{name:/누적 미확인 중요 변경/}).click();
+  const inbox=page.getByRole('region',{name:'누적 미확인 점검함',exact:true});await expect(inbox).toHaveAttribute('aria-busy','false',{timeout:65000});await expect(inbox.getByRole('heading',{name:'누적 미확인 점검함',exact:true})).toBeFocused();
+  await page.getByRole('button',{name:'기간별 변경 이력',exact:true}).click();await review.getByRole('combobox',{name:'ADMIN 확인 상태',exact:true}).selectOption('UNREVIEWED');await review.getByRole('button',{name:'변경 내역 조회',exact:true}).click();
+  await expect(review.getByRole('combobox',{name:'ADMIN 확인 상태',exact:true})).toHaveValue('UNREVIEWED',{timeout:65000});await expect(review).toHaveAttribute('aria-busy','false',{timeout:65000});
   await expect(review.getByRole('button',{name:'이 변경 확인 완료',exact:true})).toHaveCount(alertBefore.pendingCount,{timeout:65000});
   await review.getByRole('checkbox',{name:'현재 페이지의 미확인 모두 선택',exact:true}).check();
   let failReview=true,confirmCalls=0;
@@ -687,11 +712,11 @@ test('ERP five work menus and SUB_ADMIN manager corrections preserve ADMIN bound
   await expect(review.getByRole('alert')).toContainText('확인 완료는 저장되었습니다.',{timeout:65000});
   await review.getByRole('button',{name:'변경 내역 조회',exact:true}).click();
   await expect(review.getByText('조회 기간에 해당하는 변경이 없습니다.',{exact:true})).toBeVisible({timeout:65000});expect(confirmCalls).toBe(1);
-  await expect(page.getByRole('button',{name:'이번 달 미확인 중요 변경 0건',exact:true})).toBeVisible({timeout:65000});
+  await expect(page.getByRole('button',{name:'누적 미확인 중요 변경 0건 · 7일 이상 0건 · 30일 이상 0건',exact:true})).toBeVisible({timeout:65000});
   await review.getByRole('combobox',{name:'ADMIN 확인 상태',exact:true}).selectOption('REVIEWED');await review.getByRole('button',{name:'변경 내역 조회',exact:true}).click();
   await expect(review.getByRole('cell',{name:/확인 완료/})).toHaveCount(alertBefore.pendingCount,{timeout:65000});
   expect(await readErpInventory(fixtures.companyA)).toEqual(originalInventory);expect(await readErpInventory(fixtures.companyB)).toEqual(otherInventory);
-  await page.reload();await expect(page.getByRole('button',{name:'이번 달 미확인 중요 변경 0건',exact:true})).toBeVisible({timeout:65000});
+  await page.reload();await expect(page.getByRole('button',{name:'누적 미확인 중요 변경 0건 · 7일 이상 0건 · 30일 이상 0건',exact:true})).toBeVisible({timeout:65000});
   await page.screenshot({path:testInfo.outputPath('erp-admin-review-confirmed.png'),fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await openErp(page,'수정·삭제 이력');
   await expect(page.getByText(/ERP관리자 직접 처리/)).toHaveCount(2,{timeout:65000});

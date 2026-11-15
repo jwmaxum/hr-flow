@@ -81,7 +81,7 @@ async function fixture() {
 async function seedLifecycle(objects, orphanInbox = false) {
   const batch = db.batch();
   for (const companyId of ['a', 'b']) {
-    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings']) {
+    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReviewConfirmations', 'erpReviewInbox', 'erpReviewState']) {
       batch.set(db.doc(`companies/${companyId}/${name}/test-record`), { companyId, marker: `${companyId}-erp-private` });
     }
     for (const collection of ['attendance', 'divisions', 'teams', 'leaves', 'expenses', 'AuditLogs', 'payroll_records', 'backup_tasks', 'payments', 'payment_claims', 'customCompanyData']) {

@@ -49,9 +49,10 @@ function projectReview(records){
   const named=records.flatMap(r=>(r.changes||[]).flatMap(c=>[c.before,c.after].filter(Boolean)));
   const itemNames=new Map(named.filter(r=>r.itemId&&r.name).map(r=>[r.itemId,r.name]));
   const warehouseNames=new Map(named.filter(r=>r.warehouseId&&r.warehouseName).map(r=>[r.warehouseId,r.warehouseName]));
-  const groups=new Map();
+  const groups=new Map(),sources=new Map();
   for(const record of records){
     const key=record.operationId||record.id;
+    if(!sources.has(key))sources.set(key,[]);sources.get(key).push(record);
     let event=groups.get(key);
     if(!event){event={id:key,at:record.at,actorId:record.actorId||'',actorName:record.actorName||record.actorId||'담당자',actorErpAccess:record.actorErpAccess||'',authorization:record.authorization||'',approvedBy:record.approvedBy||null,reason:record.reason||'',domain:record.domain,action:record.action,categories:new Set(),documents:new Set(),changes:[],changeCount:0,historyIds:[],parts:new Set(),expectedParts:record.parts||1};groups.set(key,event);}
     event.historyIds.push(record.id);event.parts.add(record.part||1);event.expectedParts=Math.max(event.expectedParts,record.parts||1);
@@ -71,7 +72,7 @@ function projectReview(records){
     }
   }
   return [...groups.values()].map(({parts,...e})=>{
-    const source=records.filter(r=>(r.operationId||r.id)===e.id).sort((a,b)=>a.id.localeCompare(b.id));
+    const source=sources.get(e.id).sort((a,b)=>a.id.localeCompare(b.id));
     const priceChanged=source.some(r=>(r.changes||[]).some(c=>c.path.startsWith('erpItems/')&&c.before&&c.after&&['purchasePrice','salePrice'].some(k=>digest(c.before[k]??null)!==digest(c.after[k]??null))));
     return {...e,categories:[...e.categories],documents:[...e.documents].slice(0,12),fingerprint:digest(source),important:priceChanged||['STOCK','TRADE','DELETE','DOCUMENT'].some(c=>e.categories.has(c)),incomplete:parts.size!==e.expectedParts||source.length!==e.expectedParts||source.some(r=>(r.parts||1)!==e.expectedParts||!Number.isSafeInteger(r.part||1)||(r.part||1)<1||(r.part||1)>e.expectedParts)};
   }).sort((a,b)=>b.at.localeCompare(a.at)||b.id.localeCompare(a.id));
@@ -130,14 +131,18 @@ function createChangeReview({db,context,now=()=>new Date()}){
         if(projected.length!==1||event.id!==item.id||event.incomplete||event.fingerprint!==item.fingerprint||!event.important)fail('failed-precondition','변경 원본이 바뀌었거나 누락되었습니다. 다시 조회한 후 확인해 주세요.');
         events.push(event);
       }
-      const receipts=await tx.getAll(...events.map(e=>receiptRef(parent,e)));let confirmed=0;
+      const inbox=require('./erp-review-inbox');
+      const receipts=await tx.getAll(...events.map(e=>receiptRef(parent,e))),inboxState=(await tx.get(inbox.stateRef(parent))).data();let confirmed=0;
+      if(inboxState&&inboxState.companyId!==parent.id)fail('permission-denied','누적 점검함의 회사를 확인해 주세요.');
       for(let i=0;i<events.length;i++){
         const event=events[i],existing=receipts[i].data();
-        if(existing){if(existing.companyId!==parent.id||existing.eventId!==event.id||existing.fingerprint!==event.fingerprint)fail('permission-denied','확인 기록을 검증하지 못했습니다.');continue;}
+        if(existing){if(existing.companyId!==parent.id||existing.eventId!==event.id||existing.fingerprint!==event.fingerprint)fail('permission-denied','확인 기록을 검증하지 못했습니다.');tx.set(inbox.entryRef(parent,event),inbox.summary(parent,event,{by:existing.acknowledgedBy,name:existing.acknowledgedName,at:existing.acknowledgedAt}));continue;}
         const at=now().toISOString();
         tx.create(receiptRef(parent,event),{companyId:parent.id,eventId:event.id,fingerprint:event.fingerprint,historyIds:event.historyIds,acknowledgedBy:user.uid,acknowledgedName:user.name||user.uid,acknowledgedAt:at});
+        tx.set(inbox.entryRef(parent,event),inbox.summary(parent,event,{by:user.uid,name:user.name||user.uid,at}));
         tx.create(parent.collection('erpAudit').doc(),{companyId:parent.id,actorId:user.uid,actorName:user.name||user.uid,action:'CHANGE_REVIEW_CONFIRMED',eventId:event.id,fingerprint:event.fingerprint,at});confirmed++;
       }
+      if(inboxState&&confirmed)tx.update(inbox.stateRef(parent),{revision:inboxState.revision+1});
       return {companyId:parent.id,confirmed,alreadyConfirmed:events.length-confirmed};
     });
   };

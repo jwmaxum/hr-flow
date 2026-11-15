@@ -215,7 +215,7 @@ async function clearFixtures() {
   // Only this run's company IDs and exact UIDs may be removed. No project-wide
   // clear/reset endpoint is used, even though this is an ephemeral demo project.
   for (const companyId of [current.fixtures.companyA, current.fixtures.companyB]) {
-    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs', 'erpClosePlans','erpCloseChecklists','erpGovernance', 'erpApprovals', 'erpChangeHistory','erpReviewConfirmations', 'erpMonthCloses', 'erpCloseMonths']) {
+    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs', 'erpClosePlans','erpCloseChecklists','erpGovernance', 'erpApprovals', 'erpChangeHistory','erpReviewConfirmations','erpReviewInbox','erpReviewState', 'erpMonthCloses', 'erpCloseMonths']) {
       await attempt(() => current.db.recursiveDelete(current.db.doc(`companies/${companyId}`).collection(name)));
     }
     for (const collection of ['expenses', 'leaves', 'attendance', 'notices', 'audit_logs', 'salary_history', 'payroll_records', 'payroll_drafts']) {
@@ -266,7 +266,7 @@ async function clearErpFixture(companyId) {
   const current = runtime();
   if (companyId !== current.fixtures.companyA) throw new Error('Only generated company A ERP fixtures may be reset.');
   const parent = current.db.doc(`companies/${companyId}`);
-  for (const name of ['erpItems','erpWarehouses','erpPartners','erpKeys','erpInventory','erpAudit','erpImports','erpMovements','erpDocuments','erpState','erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs', 'erpClosePlans','erpCloseChecklists','erpGovernance', 'erpApprovals', 'erpChangeHistory','erpReviewConfirmations', 'erpMonthCloses', 'erpCloseMonths']) await current.db.recursiveDelete(parent.collection(name));
+  for (const name of ['erpItems','erpWarehouses','erpPartners','erpKeys','erpInventory','erpAudit','erpImports','erpMovements','erpDocuments','erpState','erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs', 'erpClosePlans','erpCloseChecklists','erpGovernance', 'erpApprovals', 'erpChangeHistory','erpReviewConfirmations','erpReviewInbox','erpReviewState', 'erpMonthCloses', 'erpCloseMonths']) await current.db.recursiveDelete(parent.collection(name));
   await current.bucket.deleteFiles({ prefix: `companies/${companyId}/erp-sources/` });
 }
 async function seedErpSearchItems(companyId){
@@ -294,4 +294,14 @@ async function seedErpWorkQueue(companyId){
   batch.set(parent.collection('erpBorrowings').doc('todo-loan'),{companyId,lotId:'todo-lot',itemId:'todo-item',code:'TODO-ITEM',name:'오늘업무 품목',unit:'EA',warehouseId:'todo-wh',warehouseName:'본사',ownerPartnerId:'todo-partner',ownerName:'검증 소유자',buyerPartnerId:'todo-partner',buyerName:'검증 판매처',quantityScaled:30000,outstandingQuantityScaled:30000,outstandingValue:300,date:'2026-11-12'});
   await batch.commit();
 }
-module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture,seedErpSearchItems,seedErpStockStates,seedErpWorkQueue };
+async function seedErpReviewBacklog(companyId){
+  const current=runtime();if(companyId!==current.fixtures.companyA)throw Error('Only generated company A may receive review fixtures.');
+  const parent=current.db.doc(`companies/${companyId}`),batch=current.db.batch();
+  const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul'}).format(new Date());
+  for(let i=0;i<34;i++){
+    const days=i===0?40:i===1?30:i===2?7:2,at=new Date(Date.parse(today+'T09:00:00+09:00')-days*86400000).toISOString(),id='review-backlog-'+String(i).padStart(2,'0');
+    batch.create(parent.collection('erpChangeHistory').doc(id),{companyId,operationId:id,at,actorId:current.fixtures.accounts.managerA.uid,actorName:'누적 점검 담당자',actorErpAccess:'MANAGER',authorization:'ERP_MANAGER_DIRECT',domain:'correction',action:'commit',part:1,parts:1,reason:'과거 변경 점검 '+i,changes:[{path:'erpInventory/verification-history',before:{quantity:2,value:200},after:{quantity:3,value:300}}]});
+  }
+  await batch.commit();
+}
+module.exports = { seedFixtures, clearFixtures, getExpense, findExpenseByTitle, readAttachment, setProfileStatus, revokeTestUser, readProfile, readPayrollRecord, readHistoricalPayroll, seedErpBalance, seedErpPendingOpening, readErpInventory, clearErpFixture,seedErpSearchItems,seedErpStockStates,seedErpWorkQueue,seedErpReviewBacklog };
