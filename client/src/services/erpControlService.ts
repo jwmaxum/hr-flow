@@ -25,6 +25,7 @@ export async function erpControl<T>(companyId:string,action:string,data:Record<s
   if(scope!==erpScope(companyId,mode))throw new Error('로그인 사용자 또는 ERP 권한이 변경되었습니다.');
   if(action==='decide')window.dispatchEvent(new Event('erp:approvals-changed'));
   if(['closePlanSave','closeTaskSubmit','closeTaskReset','checklistSave','reopen','close'].includes(action))window.dispatchEvent(new Event('erp:closing-changed'));
+  if(action==='reviewConfirm')window.dispatchEvent(new Event('erp:review-changed'));
   return response.data as T;
 }
 export async function downloadClose(companyId:string,id:string,fileIndex:number){

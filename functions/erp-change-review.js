@@ -70,33 +70,77 @@ function projectReview(records){
       if(event.changes.length<40)event.changes.push({label:row.name||itemNames.get(row.itemId)||row.code||row.documentNo||row.number||row.input?.sourceDocumentNo||({erpInventory:'창고 재고',erpIssuedDocuments:'거래서류',erpReceipts:'수금·반환',erpSettlements:'수금 배분·기일'}[collection])||'관리 변경',warehouseName:row.warehouseName||warehouseNames.get(row.warehouseId)||'',currency:row.currency||row.input?.currency||'',values});
     }
   }
-  return [...groups.values()].map(({parts,...e})=>({...e,categories:[...e.categories],documents:[...e.documents].slice(0,12),incomplete:parts.size!==e.expectedParts})).sort((a,b)=>b.at.localeCompare(a.at)||b.id.localeCompare(a.id));
+  return [...groups.values()].map(({parts,...e})=>{
+    const source=records.filter(r=>(r.operationId||r.id)===e.id).sort((a,b)=>a.id.localeCompare(b.id));
+    const priceChanged=source.some(r=>(r.changes||[]).some(c=>c.path.startsWith('erpItems/')&&c.before&&c.after&&['purchasePrice','salePrice'].some(k=>digest(c.before[k]??null)!==digest(c.after[k]??null))));
+    return {...e,categories:[...e.categories],documents:[...e.documents].slice(0,12),fingerprint:digest(source),important:priceChanged||['STOCK','TRADE','DELETE','DOCUMENT'].some(c=>e.categories.has(c)),incomplete:parts.size!==e.expectedParts||source.length!==e.expectedParts||source.some(r=>(r.parts||1)!==e.expectedParts||!Number.isSafeInteger(r.part||1)||(r.part||1)<1||(r.part||1)>e.expectedParts)};
+  }).sort((a,b)=>b.at.localeCompare(a.at)||b.id.localeCompare(a.id));
 }
-function createChangeReview({db,context}){
-  return async(request,v,parent)=>{
-    const from=M.date(v.from),to=M.date(v.to),category=v.category||'ALL';
+function createChangeReview({db,context,now=()=>new Date()}){
+  const receiptRef=(parent,event)=>parent.collection('erpReviewConfirmations').doc(digest([event.id,event.fingerprint]));
+  async function admin(request,tx){const user=await context(request,tx);if(user.role!=='ADMIN')fail('permission-denied','변경 확인 완료는 회사 ADMIN만 처리할 수 있습니다.');return user;}
+  async function read(tx,v,parent){
+    const from=M.date(v.from),to=M.date(v.to),category=v.category||'ALL',status=v.reviewStatus||'ALL';
     if(from>to||(Date.parse(to)-Date.parse(from))/86400000>92)fail('invalid-argument','조회 기간은 93일 이내로 선택해 주세요.');
     if(category!=='ALL'&&!Object.hasOwn(CATEGORIES,category))fail('invalid-argument','변경 유형을 선택해 주세요.');
+    if(!['ALL','UNREVIEWED','REVIEWED'].includes(status))fail('invalid-argument','확인 상태를 선택해 주세요.');
     const start=new Date(from+'T00:00:00+09:00').toISOString(),end=new Date(Date.parse(to+'T00:00:00+09:00')+86400000).toISOString();
-    return db.runTransaction(async tx=>{
-      await context(request,tx);
       let cursor=null,bytes=0;const records=[];
       while(true){
         let q=parent.collection('erpChangeHistory').where('at','>=',start).where('at','<',end).orderBy('at','desc').orderBy(FieldPath.documentId(),'desc');
         if(cursor)q=q.startAfter(cursor);
         const batch=await tx.get(q.limit(25));
-        for(const doc of batch.docs){const row=doc.data();if(row.companyId!==parent.id)fail('permission-denied','변경 이력의 회사를 확인해 주세요.');bytes+=Buffer.byteLength(JSON.stringify(row));records.push({id:doc.id,...row});}
+        for(const doc of batch.docs){const row=doc.data();if(row.companyId!==parent.id)fail('permission-denied','변경 이력의 회사를 확인해 주세요.');bytes+=Buffer.byteLength(JSON.stringify(row));records.push({...row,id:doc.id});}
         if(records.length>MAX_RECORDS||bytes>MAX_BYTES)fail('resource-exhausted','변경 이력이 많습니다. 조회 기간을 좁혀 주세요. 일부 합계만 표시하지 않습니다.');
         if(batch.size<25)break;cursor=batch.docs.at(-1);
       }
       const events=projectReview(records);
       if(events.some(e=>e.incomplete))fail('failed-precondition','분할된 변경 이력을 모두 확인하지 못했습니다. 조회 기간을 넓히거나 전체 변경 이력을 확인해 주세요.');
-      const snapshot=digest(records.map(r=>[r.id,r.operationId,r.at])),selected=events.filter(e=>category==='ALL'||e.categories.includes(category));
+      const important=events.filter(e=>e.important),receipts=important.length?await tx.getAll(...important.map(e=>receiptRef(parent,e))):[];
+      for(let i=0;i<important.length;i++){
+        const event=important[i],receipt=receipts[i].data();
+        if(receipt&&(receipt.companyId!==parent.id||receipt.eventId!==event.id||receipt.fingerprint!==event.fingerprint))fail('permission-denied','확인 기록의 회사를 확인해 주세요.');
+        event.confirmation=receipt?{by:receipt.acknowledgedBy,name:receipt.acknowledgedName,at:receipt.acknowledgedAt}:null;
+      }
+      for(const event of events)event.reviewStatus=event.important?(event.confirmation?'REVIEWED':'UNREVIEWED'):'NOT_REQUIRED';
+      const snapshot=digest([from,to,category,status,events.map(e=>[e.id,e.fingerprint,e.confirmation||null])]),selected=events.filter(e=>(category==='ALL'||e.categories.includes(category))&&(status==='ALL'||e.reviewStatus===status));
       let offset=0;
-      if(v.cursor){M.exactObject(v.cursor,['offset','snapshot']);if(!Number.isSafeInteger(v.cursor.offset)||v.cursor.offset<0||v.cursor.offset>selected.length)fail('invalid-argument','조회 위치를 확인해 주세요.');if(v.cursor.snapshot!==snapshot)fail('aborted','변경 이력이 추가되었습니다. 처음부터 다시 조회해 주세요.');offset=v.cursor.offset;}
+      if(v.cursor){M.exactObject(v.cursor,['offset','snapshot']);if(v.cursor.snapshot!==snapshot)fail('aborted','변경 내역 또는 확인 상태가 바뀌었습니다. 처음부터 다시 조회해 주세요.');if(!Number.isSafeInteger(v.cursor.offset)||v.cursor.offset<0||v.cursor.offset>selected.length)fail('invalid-argument','조회 위치를 확인해 주세요.');offset=v.cursor.offset;}
       const categories=Object.entries(CATEGORIES).map(([key,label])=>({key,label,count:events.filter(e=>e.categories.includes(key)).length}));
-      return {companyId:parent.id,from,to,category,total:events.length,filteredTotal:selected.length,categories,rows:selected.slice(offset,offset+PAGE_SIZE),offset,nextCursor:offset+PAGE_SIZE<selected.length?{offset:offset+PAGE_SIZE,snapshot}:null,snapshot};
+      return {companyId:parent.id,from,to,category,reviewStatus:status,total:events.length,unreviewedCount:important.filter(e=>!e.confirmation).length,reviewedCount:important.filter(e=>e.confirmation).length,filteredTotal:selected.length,categories,rows:selected.slice(offset,offset+PAGE_SIZE),offset,nextCursor:offset+PAGE_SIZE<selected.length?{offset:offset+PAGE_SIZE,snapshot}:null,snapshot};
+  }
+  const review=(request,v,parent)=>db.runTransaction(async tx=>{await context(request,tx);return read(tx,v,parent);});
+  review.monthly=async(tx,parent)=>{
+    const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul'}).format(now());
+    return read(tx,{from:today.slice(0,7)+'-01',to:today,reviewStatus:'UNREVIEWED'},parent);
+  };
+  review.alerts=(request,parent)=>db.runTransaction(async tx=>{await admin(request,tx);const result=await review.monthly(tx,parent);return {companyId:parent.id,month:result.from.slice(0,7),pendingCount:result.unreviewedCount,checkedAt:now().toISOString()};});
+  review.confirm=async(request,v,parent)=>{
+    if(!Array.isArray(v.items)||!v.items.length||v.items.length>PAGE_SIZE)fail('invalid-argument','확인할 변경을 1~30건 선택해 주세요.');
+    const ids=new Set();for(const item of v.items){M.exactObject(item,['id','fingerprint']);if(typeof item.id!=='string'||!item.id||item.id.length>256||item.id.includes('/')||!(/^[a-f0-9]{64}$/).test(item.fingerprint)||ids.has(item.id))fail('invalid-argument','확인할 변경 정보를 다시 조회해 주세요.');ids.add(item.id);}
+    return db.runTransaction(async tx=>{
+      const user=await admin(request,tx),events=[];let bytes=0,count=0;
+      for(const item of v.items){
+        const docs=await tx.get(parent.collection('erpChangeHistory').where('operationId','==',item.id).limit(MAX_RECORDS+1));
+        let rows=docs.docs;
+        if(!rows.length){const legacy=await tx.get(parent.collection('erpChangeHistory').doc(item.id));if(legacy.exists&&!legacy.data().operationId)rows=[legacy];}
+        const records=rows.map(doc=>{const row=doc.data();if(row.companyId!==parent.id)fail('permission-denied','변경 이력의 회사를 확인해 주세요.');bytes+=Buffer.byteLength(JSON.stringify(row));count++;return {...row,id:doc.id};});
+        if(count>MAX_RECORDS||bytes>MAX_BYTES)fail('resource-exhausted','한 번에 확인할 변경 수를 줄여 주세요.');
+        const projected=projectReview(records),event=projected[0];
+        if(projected.length!==1||event.id!==item.id||event.incomplete||event.fingerprint!==item.fingerprint||!event.important)fail('failed-precondition','변경 원본이 바뀌었거나 누락되었습니다. 다시 조회한 후 확인해 주세요.');
+        events.push(event);
+      }
+      const receipts=await tx.getAll(...events.map(e=>receiptRef(parent,e)));let confirmed=0;
+      for(let i=0;i<events.length;i++){
+        const event=events[i],existing=receipts[i].data();
+        if(existing){if(existing.companyId!==parent.id||existing.eventId!==event.id||existing.fingerprint!==event.fingerprint)fail('permission-denied','확인 기록을 검증하지 못했습니다.');continue;}
+        const at=now().toISOString();
+        tx.create(receiptRef(parent,event),{companyId:parent.id,eventId:event.id,fingerprint:event.fingerprint,historyIds:event.historyIds,acknowledgedBy:user.uid,acknowledgedName:user.name||user.uid,acknowledgedAt:at});
+        tx.create(parent.collection('erpAudit').doc(),{companyId:parent.id,actorId:user.uid,actorName:user.name||user.uid,action:'CHANGE_REVIEW_CONFIRMED',eventId:event.id,fingerprint:event.fingerprint,at});confirmed++;
+      }
+      return {companyId:parent.id,confirmed,alreadyConfirmed:events.length-confirmed};
     });
   };
+  return review;
 }
 module.exports={createChangeReview,projectReview,CATEGORIES};

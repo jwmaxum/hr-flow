@@ -19,14 +19,15 @@ function section(key,rows,hasMore=false){
 }
 // Read-only projection. Each category is isolated, but the caller's current
 // identity is checked again before any category is returned to the browser.
-function createWorkQueue({db,now,context,listPlans}){
+function createWorkQueue({db,now,context,listPlans,reviewMonthly}){
   return async(request,parent)=>{
-    M.exactObject(request.data,['action','companyId']);
+    M.exactObject(request.data,['action','companyId','includeReviews']);
+    if(request.data.includeReviews!==undefined&&typeof request.data.includeReviews!=='boolean')fail('invalid-argument','변경 점검 조회 옵션을 확인해 주세요.');
     const user=await context(request,db,false),access=accessOf(user);
     const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul'}).format(now());
     async function authorize(reader){
       const current=await context(request,reader,false);
-      if(current.uid!==user.uid||current.companyId!==parent.id||accessOf(current)!==access)fail('permission-denied','ERP 권한이 변경되었습니다. 시작 화면을 다시 열어 주세요.');
+      if(current.role!==user.role||current.uid!==user.uid||current.companyId!==parent.id||accessOf(current)!==access)fail('permission-denied','ERP 권한이 변경되었습니다. 시작 화면을 다시 열어 주세요.');
       return current;
     }
     const handlers={
@@ -79,6 +80,10 @@ function createWorkQueue({db,now,context,listPlans}){
         }),docs.size>MAX);
       },
     });
+    if(user.role==='ADMIN'&&request.data.includeReviews===true)handlers.reviews=async tx=>{
+      const result=await reviewMonthly(tx,parent);
+      return {key:'reviews',status:'READY',count:result.unreviewedCount,hasMore:false,rows:result.rows.slice(0,DISPLAY).map(r=>({id:r.id,title:r.documents.join(' / ')||'중요 변경 확인',detail:r.actorName+' · '+(r.reason||'재고·거래·문서 변경 내용을 확인해 주세요.'),date:dateOf(r.at),dateLabel:'처리일',priority:1,badge:'ADMIN 미확인',view:'dashboard',source:'unreviewed'}))};
+    };
     const sections=await Promise.all(Object.entries(handlers).map(async([key,read])=>{
       try{return await db.runTransaction(async tx=>{await authorize(tx);return read(tx);});}
       catch(error){

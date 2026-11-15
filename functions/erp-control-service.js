@@ -15,12 +15,12 @@ function reasonOf(value){const reason=M.text(value,'사유',500,true);if(reason.
 function createErpControlService({db,bucket,now=()=>new Date(),renderPdf=report=>require('./erp-finance-pdf').renderFinanceReportPdf(report),renderExcel=report=>require('./erp-finance-xlsx').renderFinanceWorkbook(report)}){
   async function context(request,reader=db,admin=true){const user=await authorizeErp({db,request,reader,now});if(admin&&!isErpAdmin(user))fail('permission-denied','ADMIN 또는 ERP관리자 권한이 필요합니다.');return user;}
   const dashboard=createDashboardHandler({db,now,context,load:loadFinance});
-  const review=require('./erp-change-review').createChangeReview({db,context});
+  const review=require('./erp-change-review').createChangeReview({db,context,now});
   const stateOf=async(tx,parent)=>{const d=(await tx.get(parent.collection('erpGovernance').doc('control'))).data()||{companyId:parent.id,revision:0,closedThrough:'',lastClosedMonth:''};master.verifyTenant(d,parent.id);return d;};
   function audit(tx,parent,user,action,detail){const at=now().toISOString();tx.create(parent.collection('erpAudit').doc(),{companyId:parent.id,actorId:user.uid,actorName:user.name||user.uid,action,at,...detail});tx.create(parent.collection('erpChangeHistory').doc(),{companyId:parent.id,operationId:digest([action,detail,at]),domain:'control',action,actorId:user.uid,actorName:user.name||user.uid,requestedBy:user.uid,approvedBy:isErpAdmin(user)?user.uid:null,actorErpAccess:accessOf(user),reason:detail.reason||'',at,part:1,parts:1,changes:[{path:detail.targetUid?'담당자 권한/'+detail.targetUid:'월마감·승인/'+(detail.month||detail.approvalId),before:typeof detail.before==='string'?{access:detail.before}:detail.before||null,after:typeof detail.after==='string'?{access:detail.after}:typeof detail.after==='object'?detail.after:detail}]});}
   const checklist=createClosingChecklist({db,bucket,now,context,stateOf,audit});
   const plans=createClosePlans({db,now,context,stateOf,audit,checklist});
-  const workQueue=require('./erp-work-queue').createWorkQueue({db,now,context,listPlans:plans.list});
+  const workQueue=require('./erp-work-queue').createWorkQueue({db,now,context,listPlans:plans.list,reviewMonthly:review.monthly});
   async function put(parent,id,extension,bytes,mime){
     if(!Buffer.isBuffer(bytes)||!bytes.length||bytes.length>MAX_BYTES)fail('resource-exhausted','보관 보고서 파일 크기 제한을 초과했습니다.');
     const hash=sha(bytes),path=`companies/${parent.id}/erp-monthly-reports/${id}/${hash}.${extension}`,file=bucket.file(path);
@@ -31,13 +31,15 @@ function createErpControlService({db,bucket,now=()=>new Date(),renderPdf=report=
     const [verified]=await bucket.file(path,{generation:descriptor.generation}).download();if(sha(verified)!==hash)fail('failed-precondition','보고서 보관본 검증에 실패했습니다.');return descriptor;
   }
   return async request=>{
-    const v=M.exactObject(request.data,['action','companyId','uid','access','expectedAccess','reason','month','revision','snapshot','id','decision','format','fileIndex','cursor','items','noEvidenceReason','name','mimeType','base64','archiveId','checklistRevision','dueDate','ownerUid','notes','key','note','from','to','category']);
-    const allowed={review:['from','to','category','cursor'],directory:[],grant:['uid','access','expectedAccess','reason'],status:[],workQueue:[],history:['cursor'],approvals:['cursor','id'],approvalAlerts:[],decide:['id','decision','reason'],closePreview:['month'],close:['month','revision','snapshot','reason','checklistRevision'],reopen:['month','revision','reason'],archives:['cursor'],download:['id','fileIndex'],
+    const v=M.exactObject(request.data,['action','companyId','uid','access','expectedAccess','reason','month','revision','snapshot','id','decision','format','fileIndex','cursor','items','noEvidenceReason','name','mimeType','base64','archiveId','checklistRevision','dueDate','ownerUid','notes','key','note','from','to','category','reviewStatus','includeReviews']);
+    const allowed={review:['from','to','category','cursor','reviewStatus'],reviewConfirm:['items'],reviewAlerts:[],directory:[],grant:['uid','access','expectedAccess','reason'],status:[],workQueue:['includeReviews'],history:['cursor'],approvals:['cursor','id'],approvalAlerts:[],decide:['id','decision','reason'],closePreview:['month'],close:['month','revision','snapshot','reason','checklistRevision'],reopen:['month','revision','reason'],archives:['cursor'],download:['id','fileIndex'],
       closePlans:[],closeAlerts:[],closePlanGet:['month'],closePlanSave:['month','revision','dueDate','ownerUid','items','notes','reason'],closeTaskSubmit:['month','revision','key','note'],closeTaskReset:['month','revision','key','reason'],checklistGet:['month'],checklistSave:['month','revision','items','noEvidenceReason'],evidenceUpload:['month','revision','id','name','mimeType','base64'],evidenceRemove:['month','revision','id','reason'],evidenceDownload:['month','id','archiveId']};
     if(!Object.hasOwn(allowed,v.action))fail('invalid-argument','지원하지 않는 ERP 관리 요청입니다.');M.exactObject(v,['action','companyId',...allowed[v.action]]);
     const user=await context(request,db,!['workQueue','status','approvals','closePlans','closeAlerts','closePlanGet','closeTaskSubmit'].includes(v.action)),parent=db.collection('companies').doc(user.companyId);
     if(v.action==='workQueue')return workQueue(request,parent);
     if(v.action==='review')return review(request,v,parent);
+    if(v.action==='reviewConfirm')return review.confirm(request,v,parent);
+    if(v.action==='reviewAlerts')return review.alerts(request,parent);
     if(['closePlans','closeAlerts','closePlanGet','closePlanSave','closeTaskSubmit','closeTaskReset'].includes(v.action))return plans.handle(request,v,parent);
     if(['checklistGet','checklistSave','evidenceUpload','evidenceRemove','evidenceDownload'].includes(v.action))return checklist.handle(request,v,parent);
     if(v.action==='approvalAlerts')return db.runTransaction(async tx=>{
