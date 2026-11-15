@@ -1,4 +1,4 @@
-import type {ErpAccess} from './erpAccess';
+import {erpCanAdmin,type ErpAccess} from './erpAccess.ts';
 export type ErpMenu='dashboard'|'stock'|'inbound'|'sales'|'receivables'|'admin';
 export type ErpView='today'|'dashboard'|'items'|'report'|'transfer'|'custody'|'inbound'|'outbound'|'import'|'opening'|'shipments'|'documents'|'finance'|'warehouses'|'partners'|'access'|'approvals'|'close'|'history'|'closing';
 export const erpMenus:{id:ErpMenu;label:string;description:string}[]=[
@@ -10,7 +10,7 @@ export const erpMenus:{id:ErpMenu;label:string;description:string}[]=[
   {id:'admin',label:'관리자 관리',description:'창고·거래처 설정과 권한·승인·월마감 업무를 관리합니다.'},
 ];
 type Task={view:ErpView;label:string;allow:(access:ErpAccess)=>boolean};
-const all=(a:ErpAccess)=>a!=='NONE',admin=(a:ErpAccess)=>a==='ADMIN';
+const all=(a:ErpAccess)=>a!=='NONE',admin=erpCanAdmin;
 export const erpInbound=(a:ErpAccess)=>['ADMIN','MANAGER','BOTH','INBOUND'].includes(a);
 export const erpOutbound=(a:ErpAccess)=>['ADMIN','MANAGER','BOTH','OUTBOUND'].includes(a);
 const both=(a:ErpAccess)=>['ADMIN','MANAGER','BOTH'].includes(a);

@@ -19,7 +19,7 @@ export function ErpClosingChecklist({companyId,month,disabled,refresh,onChanged,
   return <section className="erp-close-checklist" aria-label="월마감 체크리스트 및 증빙" aria-busy={busy}>
     <div className="erp-list-head"><h3 className="wf-section-title">월마감 체크리스트·증빙</h3><button className="wf-btn" disabled={busy||disabled} onClick={()=>{if(!dirty||window.confirm('저장하지 않은 확인 내용을 버리고 다시 조회할까요?'))setAttempt(n=>n+1);}}>체크리스트 다시 조회</button></div>
     <p className="wf-muted">재고·거래·미수금 확인 사항을 저장해 주세요. 증빙은 최대 5개, 파일당 5MB·합계 20MB입니다. 미첨부 시에는 사유를 기록합니다.</p>
-    {locked&&<p className="erp-notice">마감된 월입니다. 기존 기록은 보관함에서 확인하고, 변경하려면 ADMIN이 재개방해야 합니다.</p>}
+    {locked&&<p className="erp-notice">마감된 월입니다. 기존 기록은 보관함에서 확인하고, 변경하려면 ADMIN·ERP관리자가 재개방해야 합니다.</p>}
     {error&&<p role="alert" className="erp-error">{error}</p>}{notice&&<p role="status" className="erp-success">{notice}</p>}
     {draft&&<>
       <fieldset disabled={blocked} className="erp-checklist-items">{draft.items.map(item=><div key={item.key} className="erp-checklist-item">

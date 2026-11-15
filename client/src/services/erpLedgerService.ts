@@ -1,4 +1,4 @@
-import {erpAccessOf,erpCanOperate} from '../utils/erpAccess';
+import {erpAccessOf,erpCanOperate,erpCanAdmin} from '../utils/erpAccess';
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../firebase';
 import { useAuthStore } from '../store/authStore';
@@ -33,7 +33,7 @@ export function erpScope(companyId: string, write: boolean | 'operator' = false)
   const { userData, companyData, sessionReady } = useAuthStore.getState();
   const access=erpAccessOf(userData);
   if (!auth.currentUser || auth.currentUser.uid !== userData?.uid || !sessionReady || userData.companyId !== companyId ||
-    !(write === true ? ['ADMIN'] : ['ADMIN','SUB_ADMIN','MEMBER']).includes(userData.role) || (write==='operator'?!erpCanOperate(access):access==='NONE') || userData.mustChangePassword ||
+    !['ADMIN','SUB_ADMIN','MEMBER'].includes(userData.role) || write === true && !erpCanAdmin(access) || (write==='operator'?!erpCanOperate(access):access==='NONE') || userData.mustChangePassword ||
     userData.status && userData.status !== 'ACTIVE' || companyData?.id !== companyId || companyData.status !== 'ACTIVE' || companyData.subscriptionStatus === 'EXPIRED') throw new Error('현재 회사의 권한으로 다시 로그인해 주세요.');
   return `${userData.uid}:${companyId}:${userData.role}:${userData.erpAccess || 'NONE'}`;
 }

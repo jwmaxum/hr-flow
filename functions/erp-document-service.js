@@ -1,6 +1,7 @@
 const { createHash } = require('node:crypto');
 const { FieldPath } = require('firebase-admin/firestore');
-const { authorizeContext, fail } = require('./security-context');
+const { fail } = require('./security-context');
+const { authorizeErpAdmin: authorizeContext } = require('./erp-governance');
 const { erpMaster: master } = require('./erp-service');
 const { exactObject, text, date } = require('./erp-ledger-model');
 const { decimal } = require('./erp-import-schema');

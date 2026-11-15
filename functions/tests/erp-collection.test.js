@@ -74,7 +74,7 @@ test('unified collections preserve receipts, allocations, tenant scope and close
   await t.test('new endpoints preserve ADMIN-only scope, job identity and monthly closing',async()=>{
     await reset();await post('출고',[line()]);const input=collectionInput(),id=`guard-${++seq}`;
     for(const uid of ['member','manager','foreign','root',''])await reject(finance(req({action:'collectionPreview',id,input},uid)),uid?'permission-denied':'unauthenticated');
-    await db.doc('UserProfile/manager').update({erpAccess:'MANAGER'});await reject(finance(req({action:'collectionPreview',id,input},'manager')),'permission-denied');
+    await db.doc('UserProfile/manager').update({erpAccess:'MANAGER'});assert.ok((await finance(req({action:'collectionPreview',id:id+'-manager',input},'manager'))).job);
     const j=(await finance(req({action:'collectionPreview',id,input}))).job;
     await reject(finance(req({action:'collectionPreview',id,input:{...input,amount:'200'}})),'already-exists');
     await reject(finance(req({action:'collectionCommit',id,fingerprint:'wrong'})));

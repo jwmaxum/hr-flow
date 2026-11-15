@@ -6,4 +6,5 @@ export function erpAccessOf(user: {role?:string;erpAccess?:string;status?:string
   return ['SUB_ADMIN','MEMBER'].includes(user.role||'')&&['VIEW','INBOUND','OUTBOUND','BOTH'].includes(user.erpAccess||'')?user.erpAccess as ErpAccess:'NONE';
 }
 export const erpAccessNames:Record<ErpAccess,string>={NONE:'접근 없음',VIEW:'조회 전용',INBOUND:'입고 담당',OUTBOUND:'출고 담당',BOTH:'입출고 전체',MANAGER:'ERP관리자',ADMIN:'ADMIN 전체 관리'};
+export const erpCanAdmin=(access:ErpAccess)=>['ADMIN','MANAGER'].includes(access);
 export const erpCanOperate=(access:ErpAccess)=>['ADMIN','MANAGER','BOTH','INBOUND','OUTBOUND'].includes(access);

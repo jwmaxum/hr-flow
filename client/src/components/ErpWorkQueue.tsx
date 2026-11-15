@@ -1,3 +1,4 @@
+import {erpCanAdmin} from '../utils/erpAccess';
 import {useEffect,useState} from 'react';
 import {ArrowRight,RefreshCw} from 'lucide-react';
 import {erpControl} from '../services/erpControlService';
@@ -37,11 +38,11 @@ export function ErpWorkQueue({companyId,access,onOpen}:{companyId:string;access:
     <section className="wf-panel" aria-label="오늘 할 일" aria-busy={busy}>
       <div className="erp-list-head"><h2 className="wf-section-title">오늘 할 일</h2><button type="button" className="wf-btn" disabled={busy} onClick={()=>setReload(n=>n+1)}><RefreshCw size={16} aria-hidden="true"/>할 일 새로고침</button></div>
       <p className="wf-muted">한국시간 오늘을 기준으로 미완료 업무와 향후 예정 업무를 함께 표시합니다. 목록에서 완료 처리하지 않고 각 업무 화면에서 확인·처리합니다.</p>
-      {access!=='ADMIN'&&<p className="erp-notice">본인 승인 요청과 배정된 마감 업무를 표시합니다. 미수금·차용 반환·원가 확정과 최종 승인은 회사 ADMIN 업무입니다.</p>}
+      {!erpCanAdmin(access)&&<p className="erp-notice">본인 승인 요청과 배정된 마감 업무를 표시합니다. 미수금·차용 반환·원가 확정과 최종 승인은 ADMIN·ERP관리자 업무입니다.</p>}
       {busy&&<p role="status">담당 업무를 확인하고 있습니다.</p>}{error&&<p role="alert" className="erp-error">{error}</p>}
       {value&&<><p className="wf-muted">기준일 {value.today} · 조회 {new Date(value.checkedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} · 창을 다시 볼 때 1분 이상 지났으면 갱신합니다.</p>
         <div className="erp-work-grid">{value.sections.map(s=><section className="erp-work-card" key={s.key} aria-label={names[s.key]}>
-          <div className="erp-list-head"><h3>{s.key==='approvals'&&access!=='ADMIN'?'내 승인 대기':names[s.key]}</h3><strong>{s.count===null?'확인 필요':`${number(s.count)}${s.hasMore?'+':''}건`}</strong></div>
+          <div className="erp-list-head"><h3>{s.key==='approvals'&&!erpCanAdmin(access)?'내 승인 대기':names[s.key]}</h3><strong>{s.count===null?'확인 필요':`${number(s.count)}${s.hasMore?'+':''}건`}</strong></div>
           {s.status==='ERROR'?<p role="alert" className="erp-error">{s.message}</p>:s.count===0?<p className="wf-muted">현재 확인할 업무가 없습니다.</p>:<ul className="erp-work-list">{s.rows.map(row=><li key={row.id}>
             <span className={`wf-status ${row.priority===0?'wf-status-warning':''}`}>{row.badge}</span><h4>{row.title}</h4><p>{row.detail}</p>
             <p className="wf-muted">{row.dateLabel}{row.date?` ${row.date}`:''}</p>

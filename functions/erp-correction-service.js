@@ -1,5 +1,5 @@
 const { fail } = require('./security-context');
-const { authorizeErp: authorizeContext, governedService, checkCorrection } = require('./erp-governance');
+const { authorizeErp: authorizeContext, governedService, checkCorrection, isErpAdmin } = require('./erp-governance');
 const { FieldPath } = require('firebase-admin/firestore');
 const { erpMaster: master } = require('./erp-service');
 const M = require('./erp-ledger-model');
@@ -42,7 +42,7 @@ function inputOf(value) {
   return result;
 }
 function createErpCorrectionService({ db, now = () => new Date() }) {
-  function viewCorrection(job,user){if(user.role==='ADMIN')return job;const result={...job};delete result.settlement;return result;}
+  function viewCorrection(job,user){if(isErpAdmin(user))return job;const result={...job};delete result.settlement;return result;}
   async function context(request, reader = db) {
     const user = await authorizeContext({ db, request, reader, now, roles: ['ADMIN'] });
     if (user.companyId !== request.data.companyId) fail('permission-denied', '로그인한 회사에서 처리해 주세요.');

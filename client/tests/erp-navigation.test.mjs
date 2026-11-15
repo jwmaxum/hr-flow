@@ -16,7 +16,10 @@ test('five daily menus retain all existing work in permission-aware groups',()=>
 test('legacy notification links, source documents and forbidden deep links retain their scope',()=>{
   assert.equal(erpRoute('?panel=approvals','BOTH').view,'approvals');assert.equal(erpRoute('?panel=closing','MANAGER').view,'closing');
   const path=erpPath('documents','sales','출고 & 001');assert.equal(erpRoute(path.split('?')[1],'ADMIN').source,'출고 & 001');
-  for(const view of ['finance','dashboard','shipments','documents','import','opening','access','close','history'])assert.equal(erpRoute(erpPath(view).split('?')[1],'MANAGER').denied,true,view);
+  for(const view of ['finance','dashboard','shipments','documents','import','opening','access','close','history']){
+    assert.equal(erpRoute(erpPath(view).split('?')[1],'MANAGER').denied,false,view);
+    for(const role of ['BOTH','INBOUND','OUTBOUND','VIEW','NONE'])assert.equal(erpRoute(erpPath(view).split('?')[1],role).denied,true,role+view);
+  }
   assert.equal(erpRoute(erpPath('documents','sales','','draft-id').split('?')[1],'ADMIN').draft,'draft-id');
   assert.equal(erpRoute('?view=unknown','ADMIN').denied,true);assert.equal(erpRoute('?menu=stock&view=finance','ADMIN').denied,true);
   assert.deepEqual(erpRoute('','VIEW'),{menu:'dashboard',view:'today',denied:false,source:'',draft:''});

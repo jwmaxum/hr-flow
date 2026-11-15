@@ -1,5 +1,5 @@
 const {fail}=require('./security-context');
-const {accessOf}=require('./erp-governance');
+const {accessOf,isErpAdmin}=require('./erp-governance');
 const {erpMaster:master}=require('./erp-service');
 const M=require('./erp-ledger-model');
 const {loadFinance}=require('./erp-finance-model');
@@ -32,20 +32,20 @@ function createWorkQueue({db,now,context,listPlans}){
     const handlers={
       approvals:async tx=>{
         let query=parent.collection('erpApprovals').where('status','==','PENDING');
-        if(access!=='ADMIN')query=query.where('requestedBy','==',user.uid);
+        if(!isErpAdmin(user))query=query.where('requestedBy','==',user.uid);
         const docs=await tx.get(query.orderBy('createdAt','asc').limit(MAX+1));
         return section('approvals',docs.docs.slice(0,MAX).map(d=>{
           const r=d.data();master.verifyTenant(r,parent.id);
-          if(access!=='ADMIN'&&r.requestedBy!==user.uid)fail('permission-denied','본인 승인 요청만 조회할 수 있습니다.');
-          return {id:d.id,title:access==='ADMIN'?`${r.requesterName||'담당자'} · 승인 요청`:'내 승인 요청',detail:access==='ADMIN'?'변경 내용을 확인하고 승인·반려해 주세요.':'ADMIN 검토 대기 중입니다.',date:dateOf(r.createdAt),dateLabel:'요청일',priority:1,badge:access==='ADMIN'?'승인 대기':'검토 대기',view:'approvals',source:d.id};
+          if(!isErpAdmin(user)&&r.requestedBy!==user.uid)fail('permission-denied','본인 승인 요청만 조회할 수 있습니다.');
+          return {id:d.id,title:isErpAdmin(user)?`${r.requesterName||'담당자'} · 승인 요청`:'내 승인 요청',detail:isErpAdmin(user)?'변경 내용을 확인하고 승인·반려해 주세요.':'ADMIN 검토 대기 중입니다.',date:dateOf(r.createdAt),dateLabel:'요청일',priority:1,badge:isErpAdmin(user)?'승인 대기':'검토 대기',view:'approvals',source:d.id};
         }),docs.size>MAX);
       },
       closing:async tx=>{
         const result=await listPlans(tx,parent,user);
-        return section('closing',result.plans.filter(p=>p.actionCount>0).map(p=>({id:p.month,title:`${p.month} 월마감`,detail:access==='ADMIN'?`미확인 ${p.pendingCount}항목 · 완료 보고 ${p.awaitingAdminCount}건`:`내 미보고 ${p.myPendingCount}항목`,date:p.dueDate,dateLabel:'마감 예정일',priority:p.dueDate<=today?0:2,badge:p.dueDate<today?'기한 경과':p.dueDate===today?'오늘 마감':'예정',view:'closing',source:p.month})),result.hasMore);
+        return section('closing',result.plans.filter(p=>p.actionCount>0).map(p=>({id:p.month,title:`${p.month} 월마감`,detail:isErpAdmin(user)?`미확인 ${p.pendingCount}항목 · 완료 보고 ${p.awaitingAdminCount}건`:`내 미보고 ${p.myPendingCount}항목`,date:p.dueDate,dateLabel:'마감 예정일',priority:p.dueDate<=today?0:2,badge:p.dueDate<today?'기한 경과':p.dueDate===today?'오늘 마감':'예정',view:'closing',source:p.month})),result.hasMore);
       },
     };
-    if(access==='ADMIN')Object.assign(handlers,{
+    if(isErpAdmin(user))Object.assign(handlers,{
       recovery:async tx=>{
         const report=settlementReport(await loadFinance(tx,parent),today);
         const groups=new Map(report.summaries.map(r=>[`${r.partnerId}:${r.currency}`,r]));

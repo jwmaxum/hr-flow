@@ -1,7 +1,7 @@
 import {ErpWorkQueue} from '../components/ErpWorkQueue';
 import {ErpInventoryPanel} from '../components/ErpInventoryPanel';
 import {ErpNavigation} from '../components/ErpNavigation';
-import {erpAccessOf,erpCanOperate,erpAccessNames} from '../utils/erpAccess';
+import {erpCanAdmin,erpAccessOf,erpCanOperate,erpAccessNames} from '../utils/erpAccess';
 import type {ErpAccess} from '../utils/erpAccess';
 import {erpRoute,erpPath,erpMenuFor,erpTasks,erpMenus,erpInbound,erpOutbound} from '../utils/erpNavigation';
 import type {ErpView,ErpMenu} from '../utils/erpNavigation';
@@ -121,7 +121,7 @@ function MasterEditor({ companyId, kind, record, onClose, onSaved }: {
         <label className="wf-field erp-form-wide"><span>비고</span><input className="wf-input" maxLength={500} value={notes} onChange={e => setNotes(e.target.value)} /></label>
         <label className="erp-active-field erp-form-wide"><input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} /> 사용 중</label>
       </fieldset>
-      {record && <p className="erp-form-note">사용을 중지해도 기존 재고와 거래 이력은 보존됩니다. 담당자의 변경은 ADMIN 승인 후 반영합니다. ERP관리자가 품목 매입·판매 단가만 변경하면 승인 없이 반영하며, 그 외 기준정보 변경은 ADMIN 승인을 요청합니다.</p>}
+      {record && <p className="erp-form-note">사용을 중지해도 기존 재고와 거래 이력은 보존됩니다. 일반 담당자의 변경은 ADMIN·ERP관리자 승인 후 반영합니다. ERP관리자는 기준정보 수정·사용 중지도 직접 처리하며 변경 이력을 남깁니다.</p>}
       {kind === 'partners' && <p className="erp-form-note">등록번호가 없는 거래처는 이름과 연락처를 확인해 주세요. 같은 이름을 자동 병합하지 않습니다.</p>}
       {error && <p role="alert" className="erp-error">{error}</p>}
       <div className="erp-actions"><button className="wf-btn" type="button" onClick={onClose} disabled={busy}>취소</button>
@@ -133,10 +133,10 @@ function MasterEditor({ companyId, kind, record, onClose, onSaved }: {
 export function ErpPage() {
   const {userData,companyData}=useAuthStore(),location=useLocation(),access=erpAccessOf(userData);
   if(!userData||userData.role==='SUPER_ADMIN'||!userData.companyId||userData.companyId==='PLATFORM')return <Navigate to="/" replace/>;
-  if(access==='NONE')return <main className="wf-page"><h1>ERP 접근 권한이 없습니다.</h1><p>회사 ADMIN에게 ERP 접근 권한 지정을 요청해 주세요.</p></main>;
+  if(access==='NONE')return <main className="wf-page"><h1>ERP 접근 권한이 없습니다.</h1><p>회사 ADMIN·ERP관리자에게 ERP 접근 권한 지정을 요청해 주세요.</p></main>;
   const route=erpRoute(location.search,access),item=location.state?.erpItem;
   return <ErpWorkspace key={`${userData.uid}:${userData.companyId}:${userData.role}:${access}:${location.key}`} companyId={userData.companyId}
-    companyName={companyData?.id===userData.companyId?companyData.nameKo:'소속 회사'} canManage={access==='ADMIN'} access={access} route={route}
+    companyName={companyData?.id===userData.companyId?companyData.nameKo:'소속 회사'} canManage={erpCanAdmin(access)} access={access} route={route}
     initialItem={item&&typeof item.id==='string'&&typeof item.name==='string'&&typeof item.code==='string'?item:null}/>;
 }
 
@@ -207,20 +207,20 @@ function ErpWorkspace({companyId,companyName,canManage,access,route,initialItem}
   }
   function saved(record: ErpRecord, queued=false) {
     reset(); preferred.current = record.id; setSearchBy('name'); setSearch(record.name); setReload(value => value + 1);
-    setNotice(queued?'ADMIN 승인 요청을 등록했습니다. 승인 전에는 기존 정보가 유지됩니다.':`${record.name} ${record.active ? '저장' : '사용 중지'} 완료`);
+    setNotice(queued?'수정 승인 요청을 등록했습니다. 승인 전에는 기존 정보가 유지됩니다.':`${record.name} ${record.active ? '저장' : '사용 중지'} 완료`);
     requestAnimationFrame(() => addButton.current?.focus());
   }
   return <main className="wf-page erp-page">
     <header className="erp-page-head"><div><p className="erp-eyebrow">{companyName}</p><div className="erp-title-row"><h1 className="wf-title">재고관리 ERP</h1>{canManage&&<button className="wf-btn erp-dashboard-toggle" aria-label="ERP 월별 대시보드" title="월별 재고·매출·미수금 대시보드" onClick={()=>openView('dashboard','dashboard')}><ChartColumn size={21} aria-hidden="true"/></button>}</div>
       <p className="wf-muted">{erpMenus.find(m=>m.id===route.menu)?.description}</p></div><span className="wf-status"><Boxes size={15} aria-hidden="true"/>{erpAccessNames[access]}</span></header>
     <ErpNavigation menu={route.menu} view={view} access={access} onOpen={openView}/>
-    {manager&&<p className="erp-notice">ERP관리자: 입출고 정정·재고 수량/금액 조정·품목 단가만 변경하는 수정은 승인 없이 반영하고 이력을 남깁니다. 다른 기준정보 변경과 기존 승인 대기 요청은 ADMIN 승인을 따릅니다.</p>}
+    {manager&&<p className="erp-notice">ERP관리자: 입출고·거래 수정과 취소, 수금, 거래명세표 정정·발행, 승인·월마감까지 직접 처리합니다. 변경 이력과 마감 잠금은 유지됩니다.</p>}
     {notice && <p role="status" className="erp-success">{notice}</p>}
-    {route.denied?<section className="wf-panel" role="alert"><h2>이 업무에 접근할 권한이 없습니다.</h2><p>현재 ERP 담당 업무 범위에서 메뉴를 선택해 주세요. 권한 변경은 회사 ADMIN에게 요청하세요.</p></section>:
+    {route.denied?<section className="wf-panel" role="alert"><h2>이 업무에 접근할 권한이 없습니다.</h2><p>현재 ERP 담당 업무 범위에서 메뉴를 선택해 주세요. 권한 변경은 회사 ADMIN·ERP관리자에게 요청하세요.</p></section>:
       view==='today'?<ErpWorkQueue companyId={companyId} access={access} onOpen={(target,source,draft)=>openView(target,undefined,source,null,draft)}/>:
       view==='closing'?<Suspense fallback={<p role="status">마감 일정을 불러오고 있습니다.</p>}><ErpClosingPlanPanel companyId={companyId} initialMonth={route.source}/></Suspense>:
       view==='access'||view==='approvals'||view==='close'||view==='history'?<Suspense fallback={<p role="status">관리 화면을 불러오고 있습니다.</p>}><ErpControlPanel companyId={companyId} initialTab={view} initialApprovalId={view==='approvals'?route.source:''} embedded/></Suspense>:
-      view==='dashboard'?<Suspense fallback={<p role="status">대시보드를 불러오고 있습니다.</p>}><ErpDashboardPanel companyId={companyId} onFinance={()=>openView('finance','receivables')} onLedger={()=>openView('report','stock')}/></Suspense>:
+      view==='dashboard'?<Suspense fallback={<p role="status">대시보드를 불러오고 있습니다.</p>}><ErpDashboardPanel companyId={companyId} onFinance={()=>openView('finance','receivables')} onLedger={()=>openView('report','stock')} onHistory={()=>openView('history','admin')}/></Suspense>:
       view==='finance'?<Suspense fallback={<p role="status">미수금을 불러오고 있습니다.</p>}><ErpFinancePanel companyId={companyId} onDocument={source=>openView('shipments','sales',source)}/></Suspense>:
       view==='shipments'?<Suspense fallback={<p role="status">출고 문서를 불러오고 있습니다.</p>}><ErpShipmentsPanel companyId={companyId} initialDocumentNo={route.source} onFinance={()=>openView('finance','receivables')}/></Suspense>:
       view==='custody'?<Suspense fallback={<p role="status">보관·차용을 불러오고 있습니다.</p>}><ErpCustodyPanel companyId={companyId} initialBorrowingId={route.source}/></Suspense>:

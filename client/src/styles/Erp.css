@@ -256,3 +256,15 @@
 .erp-work-list p { font-size: 13px; margin: 6px 0; }
 .erp-work-list .wf-btn { margin-top: 6px; min-height: 40px; }
 @media(max-width:760px) { .erp-work-home > .wf-panel { padding: 16px; } .erp-work-grid { grid-template-columns: minmax(0,1fr); } .erp-work-card { padding: 14px; } }
+.erp-review-filters { display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:12px;align-items:end;margin:18px 0; }
+.erp-review-counts { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0; }
+.erp-review-counts article { border:1px solid var(--wf-border,#e2e8f0);border-radius:10px;padding:16px;display:flex;justify-content:space-between;gap:12px;align-items:center; }
+.erp-review-counts strong { font-size:1.25rem;white-space:nowrap; }
+.erp-review-table { min-width:680px; }
+.erp-review-table td { vertical-align:top;overflow-wrap:anywhere; }
+.erp-review-table td:first-child { width:24%; }
+.erp-review-table td:nth-child(2) { width:26%; }
+.erp-review-table summary { cursor:pointer;padding:8px 0; }
+.erp-review-table details h4 { margin:14px 0 8px; }
+.erp-review-table details table { min-width:280px; }
+@media(max-width:700px) { .erp-review-filters { grid-template-columns:1fr 1fr; } .erp-review-counts { grid-template-columns:1fr 1fr; } .erp-review-counts article { align-items:flex-start;flex-direction:column;gap:6px; } }

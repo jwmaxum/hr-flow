@@ -1,3 +1,4 @@
+import {erpAccessOf,erpCanAdmin} from '../utils/erpAccess';
 import { ErpBundleEstimate } from './ErpBundleEstimate';
 import {ErpItemPicker} from './ErpItemPicker';
 import {useAuthStore} from '../store/authStore';
@@ -59,7 +60,7 @@ function PriceHistory({ companyId, itemId, price, currency, priceBasis }: { comp
 export function ErpMovementPanel({ companyId, direction, initialItem, onInventory, onStatement, onShipment }: {
   companyId: string; direction: '입고' | '출고'; initialItem?: ErpRecord | null; onInventory: () => void; onStatement: (documentNo: string) => void; onShipment?: (documentNo:string)=>void;
 }) {
-  const isAdmin=useAuthStore(s=>s.userData?.role==='ADMIN');
+  const isAdmin=useAuthStore(s=>erpCanAdmin(erpAccessOf(s.userData)));
   const [date, setDate] = useState(today), [warehouseId, setWarehouseId] = useState(''), [partnerId, setPartnerId] = useState('');
   const [newPartner, setNewPartner] = useState({ code: '', name: '', country: 'KR', registrationNumber: '' });
   const [currency, setCurrency] = useState('KRW'), [exchangeRate, setExchangeRate] = useState('1'), [priceBasis, setPriceBasis] = useState('세금별도');

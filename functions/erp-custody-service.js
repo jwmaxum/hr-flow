@@ -1,4 +1,5 @@
-const {authorizeContext,fail}=require('./security-context');
+const {fail}=require('./security-context');
+const {authorizeErpAdmin:authorizeContext}=require('./erp-governance');
 const {erpMaster:master}=require('./erp-service');
 const M=require('./erp-ledger-model');
 const {custodyContext}=require('./erp-custody-model');

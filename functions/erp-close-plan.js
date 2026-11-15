@@ -1,5 +1,5 @@
 const {fail}=require('./security-context');
-const {accessOf}=require('./erp-governance');
+const {accessOf,isErpAdmin}=require('./erp-governance');
 const M=require('./erp-ledger-model');
 const {CHECKS}=require('./erp-close-checklist');
 const {erpMaster:master}=require('./erp-service');
@@ -8,7 +8,7 @@ const reasonOf=value=>{const s=M.text(value,'변경 사유',500,true);if(s.lengt
 function createClosePlans({db,now,context,stateOf,audit,checklist}){
   const today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul'}).format(now());
   async function read(tx,parent,month){const d=(await tx.get(parent.collection('erpClosePlans').doc(month))).data();if(d&&(d.companyId!==parent.id||d.month!==month))fail('failed-precondition','마감 일정의 소속 회사를 확인해 주세요.');return d||null;}
-  const allowed=(user,plan)=>user.role==='ADMIN'||plan?.assigneeUids.includes(user.uid);
+  const allowed=(user,plan)=>isErpAdmin(user)||plan?.assigneeUids.includes(user.uid);
   function writable(state,month,plan,revision){
     if(state.closedThrough&&month<=state.closedThrough.slice(0,7))fail('failed-precondition','마감된 월의 일정은 재개방 후 변경해 주세요.');
     if(!Number.isSafeInteger(revision)||revision!==(plan?.revision||0))fail('aborted','마감 일정이 변경되었습니다. 다시 조회해 주세요.');
@@ -16,7 +16,7 @@ function createClosePlans({db,now,context,stateOf,audit,checklist}){
   function view(plan,draft,user){
     const items=plan.items.map(item=>({...item,label:CHECKS.find(([key])=>key===item.key)[1],confirmed:!!draft.items.find(r=>r.key===item.key)?.checked}));
     const incomplete=items.filter(r=>!r.confirmed),mine=items.filter(r=>r.assigneeUid===user.uid&&!r.confirmed&&!r.submission);
-    const actionCount=plan.status==='CLOSED'?0:user.role==='ADMIN'?Math.max(1,incomplete.length):mine.length;
+    const actionCount=plan.status==='CLOSED'?0:isErpAdmin(user)?Math.max(1,incomplete.length):mine.length;
     return {...plan,items,pendingCount:incomplete.length,myPendingCount:mine.length,actionCount,
       awaitingAdminCount:incomplete.filter(r=>r.submission).length,overdue:actionCount>0&&plan.dueDate<today(),today:today()};
   }
@@ -31,7 +31,7 @@ function createClosePlans({db,now,context,stateOf,audit,checklist}){
   }
   async function list(tx,parent,user){
       let query=parent.collection('erpClosePlans').where('status','==','OPEN').orderBy('month','asc');
-      if(user.role!=='ADMIN')query=query.where('assigneeUids','array-contains',user.uid);
+      if(!isErpAdmin(user))query=query.where('assigneeUids','array-contains',user.uid);
       const docs=await tx.get(query.limit(101)),plans=[];
       for(const doc of docs.docs.slice(0,100)){const p=doc.data();if(p.companyId!==parent.id||!allowed(user,p))fail('permission-denied','마감 일정 접근 권한을 확인해 주세요.');plans.push(view(p,await checklist.read(tx,parent,p.month),user));}
     return {plans,hasMore:docs.size>100,today:today()};
