@@ -660,7 +660,7 @@ test('ERP five work menus and SUB_ADMIN manager corrections preserve ADMIN bound
   await expect(mp.getByRole('region',{name:'품목 목록',exact:true})).toBeVisible();
   await mp.getByRole('heading',{name:'재고관리 ERP',exact:true}).scrollIntoViewIfNeeded();
   await mp.screenshot({path:testInfo.outputPath('erp-five-menus-manager.png'),fullPage:true});expect(await mp.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
-  await page.getByRole('navigation',{name:'ERP 주 메뉴',exact:true}).getByRole('button',{name:'대시보드',exact:true}).click();
+  await page.getByRole('button',{name:'ERP 월별 대시보드',exact:true}).click();
   const review=page.getByRole('region',{name:'주요 변경 점검',exact:true});await expect(review.getByText('ERP관리자 직접 처리',{exact:true})).toHaveCount(2,{timeout:65000});
   for(const summary of await review.locator('summary').all())await summary.click();await expect(review).toContainText('1,500');await review.screenshot({path:testInfo.outputPath('erp-admin-change-review.png')});
   await openErp(page,'수정·삭제 이력');
