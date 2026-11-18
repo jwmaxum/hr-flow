@@ -39,3 +39,142 @@ export async function buildErpWorkbook(sheets:ErpWorkbookSheet[]):Promise<Blob>{
   sheets.forEach((s,i) => zip.file(`xl/worksheets/sheet${i+1}.xml`,sheet(s.rows,s.widths)));
   return zip.generateAsync({ type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', compression:'DEFLATE' });
 }
+
+export interface SimpleOpeningRow {
+  code: string;
+  name: string;
+  specification?: string;
+  unit?: string;
+  quantity: number | string;
+  price?: number | string;
+  warehouseCode?: string;
+  warehouseName?: string;
+  notes?: string;
+}
+
+export async function createSimpleOpeningTemplate(): Promise<Blob> {
+  const header: Cell[] = ['품목코드', '품목명', '규격', '단위', '기초수량', '기초단가(원)', '창고코드', '비고'];
+  const sample1: Cell[] = ['ITEM-001', '무선 마우스 M1', '블랙', 'EA', 100, 15000, '', '초기 재고'];
+  const sample2: Cell[] = ['ITEM-002', '기계식 키보드 K2', '청축', 'EA', 50, 45000, '', '초기 재고'];
+  const rows: Cell[][] = [header, sample1, sample2];
+  return buildErpWorkbook([{
+    name: '기초재고',
+    rows,
+    widths: [16, 26, 16, 10, 14, 16, 16, 24]
+  }]);
+}
+
+export async function convertToStandardOpeningWorkbook(
+  companyName: string,
+  basisDate: string,
+  rows: SimpleOpeningRow[],
+  defaultWarehouseCode = ''
+): Promise<Blob> {
+  const guideRows: Cell[][] = [
+    ['항목', '설명'],
+    ['안내', '본 파일은 스마트 간편 업로드를 통해 자동 변환된 표준 기초재고 파일입니다.'],
+    ['', ''],
+    ['회사명', companyName],
+    ['회사명', companyName], // 5행 B열 (인덱스 4, 컬럼 1)
+    ['기준일', basisDate],   // 6행 B열 (인덱스 5, 컬럼 1)
+    ['', ''],
+    ['', '']
+  ];
+
+  const standardHeader: Cell[] = [
+    '행번호', '품목코드', '품목명', '규격', '단위', '과세구분',
+    '계정과목', '그룹명', '창고코드', '창고명', '기초수량',
+    '금액입력방식', '기초단가', '기초금액', '통화', '비고'
+  ];
+
+  const dataRows: Cell[][] = [];
+  // 9행까지 패딩 (인덱스 0~7 빈행 채움)
+  for (let i = 0; i < 8; i++) dataRows.push(['']);
+  // 9행 (인덱스 8): 표준 머리글
+  dataRows.push(standardHeader);
+
+  // 10행부터: 실제 데이터
+  rows.forEach((row, idx) => {
+    const rowNo = idx + 1;
+    const code = String(row.code || '').trim();
+    const name = String(row.name || '').trim();
+    const spec = String(row.specification || '').trim();
+    const unit = String(row.unit || 'EA').trim() || 'EA';
+    const warehouse = String(row.warehouseCode || defaultWarehouseCode || '').trim();
+    const qty = Number(String(row.quantity ?? '').replaceAll(',', '')) || 0;
+    const price = Number(String(row.price ?? '').replaceAll(',', '')) || 0;
+    const notes = String(row.notes || '').trim();
+
+    dataRows.push([
+      rowNo,
+      code,
+      name,
+      spec,
+      unit,
+      '과세',      // 과세구분
+      '상품',      // 계정과목
+      '',          // 그룹명
+      warehouse,   // 창고코드
+      row.warehouseName || '', // 창고명
+      qty,         // 기초수량
+      '단가',      // 금액입력방식
+      price,       // 기초단가
+      '',          // 기초금액 (단가 방식이므로 비움)
+      'KRW',       // 통화
+      notes || '간편 기초재고 업로드' // 비고
+    ]);
+  });
+
+  return buildErpWorkbook([
+    { name: '작성안내', rows: guideRows, widths: [18, 30] },
+    { name: '이관입력', rows: dataRows, widths: [10, 16, 24, 16, 10, 12, 12, 14, 14, 16, 14, 14, 16, 16, 10, 24] }
+  ]);
+}
+
+export interface StockSnapshotItem {
+  code: string;
+  name: string;
+  specification?: string;
+  unit: string;
+  itemType?: string;
+  quantity: number;
+  warehouses: { [warehouseName: string]: number };
+  purchasePrice?: number;
+  salePrice?: number;
+  active: boolean;
+}
+
+export async function createStockSnapshotWorkbook(
+  items: StockSnapshotItem[],
+  warehouseNames: string[],
+  canManage: boolean
+): Promise<Blob> {
+  const header: Cell[] = [
+    '품목코드', '품목명', '규격', '단위', '상품유형', '전체현재고',
+    ...warehouseNames,
+    ...(canManage ? ['매입단가(원)', '판매단가(원)'] : []),
+    '상태'
+  ];
+
+  const rows: Cell[][] = [header];
+  for (const item of items) {
+    const row: Cell[] = [
+      item.code,
+      item.name,
+      item.specification || '',
+      item.unit,
+      item.itemType === 'BUNDLE' ? '합성세트' : '일반상품',
+      item.quantity,
+      ...warehouseNames.map(wName => item.warehouses[wName] ?? 0),
+      ...(canManage ? [item.purchasePrice ?? 0, item.salePrice ?? 0] : []),
+      item.active ? '사용 중' : '사용 중지'
+    ];
+    rows.push(row);
+  }
+
+  return buildErpWorkbook([{
+    name: '현재고현황',
+    rows,
+    widths: [16, 26, 16, 10, 14, 16, ...warehouseNames.map(() => 14), 14, 14, 12]
+  }]);
+}

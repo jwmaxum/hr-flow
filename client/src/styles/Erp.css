@@ -268,3 +268,17 @@
 .erp-review-table details h4 { margin:14px 0 8px; }
 .erp-review-table details table { min-width:280px; }
 @media(max-width:700px) { .erp-review-filters { grid-template-columns:1fr 1fr; } .erp-review-counts { grid-template-columns:1fr 1fr; } .erp-review-counts article { align-items:flex-start;flex-direction:column;gap:6px; } }
+
+
+.erp-stock-grid-wrapper { display: flex; flex-direction: column; gap: 14px; }
+.erp-stock-grid-panel { padding: 20px; }
+.erp-row-disabled { opacity: 0.6; background: var(--wf-subtle, #f8fafc); }
+.erp-view-mode-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+
+.erp-quick-movement-table-scroll { overflow-x: auto; margin: 16px 0; border: 1px solid var(--wf-border, #e2e8f0); border-radius: 8px; }
+.erp-quick-movement-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 800px; }
+.erp-quick-movement-table th { background: var(--wf-subtle, #f8fafc); padding: 10px 12px; font-weight: 600; text-align: left; border-bottom: 1px solid var(--wf-border, #e2e8f0); white-space: nowrap; }
+.erp-quick-movement-table td { padding: 8px 10px; border-bottom: 1px solid var(--wf-border, #e2e8f0); vertical-align: middle; }
+.erp-quick-summary-bar { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: var(--wf-subtle, #f8fafc); border-radius: 8px; margin: 12px 0 18px; font-size: 14px; flex-wrap: wrap; gap: 8px; }
+.erp-quick-summary-totals { display: flex; gap: 16px; align-items: center; font-variant-numeric: tabular-nums; }
+.erp-quick-summary-totals strong { font-size: 16px; color: var(--wf-strong, #0f172a); }

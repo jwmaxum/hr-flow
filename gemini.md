@@ -2,6 +2,13 @@
 
 이 문서는 프로젝트의 빌드 환경 및 핵심 개발 정책을 명시하여 개발 시 항상 반영되도록 합니다.
 
+## 0. [필수] 4단계 코드 구현 표준 워크플로
+모든 코드 작성 및 수정 시 **`search-first → 구현 → security-review → verification-loop`** 파이프라인을 준수합니다:
+1. **search-first**: 코드 작성 전 기존 컴포넌트, Zustand 스토어, Firebase 모델, 타입 선언을 먼저 검색·분석합니다 (추측 코딩 금지).
+2. **구현 (Implementation)**: 외과적 정밀 구현, Null Safety(`userData?.`), 데이터 격리(`companyId`) 및 로컬 보호 방어벽을 준수합니다.
+3. **security-review**: 멀티테넌트 `companyId` 누락 방지, Firestore Security Rules 검토, RBAC 권한 체크, 시크릿 노출 차단.
+4. **verification-loop**: TypeScript 타입 검사(`npx tsc --noEmit`) 및 빌드 테스트 실행, 결함 발견 시 수정-보안-재검증 루프 완료.
+
 ## 현재 작업 기준
 - 1차 개발 완료. 이후 작업은 추가 개발 단계입니다.
 - 웹 배포 대상은 Cloudflare Pages 프로젝트 `hr-flow` (`https://hr-flow.pages.dev/`)입니다. GitHub `main` 푸시가 자동 배포를 시작합니다. Firebase Authentication, Firestore, Storage, Cloud Functions는 백엔드 서비스로 사용합니다.
