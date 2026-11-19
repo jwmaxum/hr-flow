@@ -135,6 +135,15 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
     setter(current => [...current, ...result.records.filter(row => !current.some(old => old.id === row.id))]); setCursors(current => ({ ...current, [kind]: result.nextCursor }));
   }
 
+  const resolveVatMode = (line: Pick<Line, 'taxType' | 'vatMode'>): ManualLine['vatMode'] => {
+    if (line.taxType === '면세' || line.vatMode === 'EXEMPT') return 'EXEMPT';
+    if (line.taxType === '영세' || line.vatMode === 'ZERO') return 'ZERO';
+    if (entryMode === 'quick') {
+      return priceBasis === '세금포함' ? 'INCLUDED' : 'EXCLUDED';
+    }
+    return line.vatMode || (priceBasis === '세금포함' ? 'INCLUDED' : 'EXCLUDED');
+  };
+
   async function preview() {
     if (lines.some(line => !line.itemId)) throw new Error(`${direction}할 품목을 목록에서 선택${direction === '입고' ? '하거나 신규 품목 등록을 선택' : ''}해 주세요.`);
     if (direction === '출고' && !paymentStatus) throw new Error('외상출고 또는 입금완료 후 출고를 선택해 주세요.');
@@ -143,7 +152,7 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
       ...(direction === '출고' ? { payment: paymentStatus === 'PAID' ? { status: 'PAID', ...paymentOptions } : { status: 'CREDIT' } } : {}),
       lines: lines.map(({ code, name, specification, unit, taxType, quantity, price, notes, fulfillment, custodyLotId, borrowValue, amountMode, totalAmount, vatMode }) => ({
         code, name, specification, unit, taxType, quantity, price: amountMode === 'TOTAL' ? '' : price, ...(amountMode === 'TOTAL' ? { amountMode, totalAmount } : {}),
-        notes, ...(direction === '출고' ? { vatMode: vatMode || 'EXCLUDED' } : {}), fulfillment: fulfillment || 'DIRECT', ...(fulfillment === 'BORROW' ? { custodyLotId, borrowValue } : {})
+        notes, ...(direction === '출고' ? { vatMode: resolveVatMode({ taxType, vatMode }) } : {}), fulfillment: fulfillment || 'DIRECT', ...(fulfillment === 'BORROW' ? { custodyLotId, borrowValue } : {})
       })),
       allowNewItems, allowNewPartners
     };
@@ -167,7 +176,7 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
       ...(effectivePayment ? { payment: effectivePayment } : {}),
       lines: lines.map(({ code, name, specification, unit, taxType, quantity, price, notes, fulfillment, custodyLotId, borrowValue, amountMode, totalAmount, vatMode }) => ({
         code, name, specification, unit, taxType, quantity, price: amountMode === 'TOTAL' ? '' : price, ...(amountMode === 'TOTAL' ? { amountMode, totalAmount } : {}),
-        notes, ...(direction === '출고' ? { vatMode: vatMode || 'EXCLUDED' } : {}), fulfillment: fulfillment || 'DIRECT', ...(fulfillment === 'BORROW' ? { custodyLotId, borrowValue } : {})
+        notes, ...(direction === '출고' ? { vatMode: resolveVatMode({ taxType, vatMode }) } : {}), fulfillment: fulfillment || 'DIRECT', ...(fulfillment === 'BORROW' ? { custodyLotId, borrowValue } : {})
       })),
       allowNewItems, allowNewPartners
     };
@@ -190,12 +199,33 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
   }
 
   const done = job?.status === 'COMMITTED', selected = lines[active], total = (field: 'supply' | 'tax' | 'total' | 'cost' | 'value') => job?.preview.rows.reduce((sum, row) => sum + (row[field] || 0), 0) || 0;
-  const quickTotalSupply = lines.reduce((sum, line) => {
-    const q = Number(line.quantity) || 0;
-    const p = Number(line.price) || 0;
-    return sum + (q * p);
-  }, 0);
-  const quickTotalQty = lines.reduce((sum, line) => sum + (Number(line.quantity) || 0), 0);
+  const quickTotals = lines.reduce(
+    (acc, line) => {
+      const q = Number(line.quantity) || 0;
+      const p = Number(line.price) || 0;
+      const gross = q > 0 && p >= 0 ? q * p : 0;
+      acc.qty += q;
+      if (gross > 0) {
+        const isTaxable = line.taxType === '과세';
+        if (priceBasis === '세금포함' && isTaxable) {
+          const supply = Math.round(gross / 1.1);
+          acc.supply += supply;
+          acc.tax += gross - supply;
+          acc.total += gross;
+        } else if (isTaxable) {
+          const tax = Math.round(gross * 0.1);
+          acc.supply += gross;
+          acc.tax += tax;
+          acc.total += gross + tax;
+        } else {
+          acc.supply += gross;
+          acc.total += gross;
+        }
+      }
+      return acc;
+    },
+    { qty: 0, supply: 0, tax: 0, total: 0 }
+  );
 
   return <div className="erp-movement" aria-busy={busy}>
     <section className="wf-panel">
@@ -237,7 +267,7 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
               <label className="wf-field"><span>거래일 *</span><input ref={node => { controls.current.date = node; }} className="wf-input" type="date" required value={date} onChange={e => { changed(); setDate(e.target.value); }} /></label>
               <label className="wf-field"><span>{direction} 창고 *</span><select ref={node => { controls.current.warehouseId = node; }} className="wf-input" required value={warehouseId} onChange={e => { changed(); setWarehouseId(e.target.value); }}><option value="">창고 선택</option>{warehouses.filter(row => row.active).map(row => <option key={row.id} value={row.id}>{row.code} · {row.name}</option>)}</select></label>
               <label className="wf-field"><span>거래처 *</span><select ref={node => { controls.current.partnerId = node; }} className="wf-input" required value={partnerId} onChange={e => { changed(); setPartnerId(e.target.value); }}><option value="">거래처 선택</option><option value="NEW">새 거래처 입력</option>{partners.filter(row => row.active && (direction !== '출고' || row.type !== 'SUPPLIER')).map(row => <option key={row.id} value={row.id}>{row.code} · {row.name}</option>)}</select></label>
-              {direction === '출고' ? (
+              {direction === '출고' && (
                 <label className="wf-field">
                   <span>출고 결제방식 *</span>
                   <select className="wf-input" required value={paymentStatus} onChange={e => { changed(); setPaymentStatus(e.target.value as typeof paymentStatus); }}>
@@ -245,15 +275,14 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
                     <option value="PAID">입금완료 후 출고 (즉시수금)</option>
                   </select>
                 </label>
-              ) : (
-                <label className="wf-field">
-                  <span>금액 기준</span>
-                  <select aria-label="금액 기준" className="wf-input" value={priceBasis} onChange={e => { changed(); setPriceBasis(e.target.value); }}>
-                    <option>세금별도</option>
-                    <option>세금포함</option>
-                  </select>
-                </label>
               )}
+              <label className="wf-field">
+                <span>단가 기준 (부가세) *</span>
+                <select aria-label="단가 기준" className="wf-input" value={priceBasis} onChange={e => { changed(); setPriceBasis(e.target.value); }}>
+                  <option>세금별도</option>
+                  <option>세금포함</option>
+                </select>
+              </label>
             </div>
 
             {partnerId === 'NEW' && (
@@ -276,8 +305,12 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
                     <th style={{ minWidth: '220px' }}>품목 선택 *</th>
                     <th>규격 / 단위</th>
                     <th style={{ width: '100px', textAlign: 'right' }}>수량 *</th>
-                    <th style={{ width: '130px', textAlign: 'right' }}>{direction === '입고' ? '입고단가 (원) *' : '판매단가 (원) *'}</th>
-                    <th style={{ width: '120px', textAlign: 'right' }}>공급가액</th>
+                    <th style={{ width: '130px', textAlign: 'right' }}>
+                      {direction === '입고'
+                        ? (priceBasis === '세금포함' ? '입고단가 (세금포함) *' : '입고단가 (세금별도) *')
+                        : (priceBasis === '세금포함' ? '판매단가 (세금포함) *' : '판매단가 (세금별도) *')}
+                    </th>
+                    <th style={{ width: '130px', textAlign: 'right' }}>공급가액 / 세액</th>
                     <th>비고</th>
                     <th style={{ width: '50px', textAlign: 'center' }}>삭제</th>
                   </tr>
@@ -286,7 +319,11 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
                   {lines.map((line, index) => {
                     const qty = Number(line.quantity) || 0;
                     const prc = Number(line.price) || 0;
-                    const supply = qty > 0 && prc >= 0 ? qty * prc : null;
+                    const gross = qty > 0 && prc >= 0 ? qty * prc : 0;
+                    const isTaxable = line.taxType === '과세';
+                    const isInclusive = priceBasis === '세금포함' && isTaxable;
+                    const supply = gross > 0 ? (isInclusive ? Math.round(gross / 1.1) : gross) : null;
+                    const tax = gross > 0 && supply != null ? (isInclusive ? gross - supply : (isTaxable ? Math.round(supply * 0.1) : 0)) : null;
                     return (
                       <tr key={line.key}>
                         <td style={{ textAlign: 'center' }}>{index + 1}</td>
@@ -334,7 +371,16 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
                           />
                         </td>
                         <td className="erp-number">
-                          {supply != null ? `${supply.toLocaleString('ko-KR')}원` : '—'}
+                          {supply != null ? (
+                            <div>
+                              <div>{supply.toLocaleString('ko-KR')}원</div>
+                              {isTaxable && tax != null && (
+                                <small className="erp-cell-note" style={{ display: 'block', fontSize: '0.72rem', color: 'var(--wf-muted, #64748b)' }}>
+                                  세 {tax.toLocaleString('ko-KR')}원 · 합 {(supply + tax).toLocaleString('ko-KR')}원
+                                </small>
+                              )}
+                            </div>
+                          ) : '—'}
                         </td>
                         <td>
                           <input
@@ -383,8 +429,10 @@ export function ErpMovementPanel({ companyId, direction, initialItem, onInventor
                 <Plus size={15} /> 품목 행 추가
               </button>
               <div className="erp-quick-summary-totals">
-                <span>등록 대상: <strong>{lines.filter(l => l.itemId).length}</strong>개 품목 (총 <strong>{quickTotalQty.toLocaleString('ko-KR')}</strong>개)</span>
-                <span>예상 공급가액 합계: <strong>{quickTotalSupply.toLocaleString('ko-KR')}원</strong></span>
+                <span>등록 대상: <strong>{lines.filter(l => l.itemId).length}</strong>개 품목 (총 <strong>{quickTotals.qty.toLocaleString('ko-KR')}</strong>개)</span>
+                <span>공급가액: <strong>{quickTotals.supply.toLocaleString('ko-KR')}원</strong></span>
+                {quickTotals.tax > 0 && <span>부가세: <strong>{quickTotals.tax.toLocaleString('ko-KR')}원</strong></span>}
+                <span>합계: <strong>{quickTotals.total.toLocaleString('ko-KR')}원</strong></span>
               </div>
             </div>
 
