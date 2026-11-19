@@ -140,6 +140,7 @@ export interface StockSnapshotItem {
   quantity: number;
   warehouses: { [warehouseName: string]: number };
   purchasePrice?: number;
+  totalValue?: number;
   salePrice?: number;
   active: boolean;
 }
@@ -152,12 +153,13 @@ export async function createStockSnapshotWorkbook(
   const header: Cell[] = [
     '품목코드', '품목명', '규격', '단위', '상품유형', '전체현재고',
     ...warehouseNames,
-    ...(canManage ? ['매입단가(원)', '판매단가(원)'] : []),
+    ...(canManage ? ['기본매입단가(원)', '재고자산매입금액(원)', '기본판매단가(원)'] : []),
     '상태'
   ];
 
   const rows: Cell[][] = [header];
   for (const item of items) {
+    const itemTotalVal = item.totalValue != null ? item.totalValue : (item.quantity * (item.purchasePrice ?? 0));
     const row: Cell[] = [
       item.code,
       item.name,
@@ -166,15 +168,32 @@ export async function createStockSnapshotWorkbook(
       item.itemType === 'BUNDLE' ? '합성세트' : '일반상품',
       item.quantity,
       ...warehouseNames.map(wName => item.warehouses[wName] ?? 0),
-      ...(canManage ? [item.purchasePrice ?? 0, item.salePrice ?? 0] : []),
+      ...(canManage ? [item.purchasePrice ?? 0, itemTotalVal, item.salePrice ?? 0] : []),
       item.active ? '사용 중' : '사용 중지'
     ];
     rows.push(row);
   }
 
+  if (items.length > 0) {
+    const totalQty = items.reduce((s, it) => s + it.quantity, 0);
+    const totalVal = items.reduce((s, it) => s + (it.totalValue != null ? it.totalValue : (it.quantity * (it.purchasePrice ?? 0))), 0);
+    const totalRow: Cell[] = [
+      '합계',
+      `${items.length}개 품목`,
+      '',
+      '',
+      '',
+      totalQty,
+      ...warehouseNames.map(wName => items.reduce((s, it) => s + (it.warehouses[wName] ?? 0), 0)),
+      ...(canManage ? ['', totalVal, ''] : []),
+      ''
+    ];
+    rows.push(totalRow);
+  }
+
   return buildErpWorkbook([{
     name: '현재고현황',
     rows,
-    widths: [16, 26, 16, 10, 14, 16, ...warehouseNames.map(() => 14), 14, 14, 12]
+    widths: [16, 26, 16, 10, 14, 16, ...warehouseNames.map(() => 14), 14, 18, 14, 12]
   }]);
 }
