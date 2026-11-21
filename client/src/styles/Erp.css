@@ -282,3 +282,7 @@
 .erp-quick-summary-bar { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: var(--wf-subtle, #f8fafc); border-radius: 8px; margin: 12px 0 18px; font-size: 14px; flex-wrap: wrap; gap: 8px; }
 .erp-quick-summary-totals { display: flex; gap: 16px; align-items: center; font-variant-numeric: tabular-nums; }
 .erp-quick-summary-totals strong { font-size: 16px; color: var(--wf-strong, #0f172a); }
+
+.erp-review-policy {margin: 1rem 0;}
+.erp-review-policy section {margin-top: .75rem; padding: 1rem; border: 1px solid #d7dce1; border-radius: .75rem;}
+.erp-review-policy-fields {display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 1rem;}

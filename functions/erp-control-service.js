@@ -17,6 +17,7 @@ function createErpControlService({db,bucket,now=()=>new Date(),renderPdf=report=
   const dashboard=createDashboardHandler({db,now,context,load:loadFinance});
   const review=require('./erp-change-review').createChangeReview({db,context,now});
   const inbox=require('./erp-review-inbox').createReviewInbox({db,context,now});
+  const policy=require('./erp-review-policy').createReviewPolicy({db,context,now});
   const stateOf=async(tx,parent)=>{const d=(await tx.get(parent.collection('erpGovernance').doc('control'))).data()||{companyId:parent.id,revision:0,closedThrough:'',lastClosedMonth:''};master.verifyTenant(d,parent.id);return d;};
   function audit(tx,parent,user,action,detail){const at=now().toISOString();tx.create(parent.collection('erpAudit').doc(),{companyId:parent.id,actorId:user.uid,actorName:user.name||user.uid,action,at,...detail});tx.create(parent.collection('erpChangeHistory').doc(),{companyId:parent.id,operationId:digest([action,detail,at]),domain:'control',action,actorId:user.uid,actorName:user.name||user.uid,requestedBy:user.uid,approvedBy:isErpAdmin(user)?user.uid:null,actorErpAccess:accessOf(user),reason:detail.reason||'',at,part:1,parts:1,changes:[{path:detail.targetUid?'담당자 권한/'+detail.targetUid:'월마감·승인/'+(detail.month||detail.approvalId),before:typeof detail.before==='string'?{access:detail.before}:detail.before||null,after:typeof detail.after==='string'?{access:detail.after}:typeof detail.after==='object'?detail.after:detail}]});}
   const checklist=createClosingChecklist({db,bucket,now,context,stateOf,audit});
@@ -32,21 +33,24 @@ function createErpControlService({db,bucket,now=()=>new Date(),renderPdf=report=
     const [verified]=await bucket.file(path,{generation:descriptor.generation}).download();if(sha(verified)!==hash)fail('failed-precondition','보고서 보관본 검증에 실패했습니다.');return descriptor;
   }
   return async request=>{
-    const v=M.exactObject(request.data,['action','companyId','uid','access','expectedAccess','reason','month','revision','snapshot','id','decision','format','fileIndex','cursor','items','noEvidenceReason','name','mimeType','base64','archiveId','checklistRevision','dueDate','ownerUid','notes','key','note','from','to','category','reviewStatus','includeReviews','scope','minDays','reviewScope','fingerprint']);
-    const allowed={review:['from','to','category','cursor','reviewStatus'],reviewConfirm:['items'],reviewAlerts:['scope'],reviewInbox:['minDays','cursor'],reviewInboxDetail:['id','fingerprint'],directory:[],grant:['uid','access','expectedAccess','reason'],status:[],workQueue:['includeReviews','reviewScope'],history:['cursor'],approvals:['cursor','id'],approvalAlerts:[],decide:['id','decision','reason'],closePreview:['month'],close:['month','revision','snapshot','reason','checklistRevision'],reopen:['month','revision','reason'],archives:['cursor'],download:['id','fileIndex'],
+    const v=M.exactObject(request.data,['action','companyId','uid','access','expectedAccess','reason','month','revision','snapshot','id','decision','format','fileIndex','cursor','items','noEvidenceReason','name','mimeType','base64','archiveId','checklistRevision','dueDate','ownerUid','notes','key','note','from','to','category','reviewStatus','includeReviews','scope','minDays','reviewScope','fingerprint','filter','agedDays','urgentDays','reset','reviewPolicyVersion']);
+    const allowed={review:['from','to','category','cursor','reviewStatus'],reviewConfirm:['items'],reviewAlerts:['scope','reviewPolicyVersion'],reviewPolicyGet:[],reviewPolicySave:['revision','agedDays','urgentDays','reset','reason'],reviewInbox:['minDays','filter','cursor'],reviewInboxDetail:['id','fingerprint'],directory:[],grant:['uid','access','expectedAccess','reason'],status:[],workQueue:['includeReviews','reviewScope','reviewPolicyVersion'],history:['cursor'],approvals:['cursor','id'],approvalAlerts:[],decide:['id','decision','reason'],closePreview:['month'],close:['month','revision','snapshot','reason','checklistRevision'],reopen:['month','revision','reason'],archives:['cursor'],download:['id','fileIndex'],
       closePlans:[],closeAlerts:[],closePlanGet:['month'],closePlanSave:['month','revision','dueDate','ownerUid','items','notes','reason'],closeTaskSubmit:['month','revision','key','note'],closeTaskReset:['month','revision','key','reason'],checklistGet:['month'],checklistSave:['month','revision','items','noEvidenceReason'],evidenceUpload:['month','revision','id','name','mimeType','base64'],evidenceRemove:['month','revision','id','reason'],evidenceDownload:['month','id','archiveId']};
     if(!Object.hasOwn(allowed,v.action))fail('invalid-argument','지원하지 않는 ERP 관리 요청입니다.');M.exactObject(v,['action','companyId',...allowed[v.action]]);
     const user=await context(request,db,!['workQueue','status','approvals','closePlans','closeAlerts','closePlanGet','closeTaskSubmit'].includes(v.action)),parent=db.collection('companies').doc(user.companyId);
+    if(v.reviewPolicyVersion!==undefined&&v.reviewPolicyVersion!==1)fail('invalid-argument','알림 기준 버전을 확인해 주세요.');
     if(v.action==='workQueue')return workQueue(request,parent);
     if(v.action==='review')return review(request,v,parent);
     if(v.action==='reviewConfirm')return review.confirm(request,v,parent);
+    if(v.action==='reviewPolicyGet')return policy.get(request,parent);
+    if(v.action==='reviewPolicySave')return policy.save(request,parent,v);
     if(v.action==='reviewInbox')return inbox.list(request,parent,v);
     if(v.action==='reviewInboxDetail')return inbox.detail(request,parent,v);
     if(v.action==='reviewAlerts'){
       if(v.scope!==undefined&&!['MONTH','ALL'].includes(v.scope))fail('invalid-argument','알림 범위를 확인해 주세요.');
       if(v.scope!=='ALL')return review.alerts(request,parent);
       if(user.role!=='ADMIN')fail('permission-denied','중요 변경 알림은 회사 ADMIN만 조회할 수 있습니다.');
-      const result=await inbox.list(request,parent);
+      const result=await inbox.list(request,parent,{legacyPolicy:v.reviewPolicyVersion!==1});
       const current=await context(request);if(current.role!=='ADMIN')fail('permission-denied','ADMIN 권한이 변경되었습니다.');
       const {rows,nextCursor,...alerts}=result;return alerts;
     }

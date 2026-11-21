@@ -21,7 +21,7 @@ function section(key,rows,hasMore=false){
 // identity is checked again before any category is returned to the browser.
 function createWorkQueue({db,now,context,listPlans,reviewMonthly,reviewInbox}){
   return async(request,parent)=>{
-    M.exactObject(request.data,['action','companyId','includeReviews','reviewScope']);
+    M.exactObject(request.data,['action','companyId','includeReviews','reviewScope','reviewPolicyVersion']);
     if(request.data.includeReviews!==undefined&&typeof request.data.includeReviews!=='boolean')fail('invalid-argument','변경 점검 조회 옵션을 확인해 주세요.');
     if(request.data.reviewScope!==undefined&&!['MONTH','ALL'].includes(request.data.reviewScope))fail('invalid-argument','변경 점검 범위를 확인해 주세요.');
     const user=await context(request,db,false),access=accessOf(user);
@@ -83,9 +83,9 @@ function createWorkQueue({db,now,context,listPlans,reviewMonthly,reviewInbox}){
     });
     if(user.role==='ADMIN'&&request.data.includeReviews===true)handlers.reviews=async tx=>{
       if(request.data.reviewScope==='ALL'){
-        const result=await reviewInbox(tx,parent);
+        const result=await reviewInbox(tx,parent,{legacyPolicy:request.data.reviewPolicyVersion!==1});
         if(!result.ready)return {key:'reviews',status:'ERROR',count:null,hasMore:false,rows:[],message:'누적 점검함을 준비하고 있습니다. 전체 보기에서 이전 이력 연결을 완료해 주세요.'};
-        return {key:'reviews',status:'READY',count:result.pendingCount,hasMore:false,rows:result.rows.slice(0,DISPLAY).map(r=>({id:r.id,title:r.documents.join(' / ')||'중요 변경 확인',detail:r.actorName+' · '+(r.reason||'재고·거래·문서 변경 내용을 확인해 주세요.'),date:dateOf(r.at),dateLabel:'처리일',priority:r.ageDays>=7?0:1,badge:r.ageDays>=30?'우선 점검 · '+r.ageDays+'일':r.ageDays>=7?'장기 미확인 · '+r.ageDays+'일':'미확인 '+r.ageDays+'일',view:'dashboard',source:'inbox'}))};
+        return {key:'reviews',status:'READY',count:result.pendingCount,hasMore:false,rows:result.rows.slice(0,DISPLAY).map(r=>({id:r.id,title:r.documents.join(' / ')||'중요 변경 확인',detail:r.actorName+' · '+(r.reason||'재고·거래·문서 변경 내용을 확인해 주세요.'),date:dateOf(r.at),dateLabel:'처리일',priority:r.ageDays>=result.policy.agedDays?0:1,badge:r.ageDays>=result.policy.urgentDays?'우선 점검 · '+r.ageDays+'일':r.ageDays>=result.policy.agedDays?'장기 미확인 · '+r.ageDays+'일':'미확인 '+r.ageDays+'일',view:'dashboard',source:'inbox'}))};
       }
       const result=await reviewMonthly(tx,parent);
       return {key:'reviews',status:'READY',count:result.unreviewedCount,hasMore:false,rows:result.rows.slice(0,DISPLAY).map(r=>({id:r.id,title:r.documents.join(' / ')||'중요 변경 확인',detail:r.actorName+' · '+(r.reason||'재고·거래·문서 변경 내용을 확인해 주세요.'),date:dateOf(r.at),dateLabel:'처리일',priority:1,badge:'ADMIN 미확인',view:'dashboard',source:'unreviewed'}))};

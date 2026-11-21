@@ -7,7 +7,7 @@ const MAX_RECORDS=1000,MAX_BYTES=20*1024*1024,PAGE_SIZE=30;
 const atPath=(o,path)=>path.split('.').reduce((v,k)=>v?.[k],o);
 const scalar=v=>v==null?'—':typeof v==='boolean'?(v?'사용':'중지'):typeof v==='number'?v.toLocaleString('ko-KR',{maximumFractionDigits:4}):String(v).slice(0,240);
 const states={DRAFT:'초안',ISSUED:'발행',CANCELLED:'취소',COMMITTED:'확정',PENDING:'대기',CLOSED:'마감',REOPENED:'재개방',APPROVED:'승인',REJECTED:'반려'};
-const fields=[['name','명칭'],['code','코드'],['active','사용 여부'],['date','거래일'],['direction','구분'],['quantity','수량'],['value','재고금액(원)'],['price','거래단가'],['purchasePrice','매입단가(원)'],['salePrice','판매단가(원)'],['supply','공급가액'],['tax','부가세'],['total','거래금액'],['returnedQuantity','누적 반품수량'],['status','상태'],['cancelledBy','취소 연결'],['number','문서번호'],['input.issueDate','발행일'],['input.sourceDocumentNo','원출고 문서'],['access','ERP 권한'],['month','대상 월'],['version','보관 버전'],['dueDate','마감 예정일']];
+const fields=[['name','명칭'],['code','코드'],['active','사용 여부'],['date','거래일'],['direction','구분'],['quantity','수량'],['value','재고금액(원)'],['price','거래단가'],['purchasePrice','매입단가(원)'],['salePrice','판매단가(원)'],['supply','공급가액'],['tax','부가세'],['total','거래금액'],['returnedQuantity','누적 반품수량'],['status','상태'],['cancelledBy','취소 연결'],['number','문서번호'],['input.issueDate','발행일'],['input.sourceDocumentNo','원출고 문서'],['access','ERP 권한'],['month','대상 월'],['version','보관 버전'],['dueDate','마감 예정일'],['agedDays','장기 미확인 기준(일)'],['urgentDays','우선 확인 기준(일)'],['configured','회사별 기준 사용']];
 function differences(change){
   const values=[];
   for(const [key,label] of fields){
@@ -56,7 +56,7 @@ function projectReview(records){
     let event=groups.get(key);
     if(!event){event={id:key,at:record.at,actorId:record.actorId||'',actorName:record.actorName||record.actorId||'담당자',actorErpAccess:record.actorErpAccess||'',authorization:record.authorization||'',approvedBy:record.approvedBy||null,reason:record.reason||'',domain:record.domain,action:record.action,categories:new Set(),documents:new Set(),changes:[],changeCount:0,historyIds:[],parts:new Set(),expectedParts:record.parts||1};groups.set(key,event);}
     event.historyIds.push(record.id);event.parts.add(record.part||1);event.expectedParts=Math.max(event.expectedParts,record.parts||1);
-    if(record.domain==='control')event.categories.add(/^ERP_ACCESS/.test(record.action)?'MASTER':'CLOSE');
+    if(record.domain==='control')event.categories.add(/^ERP_(ACCESS|REVIEW_POLICY)/.test(record.action)?'MASTER':'CLOSE');
     for(const change of record.changes||[]){
       const collection=change.path.split('/')[0],before=change.before,after=change.after,row=after||before||{};
       if(collection==='erpInventory')event.categories.add('STOCK');

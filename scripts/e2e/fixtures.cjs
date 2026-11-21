@@ -299,7 +299,7 @@ async function seedErpReviewBacklog(companyId){
   const parent=current.db.doc(`companies/${companyId}`),batch=current.db.batch();
   const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul'}).format(new Date());
   for(let i=0;i<34;i++){
-    const days=i===0?40:i===1?30:i===2?7:2,at=new Date(Date.parse(today+'T09:00:00+09:00')-days*86400000).toISOString(),id='review-backlog-'+String(i).padStart(2,'0');
+    const days=i===0?40:i===1?30:i===2?14:2,at=new Date(Date.parse(today+'T09:00:00+09:00')-days*86400000).toISOString(),id='review-backlog-'+String(i).padStart(2,'0');
     batch.create(parent.collection('erpChangeHistory').doc(id),{companyId,operationId:id,at,actorId:current.fixtures.accounts.managerA.uid,actorName:'누적 점검 담당자',actorErpAccess:'MANAGER',authorization:'ERP_MANAGER_DIRECT',domain:'correction',action:'commit',part:1,parts:1,reason:'과거 변경 점검 '+i,changes:[{path:'erpInventory/verification-history',before:{quantity:2,value:200},after:{quantity:3,value:300}}]});
   }
   await batch.commit();

@@ -4,6 +4,7 @@ import {erpScope} from './erpLedgerService';
 import {downloadErpFile} from './erpImportService';
 import type {ErpAccess} from '../utils/erpAccess';
 export type {ErpAccess} from '../utils/erpAccess';
+export interface ReviewPolicy {companyId:string;agedDays:number;urgentDays:number;revision:number;configured:boolean;updatedAt:string|null;updatedByName:string|null}
 export interface CloseTask {key:string;label:string;assigneeUid:string;assigneeName:string;confirmed:boolean;submission:{by:string;name:string;at:string;note:string}|null}
 export interface ClosePlan {companyId:string;month:string;revision:number;status:'OPEN'|'CLOSED';dueDate:string;ownerUid:string;ownerName:string;notes:string;items:CloseTask[];pendingCount:number;myPendingCount:number;actionCount:number;awaitingAdminCount:number;overdue:boolean;today:string}
 export interface CloseAlerts {pendingCount:number;overdueCount:number;hasMore:boolean;checkedAt:string}
@@ -25,7 +26,7 @@ export async function erpControl<T>(companyId:string,action:string,data:Record<s
   if(scope!==erpScope(companyId,mode))throw new Error('로그인 사용자 또는 ERP 권한이 변경되었습니다.');
   if(action==='decide')window.dispatchEvent(new Event('erp:approvals-changed'));
   if(['closePlanSave','closeTaskSubmit','closeTaskReset','checklistSave','reopen','close'].includes(action))window.dispatchEvent(new Event('erp:closing-changed'));
-  if(action==='reviewConfirm')window.dispatchEvent(new Event('erp:review-changed'));
+  if(['reviewConfirm','reviewPolicySave'].includes(action))window.dispatchEvent(new Event('erp:review-changed'));
   return response.data as T;
 }
 export async function downloadClose(companyId:string,id:string,fileIndex:number){

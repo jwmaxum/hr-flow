@@ -18,17 +18,18 @@ const money=(value:number,currency:string)=>`${number(value/(['KRW','JPY'].inclu
 export function ErpWorkQueue({companyId,access,onOpen}:{companyId:string;access:ErpAccess;onOpen:(view:ErpView,source?:string,draftId?:string)=>void}){
   const [value,setValue]=useState<WorkQueue|null>(null),[busy,setBusy]=useState(true),[error,setError]=useState(''),[reload,setReload]=useState(0);
   useEffect(()=>{
-    let live=true,running=false,last=0;
+    let live=true,running=false,again=false,last=0;
     async function refresh(){
-      if(!live||running||document.visibilityState==='hidden')return;
+      if(!live||document.visibilityState==='hidden')return;if(running){again=true;return;}
       running=true;last=Date.now();setBusy(true);setError('');setValue(null);
-      try{const result=await erpControl<WorkQueue>(companyId,'workQueue',{includeReviews:true,reviewScope:'ALL'});if(result.companyId!==companyId||result.access!==access)throw new Error('ERP 권한이 변경되었습니다. 페이지를 새로고침해 주세요.');if(live)setValue(result);}
+      try{const result=await erpControl<WorkQueue>(companyId,'workQueue',{includeReviews:true,reviewScope:'ALL',reviewPolicyVersion:1});if(result.companyId!==companyId||result.access!==access)throw new Error('ERP 권한이 변경되었습니다. 페이지를 새로고침해 주세요.');if(live)setValue(result);}
       catch(e){if(live)setError(getErrorMessage(e));}
-      finally{running=false;if(live)setBusy(false);}
+      finally{running=false;if(live)setBusy(false);if(again&&live){again=false;void refresh();}}
     }
     const focus=()=>{if(Date.now()-last>=60000)void refresh();};void refresh();
+    const reviewChanged=()=>{void refresh();};window.addEventListener('erp:review-changed',reviewChanged);
     window.addEventListener('focus',focus);document.addEventListener('visibilitychange',focus);
-    return()=>{live=false;window.removeEventListener('focus',focus);document.removeEventListener('visibilitychange',focus);};
+    return()=>{live=false;window.removeEventListener('erp:review-changed',reviewChanged);window.removeEventListener('focus',focus);document.removeEventListener('visibilitychange',focus);};
   },[companyId,access,reload]);
   return <section className="erp-work-home" aria-label="담당 업무 시작 화면">
     <section className="wf-panel erp-start" aria-label="담당 업무 바로가기"><h2 className="wf-section-title">{erpAccessNames[access]} 시작 화면</h2>

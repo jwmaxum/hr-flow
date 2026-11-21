@@ -2,6 +2,7 @@ const {FieldPath}=require('firebase-admin/firestore');
 const {fail}=require('./security-context');
 const {digest}=require('./erp-governance');
 const M=require('./erp-ledger-model');
+const {readPolicy}=require('./erp-review-policy');
 const PAGE_SIZE=30,VERSION=1;
 const stateRef=parent=>parent.collection('erpReviewState').doc('inbox');
 const entryRef=(parent,event)=>parent.collection('erpReviewInbox').doc(digest([event.id,event.fingerprint]));
@@ -68,23 +69,26 @@ function createReviewInbox({db,context,now}){
     });
   }
   async function read(tx,parent,v={}){
-    const minDays=v.minDays??0;if(![0,7,30].includes(minDays))fail('invalid-argument','미확인 경과일을 선택해 주세요.');
+    if(v.filter!==undefined&&(!['ALL','AGED','URGENT'].includes(v.filter)||v.minDays!==undefined))fail('invalid-argument','미확인 조건을 하나만 선택해 주세요.');
+    if(v.minDays!==undefined&&![0,7,30].includes(v.minDays))fail('invalid-argument','미확인 경과일을 선택해 주세요.');
+    const storedPolicy=await readPolicy(tx,parent),policy=v.legacyPolicy||v.minDays!==undefined?{...storedPolicy,agedDays:7,urgentDays:30}:storedPolicy,filter=v.filter??(v.minDays===7?'AGED':v.minDays===30?'URGENT':'ALL');
+    const minDays=filter==='AGED'?policy.agedDays:filter==='URGENT'?policy.urgentDays:0;
     const current=await state(tx,parent),today=seoulDate(now()),checkedAt=now().toISOString();
-    if(!current.ready)return {companyId:parent.id,ready:false,processed:current.processed,checkedAt,rows:[],pendingCount:null};
+    if(!current.ready)return {companyId:parent.id,ready:false,processed:current.processed,checkedAt,policy,rows:[],pendingCount:null};
     const governance=(await tx.get(parent.collection('erpGovernance').doc('control'))).data();
     if(governance&&governance.companyId!==parent.id)fail('permission-denied','회사 변경 상태를 확인해 주세요.');
-    const snapshot=digest([VERSION,parent.id,today,minDays,current.revision,governance?.revision||0]);
+    const snapshot=digest([VERSION,parent.id,today,filter,minDays,policy.revision,policy.agedDays,policy.urgentDays,current.revision,governance?.revision||0]);
     if(v.cursor){M.exactObject(v.cursor,['at','key','snapshot']);if(v.cursor.snapshot!==snapshot)fail('aborted','변경 또는 확인 상태가 바뀌었습니다. 점검함을 처음부터 새로고침해 주세요.');if(typeof v.cursor.at!=='string'||!Number.isFinite(Date.parse(v.cursor.at))||!(/^[a-f0-9]{64}$/).test(v.cursor.key))fail('invalid-argument','점검함 조회 위치를 확인해 주세요.');}
     const end=days=>new Date(Date.parse(today+'T00:00:00+09:00')+(1-days)*86400000).toISOString();
     const base=parent.collection('erpReviewInbox').where('reviewStatus','==','UNREVIEWED');
-    const all=base.where('at','<',end(0)),aged=base.where('at','<',end(7)),urgent=base.where('at','<',end(30)),previous=base.where('at','<',new Date(today.slice(0,7)+'-01T00:00:00+09:00').toISOString());
+    const all=base.where('at','<',end(0)),aged=base.where('at','<',end(policy.agedDays)),urgent=base.where('at','<',end(policy.urgentDays)),previous=base.where('at','<',new Date(today.slice(0,7)+'-01T00:00:00+09:00').toISOString());
     const selected=base.where('at','<',end(minDays));
     let page=selected.orderBy('at','asc').orderBy(FieldPath.documentId(),'asc');if(v.cursor)page=page.startAfter(v.cursor.at,v.cursor.key);
     const [total,week,month,prior,docs,oldest]=await Promise.all([tx.get(all.count()),tx.get(aged.count()),tx.get(urgent.count()),tx.get(previous.count()),tx.get(page.limit(PAGE_SIZE+1)),tx.get(all.orderBy('at','asc').limit(1))]);
     const rows=docs.docs.slice(0,PAGE_SIZE).map(doc=>{const r=doc.data();if(r.companyId!==parent.id||doc.id!==digest([r.id,r.fingerprint]))fail('permission-denied','중요 변경 목록의 회사를 확인해 주세요.');return {...r,ageDays:ageDays(r.at,today)};});
     const oldestRow=oldest.docs[0]?.data();if(oldestRow&&oldestRow.companyId!==parent.id)fail('permission-denied','중요 변경 목록의 회사를 확인해 주세요.');
     const last=docs.docs[PAGE_SIZE-1];
-    return {companyId:parent.id,ready:true,today,checkedAt,minDays,pendingCount:total.data().count,agedCount:week.data().count,urgentCount:month.data().count,previousMonthCount:prior.data().count,oldestAgeDays:oldestRow?ageDays(oldestRow.at,today):0,oldestAt:oldestRow?.at||null,filteredTotal:(minDays===30?month:minDays===7?week:total).data().count,rows,nextCursor:docs.size>PAGE_SIZE?{at:last.data().at,key:last.id,snapshot}:null,snapshot};
+    return {companyId:parent.id,ready:true,today,checkedAt,filter,minDays,policy,pendingCount:total.data().count,agedCount:week.data().count,urgentCount:month.data().count,previousMonthCount:prior.data().count,oldestAgeDays:oldestRow?ageDays(oldestRow.at,today):0,oldestAt:oldestRow?.at||null,filteredTotal:(filter==='URGENT'?month:filter==='AGED'?week:total).data().count,rows,nextCursor:docs.size>PAGE_SIZE?{at:last.data().at,key:last.id,snapshot}:null,snapshot};
   }
   async function list(request,parent,v={}){
     // Warm companies use one read-only transaction. Bootstrap transactions are
