@@ -19,6 +19,11 @@ test('CI reporter omits sensitive errors, call logs, step arguments and stdout',
   reporter.onTestEnd({ title: 'synthetic test', expectedStatus: 'passed', parent: { project: () => ({ name: 'chromium-desktop' }) } },
     { status: 'failed', duration: 1, retry: 0, stdout: [secret], errors: [{ message: secret, stack: secret, value: secret,
       location: { file: '/test/smoke.spec.cjs', line: 42 }, }] });
+  const partial = JSON.parse(report);
+  assert.equal(partial.status, 'running');
+  assert.equal(partial.tests[0].status, 'failed');
+  assert.deepEqual(partial.tests[0].failureLocations, [{ file: 'smoke.spec.cjs', line: 42 }]);
+  assert.equal((output + report).includes(secret), false);
   reporter.onError({ message: secret });
   reporter.onEnd({ status: 'failed', duration: 1 });
   assert.equal((output + report).includes(secret), false);

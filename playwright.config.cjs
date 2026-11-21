@@ -4,6 +4,9 @@ const { WEB_ORIGIN, assertE2EEnvironment } = require('./scripts/e2e/safety.cjs')
 // Loading this config directly must fail before a browser can reach a live backend.
 assertE2EEnvironment();
 
+const browserProject = process.env.HR_FLOW_E2E_BROWSER_PROJECT;
+if (browserProject && !['chromium-desktop', 'chromium-mobile'].includes(browserProject)) throw new Error('Invalid isolated browser project.');
+
 module.exports = defineConfig({
   testDir: './client/e2e',
   testMatch: 'smoke.spec.cjs',
@@ -32,5 +35,5 @@ module.exports = defineConfig({
   projects: [
     { name: 'chromium-desktop', use: { browserName: 'chromium', viewport: { width: 1440, height: 1000 } } },
     { name: 'chromium-mobile', use: { browserName: 'chromium', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
-  ],
+  ].filter(project => !browserProject || project.name === browserProject),
 });

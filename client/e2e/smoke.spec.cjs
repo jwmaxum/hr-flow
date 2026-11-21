@@ -188,6 +188,11 @@ async function openErp(page,label){
   const button=sub.getByRole('button',{name:target,exact:true});if(await button.getAttribute('aria-pressed')!=='true')await button.click();
   await expect(button).toHaveAttribute('aria-pressed','true');
   if(label==='품목·재고현황')await openErpItemDetails(page);
+  if(label==='출고등록')await openErpMovementDetails(page);
+}
+
+async function openErpMovementDetails(page){
+  await page.getByRole('button',{name:/^상세 회계 (입고|출고) \(Standard\)$/}).click();
 }
 
 async function openErpItemDetails(page){
@@ -485,8 +490,8 @@ test('ERP Excel opening and transactions preview then commit once with exact inv
   const input = actor.page.getByLabel(/^Excel 파일 \(\.xlsx,/);
   const opening = await erpWorkbook('OPENING', [erpOpening({ 8: '', 9: '' })]);
   await input.setInputFiles({ name: opening.name, mimeType: opening.mimeType, buffer: Buffer.from(opening.base64, 'base64') });
-  await actor.page.getByRole('combobox', { name: '창고 공란에 적용할 회사 창고', exact: true }).selectOption({ label: 'WH-01 · 본사 창고' });
-  await actor.page.getByRole('checkbox', { name: /^신규 품목 등록 확인/ }).check();
+  await actor.page.getByRole('combobox', { name: '창고 공란에 적용할 기본 창고', exact: true }).selectOption({ label: 'WH-01 · 본사 창고' });
+  await actor.page.getByRole('checkbox', { name: /^신규 품목 자동 등록 동의/ }).check();
   const verify = actor.page.getByRole('button', { name: '검증 및 미리보기', exact: true });
   const confirm = actor.page.getByRole('button', { name: 'DB 반영 확정', exact: true });
   const consent = actor.page.getByRole('checkbox', { name: '로그인 회사의 품목·창고·거래처와 위 재고 변동을 확인했습니다.', exact: true });
@@ -520,7 +525,7 @@ test('ERP Excel opening and transactions preview then commit once with exact inv
   await openErp(actor.page, 'Excel 업로드');
   await actor.page.getByRole('combobox', { name: '업로드 종류', exact: true }).selectOption('MOVEMENTS');
   await input.setInputFiles({ name: transaction.name, mimeType: transaction.mimeType, buffer: Buffer.from(transaction.base64, 'base64') });
-  await actor.page.getByRole('combobox', { name: '창고 공란에 적용할 회사 창고', exact: true }).selectOption({ label: 'WH-01 · 본사 창고' });
+  await actor.page.getByRole('combobox', { name: '창고 공란에 적용할 기본 창고', exact: true }).selectOption({ label: 'WH-01 · 본사 창고' });
   await verify.click(); await expect(actor.page.getByRole('status').filter({ hasText: '검증 완료' })).toBeVisible();
   await expect(actor.page.getByRole('alert').filter({ hasText: '이미 확정한 파일' })).toBeVisible();
   await expect(confirm).toBeDisabled(); expect(await readErpInventory(fixtures.companyA)).toEqual(final);
@@ -541,9 +546,9 @@ test('ERP manual inbound and outbound preserve receipt prices, value inventory a
   await call('manageErp', { action: 'save', kind: 'warehouses', id: 'warehouse', expectedRevision: 0, values: { code: 'WH-01', name: '본사 창고', active: true, address: '', notes: '' } });
   const opening = await call('manageErpImport', { action: 'preview', id: randomUUID(), type: 'OPENING', source: await erpWorkbook('OPENING', [erpOpening()]), options: { allowNewItems: true, allowNewPartners: true } });
   await call('manageErpImport', { action: 'commit', id: opening.import.id, fingerprint: opening.import.preview.fingerprint });
-  await actor.page.goto('/#/erp?menu=stock&view=items');
+  await actor.page.goto('/#/erp?menu=stock&view=items');await openErpItemDetails(actor.page);
   await expect(actor.page.getByRole('button', { name: '입고등록', exact: true })).toBeVisible();
-  await actor.page.getByRole('button', { name: '0001 입고등록', exact: true }).click();
+  await actor.page.getByRole('button', { name: '0001 입고등록', exact: true }).click();await openErpMovementDetails(actor.page);
   await expect(actor.page.getByRole('heading', { name: '입고등록', exact: true })).toBeVisible();
   await expect(actor.page.getByLabel('품목코드 *', { exact: true })).toHaveValue('0001');
   await expect(actor.page.getByLabel('품목명 *', { exact: true })).toHaveValue('합성 품목');
@@ -641,11 +646,15 @@ test('ERP company review policy saves, validates, resets and keeps ADMIN-only co
   const directory=JSON.parse(Buffer.from((await call({action:'directory'})).bytes).toString('utf8')).result;
   const managerAccess=directory.users.find(u=>u.uid===fixtures.accounts.managerA.uid).access;
   expect((await call({action:'grant',uid:fixtures.accounts.managerA.uid,access:'MANAGER',expectedAccess:managerAccess,reason:'ERP관리자 경계 검증 준비'})).status).toBe(200);
+  try {
   const manager=await actorFor(browser,testInfo);await login(manager,fixtures.accounts.managerA);await manager.page.goto('/#/erp?menu=dashboard&view=dashboard&source=inbox');
   await expect(manager.page.getByRole('region',{name:'누적 미확인 점검함',exact:true})).toHaveAttribute('aria-busy','false',{timeout:65000});await expect(manager.page.getByRole('button',{name:'알림 기준 설정',exact:true})).toHaveCount(0);
   expect((await call({action:'reviewPolicySave',revision:3,agedDays:7,urgentDays:15,reason:'관리자 경계 검증'},manager)).status).toBe(403);
   expect(await readErpInventory(fixtures.companyA)).toEqual(before);
   await settings.screenshot({path:testInfo.outputPath('erp-review-policy.png')});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  } finally {
+    expect((await call({action:'grant',uid:fixtures.accounts.managerA.uid,access:managerAccess,expectedAccess:'MANAGER',reason:'검증 전 권한 복원'})).status).toBe(200);
+  }
 });
 
 test('ERP cumulative inbox includes old months, ages changes and retries reads after ADMIN confirmation',async({browser},testInfo)=>{
@@ -793,7 +802,7 @@ test('ERP inbound item search keeps new registration first and selects partial m
   await call('manageErp',{action:'save',kind:'warehouses',id:'warehouse',expectedRevision:0,values:{code:'WH-01',name:'본사 창고',active:true,address:'',notes:''}});
   await call('manageErp',{action:'save',kind:'partners',id:'supplier',expectedRevision:0,values:{code:'SUPPLIER',name:'입고 검색 검증 거래처',active:true,country:'KR',type:'SUPPLIER',notes:''}});
   const before=await readErpInventory(fixtures.companyA);
-  await page.goto('/#/erp?menu=inbound&view=inbound');const picker=page.getByRole('combobox',{name:'등록 품목 선택 *',exact:true}),list=page.getByRole('listbox',{name:'품목 검색 결과',exact:true});
+  await page.goto('/#/erp?menu=inbound&view=inbound');await openErpMovementDetails(page);const picker=page.getByRole('combobox',{name:'등록 품목 선택 *',exact:true}),list=page.getByRole('listbox',{name:'품목 검색 결과',exact:true});
   await picker.fill('322');await expect(list.getByRole('option')).toHaveCount(3);await expect(list.getByRole('option').first()).toHaveAccessibleName('신규 품목 등록');await expect(list.getByRole('option',{name:/SEARCH-SET|SG-OFF/})).toHaveCount(0);
   await picker.press('ArrowDown');await picker.press('ArrowDown');await picker.press('Enter');await expect(page.getByLabel('품목코드 *',{exact:true})).toHaveValue('SG-9000');await expect(page.getByLabel('규격',{exact:true})).toHaveValue('OMR322BK');
   await picker.fill('9001');await expect(list.getByRole('option')).toHaveCount(2);await list.getByRole('option',{name:/SG-9001/}).click();await expect(page.getByLabel('품목명 *',{exact:true})).toHaveValue('OMR322WT 화이트 장치');
@@ -820,7 +829,7 @@ test('ERP usability recovery preserves entry drafts and allocates grouped receip
     await call('manageErpImport',{action:'commit',id:opening.import.id,fingerprint:opening.import.preview.fingerprint});
     const item=(await call('manageErp',{action:'list',kind:'items',search:'0001',searchBy:'code'})).records[0];
     const inbound=await actorFor(browser,testInfo);await login(inbound,fixtures.accounts.memberA);const ip=inbound.page;ip.setDefaultTimeout(65000);await ip.goto('/#/erp');
-    let started=Date.now();await ip.getByRole('button',{name:'입고 등록하기',exact:true}).click();
+    let started=Date.now();await ip.getByRole('button',{name:'입고 등록하기',exact:true}).click();await openErpMovementDetails(ip);
     await ip.getByRole('combobox',{name:'등록 품목 선택 *',exact:true}).fill(item.code);await ip.getByRole('option',{name:/0001 · 합성 품목/}).click();
     await ip.getByRole('combobox',{name:'입고 창고 *',exact:true}).selectOption('warehouse');await ip.getByRole('combobox',{name:'거래처 *',exact:true}).selectOption('ux-buyer');
     await ip.getByLabel('입고수량 *',{exact:true}).fill('2');await ip.getByLabel('신규 입고단가 (KRW) *',{exact:true}).fill('1e2');await ip.getByRole('button',{name:'검증·미리보기',exact:true}).click();
@@ -829,7 +838,7 @@ test('ERP usability recovery preserves entry drafts and allocates grouped receip
     await preview.getByRole('button',{name:'1번 품목 수정',exact:true}).first().click();await expect(ip.locator('.erp-movement-line')).toBeFocused();await expect(ip.getByLabel('입고수량 *',{exact:true})).toHaveValue('2');
     await ip.getByLabel('신규 입고단가 (KRW) *',{exact:true}).fill('100');await ip.getByRole('button',{name:'검증·미리보기',exact:true}).click();await preview.getByRole('checkbox',{name:'수량·단가·거래처와 재고 변동을 확인했습니다.',exact:true}).check();await preview.getByRole('button',{name:'입고 확정',exact:true}).click();await expect(preview.getByRole('heading',{name:'입고 확정 완료',exact:true})).toBeFocused();
     timings.push({task:'INBOUND',automatedDurationMs:Date.now()-started,injectedInvalidAttempts:1,incorrectCommits:0});expect((await readErpInventory(fixtures.companyA)).balances).toEqual([{quantity:12,value:1200}]);await preview.scrollIntoViewIfNeeded();await ip.screenshot({path:testInfo.outputPath('erp-usability-inbound.png'),fullPage:true});
-    const outgoing=await actorFor(browser,testInfo);await login(outgoing,fixtures.accounts.managerA);const op=outgoing.page;op.setDefaultTimeout(65000);await op.goto('/#/erp');started=Date.now();await op.getByRole('button',{name:'출고 등록하기',exact:true}).click();
+    const outgoing=await actorFor(browser,testInfo);await login(outgoing,fixtures.accounts.managerA);const op=outgoing.page;op.setDefaultTimeout(65000);await op.goto('/#/erp');started=Date.now();await op.getByRole('button',{name:'출고 등록하기',exact:true}).click();await openErpMovementDetails(op);
     await op.getByRole('combobox',{name:'등록 품목 선택 *',exact:true}).fill('0001');await op.getByRole('option',{name:/0001 · 합성 품목/}).click();await op.getByRole('combobox',{name:'출고 창고 *',exact:true}).selectOption('warehouse');await op.getByRole('combobox',{name:'거래처 *',exact:true}).selectOption('ux-buyer');await op.getByLabel('출고수량 *',{exact:true}).fill('2');await op.getByRole('combobox',{name:'출고 입금상태 *',exact:true}).selectOption('CREDIT');
     const mode=op.getByRole('combobox',{name:'1번 금액 입력방식',exact:true});await op.getByLabel('판매단가 (KRW) *',{exact:true}).fill('300');await mode.selectOption('TOTAL');await op.getByLabel('1번 총출고금액',{exact:true}).fill('2000');await mode.selectOption('UNIT');await expect(op.getByLabel('판매단가 (KRW) *',{exact:true})).toHaveValue('300');await mode.selectOption('TOTAL');await expect(op.getByLabel('1번 총출고금액',{exact:true})).toHaveValue('2000');
     await op.getByLabel('1번 총출고금액',{exact:true}).fill('0.001');await op.getByRole('button',{name:'검증·미리보기',exact:true}).click();const alert=op.getByRole('alert').filter({hasText:'총출고금액'});await expect(alert).toBeFocused();await alert.getByRole('button',{name:'1번 품목 수정',exact:true}).click();await expect(op.locator('.erp-movement-line')).toBeFocused();await op.getByLabel('1번 총출고금액',{exact:true}).fill('2000');
@@ -1015,7 +1024,7 @@ test('ERP bundles, receivables and borrowed customer goods connect through deskt
   await editor.getByRole('combobox', {name: '1번 구성품', exact: true}).selectOption(part.id); await editor.getByLabel('1번 구성수량 *', {exact: true}).fill('2');
   await editor.getByRole('combobox',{name:'2번 구성품',exact:true}).selectOption(second.id);await editor.getByRole('combobox',{name:'원가 확인 창고',exact:true}).selectOption('warehouse');await expect(editor.getByRole('region',{name:'구성품 재고·예상 원가'})).toContainText('250원',{timeout:65000});await expect(editor.getByLabel('매입단가 (원) *',{exact:true})).toHaveCount(0);await editor.getByRole('region',{name:'구성품 재고·예상 원가'}).scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-bundle-registration.png'),fullPage:true});
   await editor.getByRole('button', {name: '저장', exact: true}).click(); await expect(page.getByRole('button', {name: 'SET 출고등록', exact: true})).toBeVisible({timeout: 65000});
-  await page.getByRole('button', {name: 'SET 출고등록', exact: true}).click();
+  await page.getByRole('button', {name: 'SET 출고등록', exact: true}).click();await openErpMovementDetails(page);
   await page.getByRole('combobox', {name: '출고 창고 *', exact: true}).selectOption('warehouse'); await page.getByLabel('거래일 *', {exact: true}).fill('2026-11-12');
   await page.getByRole('combobox', {name: '거래처 *', exact: true}).selectOption('buyer'); await page.getByLabel('출고수량 *', {exact: true}).fill('2'); await page.getByRole('combobox',{name:'1번 금액 입력방식',exact:true}).selectOption('TOTAL');await page.getByLabel('1번 총출고금액',{exact:true}).fill('1000');await expect(page.getByRole('region',{name:'구성품 재고·예상 원가'})).toContainText('500원',{timeout:65000});await expect(page.getByRole('region',{name:'구성품 재고·예상 원가'}).getByRole('article')).toHaveCount(2);await expect(page.getByRole('button',{name:'이 품목 재고·단가 비교',exact:true})).toHaveCount(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.getByRole('region',{name:'구성품 재고·예상 원가'}).scrollIntoViewIfNeeded();await page.screenshot({path:testInfo.outputPath('erp-bundle-outgoing.png'),fullPage:true});
   await page.getByRole('combobox',{name:'출고 입금상태 *',exact:true}).selectOption('CREDIT');

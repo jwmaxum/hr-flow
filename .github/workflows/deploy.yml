@@ -19,8 +19,6 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     defaults:
       run:
         working-directory: client
@@ -31,7 +29,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js 24
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: npm
@@ -70,11 +68,15 @@ jobs:
         run: npm run test:e2e:boundary
 
   browser-e2e:
-    name: Isolated login and attachment checks
+    name: Isolated login and attachment checks (${{ matrix.browser }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium-desktop, chromium-mobile]
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      HR_FLOW_E2E_BROWSER_PROJECT: ${{ matrix.browser }}
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -82,7 +84,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js 24
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: npm
@@ -92,7 +94,7 @@ jobs:
             functions/package-lock.json
 
       - name: Set up Java 21 for Firebase emulators
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: '21'
@@ -114,9 +116,9 @@ jobs:
 
       - name: Save safe test summary and synthetic screenshots
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: isolated-browser-e2e
+          name: isolated-browser-e2e-${{ matrix.browser }}
           path: |
             test-results/e2e/results.json
             test-results/e2e/erp-usability-*.json
