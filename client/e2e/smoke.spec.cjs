@@ -517,7 +517,7 @@ test('ERP Excel opening and transactions preview then commit once with exact inv
   const source = await downloaded; expect(source.suggestedFilename()).toBe(transaction.name);
   const stream = await source.createReadStream(); const chunks = []; for await (const chunk of stream) chunks.push(chunk);
   expect(Buffer.concat(chunks).equals(Buffer.from(transaction.base64, 'base64'))).toBe(true);
-  await actor.page.getByRole('button', { name: '반영된 재고 확인', exact: true }).click();
+  await actor.page.getByRole('button', { name: '반영된 재고 확인', exact: true }).click();await openErpItemDetails(actor.page);
   await actor.page.getByLabel('품목명 검색', { exact: true }).fill('합성 품목');
   const inventory = actor.page.getByRole('region', { name: '품목 재고현황' });
   await expect(inventory.getByRole('cell', { name: '15', exact: true })).toBeVisible();
@@ -730,7 +730,7 @@ test('ERP five work menus and SUB_ADMIN manager corrections preserve ADMIN bound
   await openErp(mp,'품목·재고현황');
   await mp.getByRole('navigation',{name:'ERP 주 메뉴',exact:true}).getByRole('button',{name:'판매·출고',exact:true}).click();
   await expect(mp.getByRole('heading',{name:'출고등록',exact:true})).toBeVisible();
-  await mp.goBack();
+  await mp.goBack();await openErpItemDetails(mp);
   await expect(mp.getByRole('region',{name:'품목 목록',exact:true})).toBeVisible();
   await mp.getByRole('heading',{name:'재고관리 ERP',exact:true}).scrollIntoViewIfNeeded();
   await mp.screenshot({path:testInfo.outputPath('erp-five-menus-manager.png'),fullPage:true});expect(await mp.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
@@ -1145,7 +1145,7 @@ test('ERP pending opening costs confirm real quantities and assets once on deskt
   const state=await readErpInventory(fixtures.companyA);expect(state.balances).toEqual([{quantity:209,value:2090}]);expect(state.ledgerCount).toBe(1);
   expect((await call('manageErpImport',{action:'openingList'})).records[0].pendingOpening.status).toBe('CONFIRMED');
   await page.screenshot({path:testInfo.outputPath('erp-opening-confirmed.png'),fullPage:true});
-  await panel.getByRole('button',{name:'재고현황 확인',exact:true}).click();
+  await panel.getByRole('button',{name:'재고현황 확인',exact:true}).click();await openErpItemDetails(page);
   await page.getByRole('button',{name:'원가 확인 대기 품목 재고 보기',exact:true}).click();
   const stock=page.getByRole('region',{name:'품목 재고현황',exact:true});await expect(stock.getByRole('cell',{name:'2,090',exact:true})).toBeVisible({timeout:65000});
   await expect(stock.getByText('이관 대기 수량 (원본 기준)',{exact:true})).toHaveCount(0);
