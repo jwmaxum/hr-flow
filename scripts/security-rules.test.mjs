@@ -133,10 +133,12 @@ try {
   await allow('self name update', updateDoc(document('bob', 'UserProfile', 'bob'), { name: 'Bob' }));
   await deny('self name rejects invalid type', updateDoc(document('bob', 'UserProfile', 'bob'), { name: { injected: true } }));
   await allow('ADMIN self salary update', updateDoc(document('alice', 'UserProfile', 'alice'), { annualSalary: 44444444 }));
+  await allow('ADMIN self bonus and withholding tax rate update', updateDoc(document('alice', 'UserProfile', 'alice'), { bonus: 500000, withholdingTaxRate: '3.3' }));
   await allow('ADMIN self private HR fields preserve existing personnel edit', updateDoc(document('alice', 'UserProfile', 'alice'), {
     rrn: 'synthetic-private-field', address: 'synthetic address', phone: 'synthetic phone', personalEmail: 'private@example.test'
   }));
   await allow('ADMIN employee salary update', updateDoc(document('alice', 'UserProfile', 'bob'), { annualSalary: 55555555 }));
+  await allow('ADMIN employee bonus and withholding tax rate update', updateDoc(document('alice', 'UserProfile', 'bob'), { bonus: 1000000, withholdingTaxRate: '8.8' }));
   await allow('ADMIN employee role update', updateDoc(document('alice', 'UserProfile', 'bob'), { role: 'SUB_ADMIN' }));
   await allow('ADMIN restores employee role', updateDoc(document('alice', 'UserProfile', 'bob'), { role: 'MEMBER' }));
   await allow('ADMIN reads payroll', getDoc(document('alice', 'payroll_records', 'payroll-a')));
@@ -156,6 +158,8 @@ try {
   await allow('refreshed session may read own profile', getDoc(document('sessionFresh', 'UserProfile', 'sessionUser')));
   await allow('refreshed session may read company data', getDoc(document('sessionFresh', 'notices', 'notice-a')));
   await deny('member salary self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { annualSalary: 99999999 }));
+  await deny('member bonus self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { bonus: 500000 }));
+  await deny('member withholdingTaxRate self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { withholdingTaxRate: '8.8' }));
   await deny('member role escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { role: 'ADMIN' }));
   await deny('owner cannot be demoted', updateDoc(document('admin2', 'UserProfile', 'alice'), { role: 'MEMBER' }));
   await deny('owner cannot be retired', updateDoc(document('admin2', 'UserProfile', 'alice'), { status: 'RESIGNED' }));

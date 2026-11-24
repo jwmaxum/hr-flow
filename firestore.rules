@@ -156,13 +156,15 @@ service cloud.firestore {
         (request.auth.uid == uid && role() == 'ADMIN' && onlyChanged([
           'name', 'joinDate', 'annualLeaveTotal', 'usedLeave', 'annualSalary', 'salaryType',
           'isSeveranceIncluded', 'dependents', 'childrenUnder20', 'nonTaxable', 'additionalLeave',
-          'teamId', 'divisionId', 'teamHistory', 'rrn', 'address', 'phone', 'personalEmail'
+          'teamId', 'divisionId', 'teamHistory', 'rrn', 'address', 'phone', 'personalEmail',
+          'bonus', 'withholdingTaxRate'
         ]) && validProfileOrg(request.resource.data)) ||
         ((superAdmin() || (request.auth.uid != uid && companyAdmin(resource.data.companyId))) &&
           onlyChanged(['name', 'role', 'joinDate', 'annualLeaveTotal', 'usedLeave',
             'annualSalary', 'salaryType', 'isSeveranceIncluded', 'dependents', 'childrenUnder20',
             'nonTaxable', 'additionalLeave', 'teamId', 'divisionId', 'teamHistory',
-            'rrn', 'address', 'phone', 'personalEmail']) &&
+            'rrn', 'address', 'phone', 'personalEmail',
+            'bonus', 'withholdingTaxRate']) &&
           resource.data.role != 'SUPER_ADMIN' && request.resource.data.role in ['ADMIN', 'SUB_ADMIN', 'MEMBER'] &&
           validProfileOrg(request.resource.data) &&
           (!owner(resource.data.companyId, uid) || unchanged(['role', 'status'])))
