@@ -15,6 +15,7 @@ import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { useAuthStore } from '../store/authStore';
 import { getRoleDisplayName } from '../utils/roleDisplay';
+import { formatRrnInput } from '../utils/rrnFormat';
 import { getErrorCode, getErrorMessage } from '../utils/errors';
 import { calculateLeaveEntitlement } from '../utils/leaveCalculator';
 import './EmployeeManagement.css';
@@ -627,13 +628,15 @@ export const EmployeeManagement: React.FC = () => {
                         <Input
                           type="text"
                           id="personnel-rrn"
+                          inputMode="numeric"
+                          maxLength={14}
                           value={editingInfo.rrn}
-                          onChange={(e) => setEditingInfo({...editingInfo, rrn: e.target.value})}
+                          onChange={(e) => setEditingInfo({...editingInfo, rrn: formatRrnInput(e.target.value)})}
                           disabled={!isAdmin}
-                          placeholder="예: 660101-1****** (뒤 6자리 마스킹 가능)"
+                          placeholder="예: 651128-1 (숫자 7자리 입력 시 자동 하이픈)"
                           className="wf-input"
                         />
-                        <p className="text-xs leading-relaxed text-slate-500">국민연금 연령 판단에는 앞 6자리와 뒤 첫 숫자 1자리가 필요합니다. 나머지 6자리는 가려도 됩니다. 정보가 부족하면 만 60세 미만으로 계산합니다.</p>
+                        <p className="text-xs leading-relaxed text-slate-500">숫자 7자리(앞 6자리 + 뒤 첫 숫자 1~4)를 입력하면 자동으로 하이픈(-)이 삽입됩니다. 나머지 6자리는 생략하거나 *로 가려도 됩니다.</p>
                     </div>
                     <div className="space-y-2">
                         <label htmlFor="personnel-personalEmail" className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">개인 이메일</label>
