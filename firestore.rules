@@ -5,33 +5,55 @@ service cloud.firestore {
     function profilePath(uid) { return /databases/$(database)/documents/UserProfile/$(uid); }
     function companyPath(id) { return /databases/$(database)/documents/companies/$(id); }
     function profile() { return get(profilePath(request.auth.uid)).data; }
-    function role() { return profile().role; }
-    function companyId() { return profile().companyId; }
-    function activeIdentity() {
-      return signedIn() && exists(profilePath(request.auth.uid)) &&
-        profile().get('status', 'ACTIVE') == 'ACTIVE' && profile().get('mustChangePassword', false) != true &&
-        (profile().get('sessionValidAfter', 0) == 0 ||
-          (request.auth.token.get('auth_time', 0) is number &&
-            request.auth.token.get('auth_time', 0) >= profile().sessionValidAfter));
+    function activeIdentityData(p) {
+      let authTime = request.auth.token.get('auth_time', 0);
+      return p.get('status', 'ACTIVE') == 'ACTIVE' &&
+        p.get('mustChangePassword', false) != true &&
+        (p.get('sessionValidAfter', 0) == 0 ||
+          (authTime is number && authTime >= p.sessionValidAfter));
     }
     function activeCompany(id) {
       return id is string && id != '' && exists(companyPath(id)) && get(companyPath(id)).data.status == 'ACTIVE';
     }
+    function entitledCompanyData(c) {
+      return c.status == 'ACTIVE' && c.get('accessUntil', null) is timestamp && c.accessUntil > request.time;
+    }
     function entitledCompany(id) {
-      return activeCompany(id) && get(companyPath(id)).data.get('accessUntil', null) is timestamp &&
-        get(companyPath(id)).data.accessUntil > request.time;
+      return id is string && id != '' && exists(companyPath(id)) && entitledCompanyData(get(companyPath(id)).data);
     }
-    function superAdmin() { return activeIdentity() && role() == 'SUPER_ADMIN' && companyId() == 'PLATFORM'; }
+    function isSuperAdminProfile(p) {
+      return p.role == 'SUPER_ADMIN' && p.companyId == 'PLATFORM';
+    }
+    function superAdminProfile(p) {
+      return activeIdentityData(p) && isSuperAdminProfile(p);
+    }
+    function readyProfile(p) {
+      return activeIdentityData(p) && (isSuperAdminProfile(p) ||
+        (p.role in ['ADMIN', 'SUB_ADMIN', 'MEMBER'] && entitledCompany(p.companyId)));
+    }
+    function sameCompanyProfile(p, id) {
+      return readyProfile(p) && id is string && id != '' && p.companyId == id;
+    }
+    function companyAdminProfile(p, id) {
+      return sameCompanyProfile(p, id) && p.role == 'ADMIN';
+    }
+    function companyManagerProfile(p, id) {
+      return sameCompanyProfile(p, id) && p.role in ['ADMIN', 'SUB_ADMIN'];
+    }
+    function superAdmin() {
+      return signedIn() && exists(profilePath(request.auth.uid)) && superAdminProfile(profile());
+    }
     function ready() {
-      return activeIdentity() && ((role() == 'SUPER_ADMIN' && companyId() == 'PLATFORM') ||
-        (role() in ['ADMIN', 'SUB_ADMIN', 'MEMBER'] && entitledCompany(companyId())));
+      return signedIn() && exists(profilePath(request.auth.uid)) && readyProfile(profile());
     }
-    function sameCompany(id) { return ready() && id is string && id != '' && companyId() == id; }
-    function companyAdmin(id) { return sameCompany(id) && role() == 'ADMIN'; }
-    function companyManager(id) { return sameCompany(id) && role() in ['ADMIN', 'SUB_ADMIN']; }
-    function divisionManager(id, divisionId) {
-      return sameCompany(id) && role() == 'SUB_ADMIN' && divisionId is string && divisionId != '' &&
-        profile().get('divisionId', '') == divisionId;
+    function sameCompany(id) {
+      return signedIn() && exists(profilePath(request.auth.uid)) && sameCompanyProfile(profile(), id);
+    }
+    function companyAdmin(id) {
+      return signedIn() && exists(profilePath(request.auth.uid)) && companyAdminProfile(profile(), id);
+    }
+    function companyManager(id) {
+      return signedIn() && exists(profilePath(request.auth.uid)) && companyManagerProfile(profile(), id);
     }
     function owner(id, uid) { return exists(companyPath(id)) && get(companyPath(id)).data.adminUid == uid; }
     function unchanged(keys) { return !request.resource.data.diff(resource.data).affectedKeys().hasAny(keys); }
@@ -81,44 +103,170 @@ service cloud.firestore {
         (exists(/databases/$(database)/documents/divisions/$(divisionId)) &&
           get(/databases/$(database)/documents/divisions/$(divisionId)).data.companyId == id));
     }
+    function validTeamData(t, id, divisionId) {
+      return t.companyId == id && t.divisionId == divisionId;
+    }
     function validOrg(id, teamId, divisionId) {
       return validDivision(id, divisionId) && teamId is string && (teamId == '' ||
         (exists(/databases/$(database)/documents/teams/$(teamId)) &&
-          get(/databases/$(database)/documents/teams/$(teamId)).data.companyId == id &&
-          get(/databases/$(database)/documents/teams/$(teamId)).data.divisionId == divisionId));
+          validTeamData(get(/databases/$(database)/documents/teams/$(teamId)).data, id, divisionId)));
+    }
+    function validHeadData(h, id) {
+      return h.companyId == id && h.get('status', 'ACTIVE') == 'ACTIVE' &&
+        h.role in ['ADMIN', 'SUB_ADMIN', 'MEMBER'];
     }
     function validHead(id, uid) {
-      return uid is string && (uid == '' || (exists(profilePath(uid)) &&
-        get(profilePath(uid)).data.companyId == id && get(profilePath(uid)).data.get('status', 'ACTIVE') == 'ACTIVE' &&
-        get(profilePath(uid)).data.role in ['ADMIN', 'SUB_ADMIN', 'MEMBER']));
+      return uid is string && (uid == '' || (exists(profilePath(uid)) && validHeadData(get(profilePath(uid)).data, id)));
     }
     function validProfileOrg(data) { return validTenant(data) && validOrg(data.companyId, data.get('teamId', ''), data.get('divisionId', '')); }
+    function validOwnRouteProfile(p, data) {
+      return data.get('teamId', '') == p.get('teamId', '') &&
+        data.get('divisionId', '') == p.get('divisionId', '') && validProfileOrg(data);
+    }
     function validOwnRoute(data) {
-      return data.get('teamId', '') == profile().get('teamId', '') &&
-        data.get('divisionId', '') == profile().get('divisionId', '') && validProfileOrg(data);
+      return validOwnRouteProfile(profile(), data);
+    }
+    function validApprovalReady(p) {
+      let divId = p.get('divisionId', '');
+      return onlyChanged(['status', 'updatedAt', 'updatedBy']) && validProfileOrg(resource.data) &&
+        request.resource.data.status in ['PENDING', 'SUB_APPROVED', 'APPROVED', 'REJECTED'] &&
+        (isSuperAdminProfile(p) ||
+          (p.companyId == resource.data.companyId && (p.role == 'ADMIN' ||
+            (p.role == 'SUB_ADMIN' && divId != '' &&
+              divId == resource.data.get('divisionId', '') &&
+              resource.data.status == 'PENDING' && request.resource.data.status in ['SUB_APPROVED', 'REJECTED']))));
+    }
+    function validApprovalProfile(p) {
+      return readyProfile(p) && validApprovalReady(p);
     }
     function validApproval() {
-      return ready() && onlyChanged(['status', 'updatedAt', 'updatedBy']) && validProfileOrg(resource.data) &&
-        request.resource.data.status in ['PENDING', 'SUB_APPROVED', 'APPROVED', 'REJECTED'] &&
-        ((role() == 'SUPER_ADMIN' && companyId() == 'PLATFORM') ||
-          (companyId() == resource.data.companyId && (role() == 'ADMIN' ||
-            (role() == 'SUB_ADMIN' && profile().get('divisionId', '') != '' &&
-              profile().get('divisionId', '') == resource.data.get('divisionId', '') &&
-              resource.data.status == 'PENDING' && request.resource.data.status in ['SUB_APPROVED', 'REJECTED']))));
+      return signedIn() && exists(profilePath(request.auth.uid)) && validApprovalProfile(profile());
     }
     function profileSecurityUnchanged() {
       return unchanged(['uid', 'email', 'companyId', 'tenantId', 'status', 'createdAt', 'mustChangePassword',
         'lastPasswordChange', 'sessionValidAfter', 'authVersion', 'securityVersion', 'passwordChangedAt']);
     }
+    function canReadCompanyProfile(p, id) {
+      return activeIdentityData(p) && (isSuperAdminProfile(p) || (p.companyId == id && activeCompany(id)));
+    }
+    function canReadCompany(id) {
+      return signedIn() && exists(profilePath(request.auth.uid)) && canReadCompanyProfile(profile(), id);
+    }
+    function canUpdateCompanyProfile(p, id) {
+      return activeIdentityData(p) && (
+        (isSuperAdminProfile(p) && resource.data.status in ['ACTIVE', 'SUSPENDED'] &&
+          request.resource.data.status in ['ACTIVE', 'SUSPENDED'] &&
+          onlyChanged(['nameKo', 'nameEn', 'status', 'updatedAt', 'updatedBy', 'lastBackupAt'])) ||
+        (p.role == 'ADMIN' && id is string && id != '' && p.companyId == id && entitledCompany(p.companyId) &&
+          onlyChanged(['updatedAt', 'updatedBy', 'lastBackupAt']))
+      );
+    }
+    function canUpdateCompany(id) {
+      return signedIn() && exists(profilePath(request.auth.uid)) && canUpdateCompanyProfile(profile(), id);
+    }
+    function canReadUserProfileWith(p, uid) {
+      return readyProfile(p) && (
+        request.auth.uid == uid ||
+        isSuperAdminProfile(p) ||
+        (p.role == 'ADMIN' && resource.data.companyId is string && resource.data.companyId != '' &&
+          p.companyId == resource.data.companyId)
+      );
+    }
+    function canReadUserProfile(uid) {
+      return signedIn() && exists(profilePath(request.auth.uid)) && canReadUserProfileWith(profile(), uid);
+    }
+    function canUpdateUserProfileWith(p, uid) {
+      return readyProfile(p) && profileSecurityUnchanged() && validProfileName() && (
+        (request.auth.uid == uid && onlyChanged(['name'])) ||
+        (request.auth.uid == uid && p.role == 'ADMIN' && onlyChanged([
+          'name', 'joinDate', 'annualLeaveTotal', 'usedLeave', 'annualSalary', 'salaryType',
+          'isSeveranceIncluded', 'dependents', 'childrenUnder20', 'nonTaxable', 'additionalLeave',
+          'teamId', 'divisionId', 'teamHistory', 'rrn', 'address', 'phone', 'personalEmail',
+          'bonus', 'withholdingTaxRate'
+        ]) && validProfileOrg(request.resource.data)) ||
+        ((isSuperAdminProfile(p) ||
+          (request.auth.uid != uid && p.role == 'ADMIN' &&
+            resource.data.companyId is string && resource.data.companyId != '' &&
+            p.companyId == resource.data.companyId)) &&
+          onlyChanged(['name', 'role', 'joinDate', 'annualLeaveTotal', 'usedLeave',
+            'annualSalary', 'salaryType', 'isSeveranceIncluded', 'dependents', 'childrenUnder20',
+            'nonTaxable', 'additionalLeave', 'teamId', 'divisionId', 'teamHistory',
+            'rrn', 'address', 'phone', 'personalEmail',
+            'bonus', 'withholdingTaxRate']) &&
+          resource.data.role != 'SUPER_ADMIN' && request.resource.data.role in ['ADMIN', 'SUB_ADMIN', 'MEMBER'] &&
+          validProfileOrg(request.resource.data) &&
+          (!owner(resource.data.companyId, uid) || unchanged(['role', 'status'])))
+      );
+    }
+    function canUpdateUserProfile(uid) {
+      return signedIn() && exists(profilePath(request.auth.uid)) && canUpdateUserProfileWith(profile(), uid);
+    }
+    function canReadScopedRecordProfile(p) {
+      let data = resource.data;
+      let divId = data.get('divisionId', '');
+      return readyProfile(p) && (
+        isSuperAdminProfile(p) ||
+        (data.companyId is string && data.companyId != '' && p.companyId == data.companyId && (
+          p.role == 'ADMIN' ||
+          (p.role == 'SUB_ADMIN' && divId is string && divId != '' && p.get('divisionId', '') == divId) ||
+          data.userId == request.auth.uid
+        ))
+      );
+    }
+    function canReadScopedRecord() {
+      return signedIn() && exists(profilePath(request.auth.uid)) && canReadScopedRecordProfile(profile());
+    }
+    function canDeleteScopedRecordProfile(p) {
+      let data = resource.data;
+      return readyProfile(p) && (
+        isSuperAdminProfile(p) ||
+        (data.companyId is string && data.companyId != '' && p.companyId == data.companyId && (
+          p.role == 'ADMIN' ||
+          (data.userId == request.auth.uid && data.status == 'PENDING')
+        ))
+      );
+    }
+    function canDeleteScopedRecord() {
+      return signedIn() && exists(profilePath(request.auth.uid)) && canDeleteScopedRecordProfile(profile());
+    }
+    function canUpdateExpenseProfile(p) {
+      let data = resource.data;
+      return readyProfile(p) && (
+        (data.companyId is string && data.companyId != '' && p.companyId == data.companyId &&
+          data.userId == request.auth.uid && data.status == 'PENDING' &&
+          validOwnRouteProfile(p, request.resource.data) && validAttachmentUpdate('expenses') &&
+          unchanged(['companyId', 'tenantId', 'userId', 'status', 'createdAt', 'divisionId', 'teamId'])) ||
+        validApprovalReady(p)
+      );
+    }
+    function canUpdateExpense() {
+      return signedIn() && exists(profilePath(request.auth.uid)) && canUpdateExpenseProfile(profile());
+    }
+    function canUpdateNoticeProfile(p) {
+      let data = resource.data;
+      return readyProfile(p) && (
+        isSuperAdminProfile(p) ||
+        (data.companyId is string && data.companyId != '' && p.companyId == data.companyId && (
+          p.role == 'ADMIN' || (p.role == 'SUB_ADMIN' && data.authorId == request.auth.uid)
+        ))
+      ) && unchanged(['companyId', 'tenantId', 'authorId', 'createdAt']) && validAttachmentUpdate('notices');
+    }
+    function canUpdateNotice() {
+      return signedIn() && exists(profilePath(request.auth.uid)) && canUpdateNoticeProfile(profile());
+    }
+    function canReadNotificationProfile(p) {
+      return sameCompanyProfile(p, resource.data.companyId) && resource.data.recipientRole == p.role;
+    }
+    function canReadNotification(uid) {
+      return signedIn() && uid == request.auth.uid && resource.data.recipientId == uid &&
+        exists(profilePath(request.auth.uid)) && canReadNotificationProfile(profile());
+    }
 
     match /companies/{id} {
       // Registration, identity ownership and subscription dates are server-only.
-      allow read: if superAdmin() || (activeIdentity() && companyId() == id && activeCompany(id));
+      allow read: if canReadCompany(id);
       allow create, delete: if false;
-      allow update: if (superAdmin() && resource.data.status in ['ACTIVE', 'SUSPENDED'] &&
-        request.resource.data.status in ['ACTIVE', 'SUSPENDED'] &&
-        onlyChanged(['nameKo', 'nameEn', 'status', 'updatedAt', 'updatedBy', 'lastBackupAt'])) ||
-        (companyAdmin(id) && onlyChanged(['updatedAt', 'updatedBy', 'lastBackupAt']));
+      allow update: if canUpdateCompany(id);
       // ERP uses authenticated callable services, including quantity-only responses.
       match /{erpCollection}/{recordId} {
         allow read, write: if false;
@@ -149,53 +297,26 @@ service cloud.firestore {
     }
     match /UserProfile/{uid} {
       // SUB_ADMIN uses the server's minimal directory instead of salary/HR documents.
-      allow read: if ready() && (request.auth.uid == uid || superAdmin() || companyAdmin(resource.data.companyId));
+      allow read: if canReadUserProfile(uid);
       allow create, delete: if false;
-      allow update: if ready() && profileSecurityUnchanged() && validProfileName() && (
-        (request.auth.uid == uid && onlyChanged(['name'])) ||
-        (request.auth.uid == uid && role() == 'ADMIN' && onlyChanged([
-          'name', 'joinDate', 'annualLeaveTotal', 'usedLeave', 'annualSalary', 'salaryType',
-          'isSeveranceIncluded', 'dependents', 'childrenUnder20', 'nonTaxable', 'additionalLeave',
-          'teamId', 'divisionId', 'teamHistory', 'rrn', 'address', 'phone', 'personalEmail',
-          'bonus', 'withholdingTaxRate'
-        ]) && validProfileOrg(request.resource.data)) ||
-        ((superAdmin() || (request.auth.uid != uid && companyAdmin(resource.data.companyId))) &&
-          onlyChanged(['name', 'role', 'joinDate', 'annualLeaveTotal', 'usedLeave',
-            'annualSalary', 'salaryType', 'isSeveranceIncluded', 'dependents', 'childrenUnder20',
-            'nonTaxable', 'additionalLeave', 'teamId', 'divisionId', 'teamHistory',
-            'rrn', 'address', 'phone', 'personalEmail',
-            'bonus', 'withholdingTaxRate']) &&
-          resource.data.role != 'SUPER_ADMIN' && request.resource.data.role in ['ADMIN', 'SUB_ADMIN', 'MEMBER'] &&
-          validProfileOrg(request.resource.data) &&
-          (!owner(resource.data.companyId, uid) || unchanged(['role', 'status'])))
-      );
+      allow update: if canUpdateUserProfile(uid);
     }
     match /expenses/{id} {
-      allow read: if superAdmin() || companyAdmin(resource.data.companyId) ||
-        divisionManager(resource.data.companyId, resource.data.get('divisionId', '')) ||
-        (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid);
+      allow read: if canReadScopedRecord();
       allow create: if sameCompany(request.resource.data.companyId) && request.resource.data.userId == request.auth.uid &&
         request.resource.data.status == 'PENDING' && validOwnRoute(request.resource.data) && validAttachmentInput(request.resource.data, 'expenses');
-      allow update: if (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid &&
-        resource.data.status == 'PENDING' && validOwnRoute(request.resource.data) && validAttachmentUpdate('expenses') &&
-        unchanged(['companyId', 'tenantId', 'userId', 'status', 'createdAt', 'divisionId', 'teamId'])) || validApproval();
-      allow delete: if superAdmin() || companyAdmin(resource.data.companyId) ||
-        (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid && resource.data.status == 'PENDING');
+      allow update: if canUpdateExpense();
+      allow delete: if canDeleteScopedRecord();
     }
     match /leaves/{id} {
-      allow read: if superAdmin() || companyAdmin(resource.data.companyId) ||
-        divisionManager(resource.data.companyId, resource.data.get('divisionId', '')) ||
-        (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid);
+      allow read: if canReadScopedRecord();
       allow create: if sameCompany(request.resource.data.companyId) && request.resource.data.userId == request.auth.uid &&
         request.resource.data.status == 'PENDING' && validOwnRoute(request.resource.data) && validAttachmentInput(request.resource.data, 'leaves');
       allow update: if validApproval();
-      allow delete: if superAdmin() || companyAdmin(resource.data.companyId) ||
-        (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid && resource.data.status == 'PENDING');
+      allow delete: if canDeleteScopedRecord();
     }
     match /attendance/{id} {
-      allow read: if superAdmin() || companyAdmin(resource.data.companyId) ||
-        divisionManager(resource.data.companyId, resource.data.get('divisionId', '')) ||
-        (sameCompany(resource.data.companyId) && resource.data.userId == request.auth.uid);
+      allow read: if canReadScopedRecord();
       allow create: if sameCompany(request.resource.data.companyId) && request.resource.data.userId == request.auth.uid &&
         request.resource.data.type in ['IN', 'OUT'] && validOwnRoute(request.resource.data);
       allow update: if (superAdmin() || companyAdmin(resource.data.companyId)) &&
@@ -206,9 +327,7 @@ service cloud.firestore {
       allow read: if superAdmin() || sameCompany(resource.data.companyId);
       allow create: if companyManager(request.resource.data.companyId) && request.resource.data.authorId == request.auth.uid &&
         validTenant(request.resource.data) && validAttachmentInput(request.resource.data, 'notices');
-      allow update: if (superAdmin() || companyAdmin(resource.data.companyId) ||
-        (companyManager(resource.data.companyId) && resource.data.authorId == request.auth.uid)) &&
-        unchanged(['companyId', 'tenantId', 'authorId', 'createdAt']) && validAttachmentUpdate('notices');
+      allow update: if canUpdateNotice();
       allow delete: if superAdmin() || companyAdmin(resource.data.companyId);
     }
     match /AuditLogs/{id} {
@@ -281,8 +400,7 @@ service cloud.firestore {
       allow update: if superAdmin() && unchanged(['companyId', 'tenantId', 'adminUid', 'userId', 'createdAt']);
     }
     match /officialLetterNotifications/{uid}/items/{id} {
-      allow read: if ready() && uid == request.auth.uid && resource.data.recipientId == uid &&
-        sameCompany(resource.data.companyId) && resource.data.recipientRole == role();
+      allow read: if canReadNotification(uid);
       allow write: if false;
     }
     // Future collections, attachments, registry and official data are server-only.
