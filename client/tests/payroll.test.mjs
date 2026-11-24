@@ -106,3 +106,59 @@ test('the legal formula handles incomes above the tabulated ten million won limi
     assert.equal(calculateIncomeTax(income, 1, 0).incomeTax, tax);
   }
 });
+
+test('bonus increases monthly gross, taxable income, four major insurances, and income tax appropriately', () => {
+  const withoutBonus = calculateNetPay({ annualSalary: 30_000_000, nonTaxable: 200_000 }, null, { year: 2026, month: 10 });
+  const withBonus = calculateNetPay({ annualSalary: 30_000_000, nonTaxable: 200_000, bonus: 1_000_000 }, null, { year: 2026, month: 10 });
+  assert.ok(withoutBonus && withBonus);
+  assert.equal(withoutBonus.monthlyGross, 2_500_000);
+  assert.equal(withBonus.monthlyGross, 3_500_000);
+  assert.equal(withBonus.bonus, 1_000_000);
+  assert.equal(withBonus.nonTaxable, 200_000);
+  assert.equal(withBonus.basePay, 3_300_000);
+  assert.ok(withBonus.incomeTax > withoutBonus.incomeTax);
+  assert.ok(withBonus.totalInsurance > withoutBonus.totalInsurance);
+  assert.equal(withBonus.monthlyGross - withBonus.totalDeductions, withBonus.netPay);
+});
+
+test('irregular worker with 3.3% business withholding exempts 4 major insurances and deducts 3% income + 0.3% local tax', () => {
+  const irregular = calculateNetPay({
+    annualSalary: 36_000_000,
+    salaryType: 'IRREGULAR',
+    withholdingTaxRate: '3.3'
+  }, null, { year: 2026, month: 10 });
+  assert.ok(irregular);
+  assert.equal(irregular.monthlyGross, 3_000_000);
+  assert.equal(irregular.nonTaxable, 0);
+  assert.equal(irregular.pension, 0);
+  assert.equal(irregular.health, 0);
+  assert.equal(irregular.longTerm, 0);
+  assert.equal(irregular.employment, 0);
+  assert.equal(irregular.totalInsurance, 0);
+  assert.equal(irregular.incomeTax, 90_000); // 3,000,000 * 3%
+  assert.equal(irregular.localTax, 9_000); // 90,000 * 10%
+  assert.equal(irregular.totalDeductions, 99_000); // 3.3%
+  assert.equal(irregular.netPay, 2_901_000);
+  assert.equal(irregular.isIrregular, true);
+  assert.equal(irregular.withholdingTaxRate, '3.3');
+  assert.equal(irregular.salaryBasis, 'IRREGULAR');
+});
+
+test('irregular worker with 8.8% other income withholding and bonus calculates accurately', () => {
+  const irregular = calculateNetPay({
+    annualSalary: 24_000_000,
+    salaryType: 'IRREGULAR',
+    withholdingTaxRate: '8.8',
+    bonus: 500_000
+  }, null, { year: 2026, month: 10 });
+  assert.ok(irregular);
+  assert.equal(irregular.monthlyGross, 2_500_000); // 2,000,000 base + 500,000 bonus
+  assert.equal(irregular.bonus, 500_000);
+  assert.equal(irregular.totalInsurance, 0);
+  assert.equal(irregular.incomeTax, 200_000); // 2,500,000 * 8%
+  assert.equal(irregular.localTax, 20_000); // 200,000 * 10%
+  assert.equal(irregular.totalDeductions, 220_000); // 8.8%
+  assert.equal(irregular.netPay, 2_280_000);
+  assert.equal(irregular.isIrregular, true);
+  assert.equal(irregular.withholdingTaxRate, '8.8');
+});

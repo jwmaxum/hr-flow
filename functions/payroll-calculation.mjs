@@ -175,8 +175,68 @@ export function createPayrollCalculator(officialData) {
     if (!Number.isFinite(salary) || salary <= 0 || !Number.isSafeInteger(Math.floor(salary))) return null;
     const selected = periodOf(period);
     const { dependents, children } = getDeductionCounts(employee);
-    const monthlyGross = Math.floor(salary / 12);
-    const nonTaxable = Math.min(monthlyGross, Math.max(0, Number.isFinite(employee.nonTaxable) ? Math.floor(employee.nonTaxable) : 200000));
+    const baseMonthly = Math.floor(salary / 12);
+    const bonus = Math.max(0, Number.isFinite(employee.bonus) ? Math.floor(employee.bonus) : 0);
+    const monthlyGross = baseMonthly + bonus;
+    const isIrregular = employee.salaryType === 'IRREGULAR';
+    const salaryBasis = isIrregular ? 'IRREGULAR' : (employee.salaryType === 'MONTHLY' ? 'MONTHLY' : 'ANNUAL');
+
+    const tableStatus = getTaxTableStatus(table);
+    const effective = tableStatus.effectiveFrom;
+    const selectedDate = `${selected.year}-${String(selected.month).padStart(2, '0')}-01`;
+    const effectiveTime = effective ? Date.parse(effective + 'T00:00:00Z') : NaN;
+    const effectiveKnown = !effective || /^2026-\d{2}-\d{2}$/.test(effective) && Number.isFinite(effectiveTime) && new Date(effectiveTime).toISOString().slice(0, 10) === effective && effective <= selectedDate;
+
+    if (isIrregular) {
+      // 비정규직: 4대보험 미신고, 사업소득 3.3% 또는 기타소득 8.8% 공제
+      const isOther = employee.withholdingTaxRate === '8.8' || employee.withholdingRate === 0.088 || employee.withholdingRate === '8.8';
+      const withholdingTaxRate = isOther ? '8.8' : '3.3';
+      const taxRate = isOther ? 0.08 : 0.03;
+      const incomeTax = tenWon(monthlyGross * taxRate);
+      const localTax = tenWon(incomeTax * 0.1);
+      const totalInsurance = 0;
+      const totalDeductions = incomeTax + localTax;
+      const netPay = monthlyGross - totalDeductions;
+      const nonTaxable = 0;
+      const tableSource = isOther ? 'other-income-8.8%' : 'freelancer-business-3.3%';
+
+      return {
+        monthlyGross,
+        basePay: monthlyGross,
+        bonus,
+        pension: 0,
+        health: 0,
+        longTerm: 0,
+        employment: 0,
+        totalInsurance,
+        incomeTax,
+        localTax,
+        totalDeductions,
+        netPay,
+        nonTaxable,
+        dependents,
+        children,
+        isSeveranceIncluded: false,
+        salaryBasis,
+        isIrregular: true,
+        withholdingTaxRate,
+        metadata: {
+          tableSource,
+          tableStatus,
+          period: selected,
+          policyPeriodSupported: selected.year === 2026 && selected.month >= 3 && effectiveKnown,
+          pensionBase: 0,
+          pensionRate: 0,
+          pensionAgeStatus: 'AGE_EXEMPT',
+          healthRate: 0,
+          longTermRate: 0,
+          employmentRate: 0,
+          calculationVersion: '2026-03-separate-age60-v2'
+        }
+      };
+    }
+
+    const nonTaxable = Math.min(baseMonthly, Math.max(0, Number.isFinite(employee.nonTaxable) ? Math.floor(employee.nonTaxable) : 200000));
     const taxableIncome = Math.max(0, monthlyGross - nonTaxable);
     const july = selected.year > 2026 || selected.year === 2026 && selected.month >= 7;
     const pensionBase = Math.min(july ? 6590000 : 6370000, Math.max(july ? 410000 : 400000, Math.floor(taxableIncome / 1000) * 1000));
@@ -187,17 +247,40 @@ export function createPayrollCalculator(officialData) {
     const totalInsurance = pension + health + longTerm + employment;
     const { incomeTax, tableSource } = calculateIncomeTax(taxableIncome, dependents, children, table);
     const localTax = tenWon(incomeTax * .1), totalDeductions = totalInsurance + incomeTax + localTax;
-    const tableStatus = getTaxTableStatus(table);
-    const effective = tableStatus.effectiveFrom;
-    const selectedDate = `${selected.year}-${String(selected.month).padStart(2, '0')}-01`;
-    const effectiveTime = effective ? Date.parse(effective + 'T00:00:00Z') : NaN;
-    const effectiveKnown = !effective || /^2026-\d{2}-\d{2}$/.test(effective) && Number.isFinite(effectiveTime) && new Date(effectiveTime).toISOString().slice(0, 10) === effective && effective <= selectedDate;
-    return { monthlyGross, pension, health, longTerm, employment, totalInsurance, incomeTax, localTax, totalDeductions,
-      netPay: monthlyGross - totalDeductions, nonTaxable, dependents, children,
-      isSeveranceIncluded: false, salaryBasis: employee.salaryType === 'MONTHLY' ? 'MONTHLY' : 'ANNUAL',
-      metadata: { tableSource, tableStatus, period: selected, policyPeriodSupported: selected.year === 2026 && selected.month >= 3 && effectiveKnown,
-        pensionBase: ageStatus === 'AGE_EXEMPT' ? 0 : pensionBase, pensionRate, pensionAgeStatus: ageStatus,
-        healthRate: .03595, longTermRate: .1314, employmentRate: .009, calculationVersion: '2026-03-separate-age60-v2' } };
+
+    return {
+      monthlyGross,
+      basePay: monthlyGross - nonTaxable,
+      bonus,
+      pension,
+      health,
+      longTerm,
+      employment,
+      totalInsurance,
+      incomeTax,
+      localTax,
+      totalDeductions,
+      netPay: monthlyGross - totalDeductions,
+      nonTaxable,
+      dependents,
+      children,
+      isSeveranceIncluded: false,
+      salaryBasis,
+      isIrregular: false,
+      metadata: {
+        tableSource,
+        tableStatus,
+        period: selected,
+        policyPeriodSupported: selected.year === 2026 && selected.month >= 3 && effectiveKnown,
+        pensionBase: ageStatus === 'AGE_EXEMPT' ? 0 : pensionBase,
+        pensionRate,
+        pensionAgeStatus: ageStatus,
+        healthRate: .03595,
+        longTermRate: .1314,
+        employmentRate: .009,
+        calculationVersion: '2026-03-separate-age60-v2'
+      }
+    };
   }
   return { calculateIncomeTax, calculateNetPay, getDeductionCounts, validateUploadedTaxTable, parseTaxTableWorkbook, getTaxTableStatus };
 }

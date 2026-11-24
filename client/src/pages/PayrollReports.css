@@ -50,9 +50,16 @@
 .pyre-person h3 { margin: 0 0 5px; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .pyre-person p { margin: 3px 0 0; font-size: 11px; color: var(--wf-muted); line-height: 1.6; overflow-wrap: anywhere; }
 .pyre-salary-fields, .pyre-deductions { display: grid; gap: 11px; }
+.pyre-basis-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pyre-basis { display: inline-flex; gap: 3px; justify-self: start; border: 1px solid var(--wf-border); border-radius: 8px; padding: 3px; background: var(--wf-subtle); }
 .pyre-basis .wf-btn { min-height: 30px; min-width: 46px; border: 0; background: transparent; padding: 4px 10px; }
-.pyre-basis .wf-btn[aria-pressed="true"] { background: var(--wf-primary-800); color: var(--wf-on-primary); }
+.pyre-basis .wf-btn[aria-pressed="true"] { background: var(--wf-primary-800); color: var(--wf-on-primary); font-weight: 500; }
+.pyre-irregular-rate-group { display: inline-flex; gap: 3px; border: 1px solid var(--wf-border); border-radius: 8px; padding: 3px; background: var(--wf-subtle); }
+.pyre-irregular-rate-group .wf-btn { min-height: 30px; min-width: 70px; border: 0; background: transparent; padding: 4px 8px; font-size: 11px; }
+.pyre-irregular-rate-group .wf-btn[aria-pressed="true"] { background: var(--wf-primary-800); color: var(--wf-on-primary); font-weight: 500; }
+.pyre-irregular-notice { padding: 14px 16px; border-radius: 8px; background: var(--wf-subtle); border: 1px solid var(--wf-border); display: grid; gap: 6px; }
+.pyre-irregular-notice strong { font-size: 12px; color: var(--wf-primary-800); font-weight: 600; }
+.pyre-irregular-notice p { margin: 0; font-size: 11px; color: var(--wf-muted); line-height: 1.6; }
 .pyre-salary-hint { display: flex; justify-content: space-between; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 11px; color: var(--wf-muted); }
 .pyre-salary-hint > span { min-width: 0; overflow-wrap: anywhere; }
 .pyre-salary-hint > span:last-child { display: flex; gap: 5px; }

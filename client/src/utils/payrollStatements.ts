@@ -1,6 +1,6 @@
 /** Approved payroll values. The server creates snapshots and resolves annual history. */
 export interface PayrollAmounts {
-  monthlyGross: number; basePay: number; nonTaxable: number;
+  monthlyGross: number; basePay: number; nonTaxable: number; bonus?: number;
   pension: number; health: number; longTerm: number; employment: number;
   incomeTax: number; localTax: number; otherDeductions?: number; totalInsurance: number; totalDeductions: number; netPay: number;
 }

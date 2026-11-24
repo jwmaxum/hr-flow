@@ -18,12 +18,15 @@ import './PayrollReports.css';
 
 interface Division { id: string; name: string }
 interface Team extends Division { divisionId: string }
-type PayrollSettings = Required<Pick<UserData, 'annualSalary' | 'salaryType' | 'isSeveranceIncluded' | 'dependents' | 'childrenUnder20' | 'nonTaxable'>>;
+type PayrollSettings = Required<Pick<UserData, 'annualSalary' | 'salaryType' | 'isSeveranceIncluded' | 'dependents' | 'childrenUnder20' | 'nonTaxable'>> & {
+  bonus: number;
+  withholdingTaxRate: '3.3' | '8.8';
+};
 interface Draft { values: PayrollSettings; baseline: string }
-const financialFields = ['annualSalary', 'salaryType', 'isSeveranceIncluded', 'dependents', 'childrenUnder20', 'nonTaxable'] as const;
+const financialFields = ['annualSalary', 'salaryType', 'isSeveranceIncluded', 'dependents', 'childrenUnder20', 'nonTaxable', 'bonus', 'withholdingTaxRate'] as const;
 const baselineOf = (value: Partial<UserData>) => JSON.stringify(financialFields.map(field => value[field] ?? null));
 const settingsOf = (employee: UserData): PayrollSettings => ({ annualSalary: employee.annualSalary ?? 0,
-  salaryType: employee.salaryType ?? 'ANNUAL', isSeveranceIncluded: false,
+  salaryType: employee.salaryType ?? 'ANNUAL', bonus: employee.bonus ?? 0, withholdingTaxRate: employee.withholdingTaxRate ?? '3.3', isSeveranceIncluded: false,
   dependents: getDeductionCounts(employee).dependents, childrenUnder20: getDeductionCounts(employee).children,
   nonTaxable: employee.nonTaxable ?? MEAL_ALLOWANCE_DEFAULT });
 const won = (value: number) => `${value.toLocaleString('ko-KR')}원`;
@@ -149,15 +152,18 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
   }
   function setSalary(employee: UserData, displayed: number) {
     const settings = drafts[employee.uid]?.values ?? settingsOf(employee);
-    updateField(employee, 'annualSalary', displayed * (settings.salaryType === 'MONTHLY' ? 12 : 1));
+    const isMonthlyOrIrregular = settings.salaryType === 'MONTHLY' || settings.salaryType === 'IRREGULAR';
+    updateField(employee, 'annualSalary', displayed * (isMonthlyOrIrregular ? 12 : 1));
   }
   async function saveSettings(employee: UserData) {
     const scopeAtStart = scope;
     const draft = drafts[employee.uid] ?? { values: settingsOf(employee), baseline: baselineOf(employee) };
     const values = draft.values;
-    if (![values.annualSalary, values.nonTaxable, values.dependents, values.childrenUnder20].every(Number.isSafeInteger) ||
-      values.annualSalary < 0 || values.nonTaxable < 0 || values.dependents < 1 || values.dependents > 100 || values.childrenUnder20 < 0 || values.childrenUnder20 > 99) {
-      setError('급여·비과세액은 0 이상의 정수, 부양가족은 1~100명, 자녀는 0~99명으로 입력해 주세요.'); return;
+    if (![values.annualSalary, values.nonTaxable, values.dependents, values.childrenUnder20, values.bonus].every(Number.isSafeInteger) ||
+      values.annualSalary < 0 || values.nonTaxable < 0 || values.bonus < 0 || values.dependents < 1 || values.dependents > 100 || values.childrenUnder20 < 0 || values.childrenUnder20 > 99 ||
+      !['ANNUAL', 'MONTHLY', 'IRREGULAR'].includes(values.salaryType) ||
+      !['3.3', '8.8'].includes(values.withholdingTaxRate)) {
+      setError('급여·비과세액·상여금은 0 이상의 정수, 부양가족은 1~100명, 자녀는 0~99명으로 입력해 주세요.'); return;
     }
     if (employee.isSeveranceIncluded && !window.confirm(`${employee.name}님의 기존 급여 금액을 확인하셨습니까? 저장된 연봉 ${won(values.annualSalary)}을 12개월로 나눠 계산합니다. 금액을 검토한 뒤 저장해 주세요.`)) return;
     setSaving(employee.uid); setError(''); setMessage('');
@@ -242,20 +248,80 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
   function employeeEditor(employee: UserData) {
     const settings = drafts[employee.uid]?.values ?? settingsOf(employee), result = calculate(employee);
     const changed = !!drafts[employee.uid] || employee.isSeveranceIncluded === true;
-    const displayed = settings.salaryType === 'MONTHLY' ? Math.floor(settings.annualSalary / 12) : settings.annualSalary;
+    const isIrregular = settings.salaryType === 'IRREGULAR';
+    const isMonthly = settings.salaryType === 'MONTHLY';
+    const isMonthlyOrIrregular = isMonthly || isIrregular;
+    const displayed = isMonthlyOrIrregular ? Math.floor(settings.annualSalary / 12) : settings.annualSalary;
     return <article className="pyre-employee wf-panel" key={employee.uid}>
-      <div className="pyre-person"><div className="pyre-avatar" aria-hidden="true">{employee.name?.slice(0, 1)}</div><div><h3>{employee.name}</h3><p>{getRoleDisplayName(employee, companyData)}</p><p>{divisions.find(item => item.id === employee.divisionId)?.name || '본부 미배정'} · {teams.find(item => item.id === employee.teamId)?.name || '팀 미배정'}</p></div></div>
-      <div className="pyre-salary-fields"><div className="pyre-basis" role="group" aria-label={`${employee.name} 급여 입력 기준`}>
-        <Button disabled={busy} aria-pressed={settings.salaryType === 'ANNUAL'} onClick={() => updateField(employee, 'salaryType', 'ANNUAL')}>연봉</Button>
-        <Button disabled={busy} aria-pressed={settings.salaryType === 'MONTHLY'} onClick={() => updateField(employee, 'salaryType', 'MONTHLY')}>월급</Button>
-      </div><label>{settings.salaryType === 'MONTHLY' ? '월 급여' : '연봉'} (원)<Input inputMode="numeric" aria-label={`${employee.name} ${settings.salaryType === 'MONTHLY' ? '월 급여' : '연봉'}`} disabled={busy} value={displayed.toLocaleString('ko-KR')} onChange={event => setSalary(employee, Number(event.target.value.replace(/[^0-9]/g, '')))} /></label>
-        <div className="pyre-salary-hint"><span>{settings.salaryType === 'MONTHLY' ? `연 환산 ${won(settings.annualSalary)}` : `월 환산 ${won(Math.floor(settings.annualSalary / 12))}`}</span><span><Button disabled={busy} onClick={() => setSalary(employee, displayed + (settings.salaryType === 'MONTHLY' ? 500_000 : 5_000_000))}>{settings.salaryType === 'MONTHLY' ? '+50만' : '+500만'}</Button><Button disabled={busy} onClick={() => setSalary(employee, displayed + (settings.salaryType === 'MONTHLY' ? 100_000 : 1_000_000))}>{settings.salaryType === 'MONTHLY' ? '+10만' : '+100만'}</Button></span></div>
+      <div className="pyre-person">
+        <div className="pyre-avatar" aria-hidden="true">{employee.name?.slice(0, 1)}</div>
+        <div>
+          <h3>{employee.name}</h3>
+          <p>{getRoleDisplayName(employee, companyData)}</p>
+          <p>{divisions.find(item => item.id === employee.divisionId)?.name || '본부 미배정'} · {teams.find(item => item.id === employee.teamId)?.name || '팀 미배정'}</p>
+        </div>
+      </div>
+      <div className="pyre-salary-fields">
+        <div className="pyre-basis-row">
+          <div className="pyre-basis" role="group" aria-label={`${employee.name} 급여 입력 기준`}>
+            <Button disabled={busy} aria-pressed={settings.salaryType === 'ANNUAL'} onClick={() => updateField(employee, 'salaryType', 'ANNUAL')}>연봉</Button>
+            <Button disabled={busy} aria-pressed={settings.salaryType === 'MONTHLY'} onClick={() => updateField(employee, 'salaryType', 'MONTHLY')}>월급</Button>
+            <Button disabled={busy} aria-pressed={isIrregular} onClick={() => updateField(employee, 'salaryType', 'IRREGULAR')}>비정규</Button>
+          </div>
+          {isIrregular && (
+            <div className="pyre-irregular-rate-group" role="group" aria-label={`${employee.name} 원천징수세율`}>
+              <Button disabled={busy} aria-pressed={settings.withholdingTaxRate === '3.3'} onClick={() => updateField(employee, 'withholdingTaxRate', '3.3')}>3.3% 사업소득</Button>
+              <Button disabled={busy} aria-pressed={settings.withholdingTaxRate === '8.8'} onClick={() => updateField(employee, 'withholdingTaxRate', '8.8')}>8.8% 기타소득</Button>
+            </div>
+          )}
+        </div>
+        <label>{isMonthlyOrIrregular ? '월 급여 (원)' : '연봉 (원)'}
+          <Input inputMode="numeric" aria-label={`${employee.name} ${isMonthlyOrIrregular ? '월 급여' : '연봉'}`} disabled={busy} value={displayed.toLocaleString('ko-KR')} onChange={event => setSalary(employee, Number(event.target.value.replace(/[^0-9]/g, '')))} />
+        </label>
+        <div className="pyre-salary-hint">
+          <span>{isIrregular ? `4대보험 미신고 · ${settings.withholdingTaxRate}% 원천징수` : isMonthly ? `연 환산 ${won(settings.annualSalary)}` : `월 환산 ${won(Math.floor(settings.annualSalary / 12))}`}</span>
+          <span>
+            <Button disabled={busy} onClick={() => setSalary(employee, displayed + (isMonthlyOrIrregular ? 500_000 : 5_000_000))}>{isMonthlyOrIrregular ? '+50만' : '+500만'}</Button>
+            <Button disabled={busy} onClick={() => setSalary(employee, displayed + (isMonthlyOrIrregular ? 100_000 : 1_000_000))}>{isMonthlyOrIrregular ? '+10만' : '+100만'}</Button>
+          </span>
+        </div>
+        <label>상여금 (월, 원)
+          <Input inputMode="numeric" aria-label={`${employee.name} 상여금`} disabled={busy} value={settings.bonus.toLocaleString('ko-KR')} onChange={event => updateField(employee, 'bonus', Number(event.target.value.replace(/[^0-9]/g, '')))} />
+        </label>
+        <div className="pyre-salary-hint pyre-bonus-hint">
+          <span>상여금 세액 합산 반영</span>
+          <span>
+            <Button disabled={busy} onClick={() => updateField(employee, 'bonus', settings.bonus + 500_000)}>+50만</Button>
+            <Button disabled={busy} onClick={() => updateField(employee, 'bonus', settings.bonus + 1_000_000)}>+100만</Button>
+            <Button disabled={busy || settings.bonus === 0} onClick={() => updateField(employee, 'bonus', 0)}>초기화</Button>
+          </span>
+        </div>
         {employee.isSeveranceIncluded && <p className="pyre-warning">기존 급여 금액을 확인하고 설정을 저장해 주세요.</p>}
       </div>
-      <div className="pyre-deductions"><div className="pyre-count-grid">{(['dependents', 'childrenUnder20'] as const).map(field => <div className="pyre-count" key={field}><span>{field === 'dependents' ? '공제대상 가족 (본인 포함)' : '8~20세 공제대상 자녀'}</span><div><Button disabled={busy || settings[field] <= (field === 'dependents' ? settings.childrenUnder20 + 1 : 0)} aria-label={`${employee.name} ${field === 'dependents' ? '가족' : '자녀'} 감소`} onClick={() => updateField(employee, field, settings[field] - 1)}><Minus size={14} /></Button><output aria-label={`${employee.name} ${field === 'dependents' ? '가족' : '자녀'} 수`}>{settings[field]}</output><Button disabled={busy || settings[field] >= (field === 'dependents' ? 100 : 99)} aria-label={`${employee.name} ${field === 'dependents' ? '가족' : '자녀'} 증가`} onClick={() => updateField(employee, field, settings[field] + 1)}><Plus size={14} /></Button></div></div>)}</div>
-        <label>비과세액 (월, 원)<Input disabled={busy} inputMode="numeric" aria-label={`${employee.name} 월 비과세액`} value={settings.nonTaxable.toLocaleString('ko-KR')} onChange={event => updateField(employee, 'nonTaxable', Number(event.target.value.replace(/[^0-9]/g, '')))} /></label>
+      <div className="pyre-deductions">
+        {isIrregular ? (
+          <div className="pyre-irregular-notice">
+            <strong>비정규직 원천징수 안내</strong>
+            <p>4대보험(국민연금, 건강보험, 장기요양, 고용보험)에 가입/신고하지 않으며, {settings.withholdingTaxRate === '3.3' ? '사업소득 3.3%(소득세 3% + 지방소득세 0.3%)' : '기타소득 8.8%(소득세 8% + 지방소득세 0.8%)'}만 원천징수 공제됩니다. (식대 비과세 미적용)</p>
+          </div>
+        ) : (
+          <>
+            <div className="pyre-count-grid">{(['dependents', 'childrenUnder20'] as const).map(field => <div className="pyre-count" key={field}><span>{field === 'dependents' ? '공제대상 가족 (본인 포함)' : '8~20세 공제대상 자녀'}</span><div><Button disabled={busy || settings[field] <= (field === 'dependents' ? settings.childrenUnder20 + 1 : 0)} aria-label={`${employee.name} ${field === 'dependents' ? '가족' : '자녀'} 감소`} onClick={() => updateField(employee, field, settings[field] - 1)}><Minus size={14} /></Button><output aria-label={`${employee.name} ${field === 'dependents' ? '가족' : '자녀'} 수`}>{settings[field]}</output><Button disabled={busy || settings[field] >= (field === 'dependents' ? 100 : 99)} aria-label={`${employee.name} ${field === 'dependents' ? '가족' : '자녀'} 증가`} onClick={() => updateField(employee, field, settings[field] + 1)}><Plus size={14} /></Button></div></div>)}</div>
+            <label>비과세액 (월, 원)<Input disabled={busy} inputMode="numeric" aria-label={`${employee.name} 월 비과세액`} value={settings.nonTaxable.toLocaleString('ko-KR')} onChange={event => updateField(employee, 'nonTaxable', Number(event.target.value.replace(/[^0-9]/g, '')))} /></label>
+          </>
+        )}
       </div>
-      <div className="pyre-result"><span>예상 월 실수령액</span><strong>{won(result?.netPay ?? 0)}</strong><p>지급액 {won(result?.monthlyGross ?? 0)}</p><p>공제액 {won(result?.totalDeductions ?? 0)}</p><div className="pyre-row-actions"><Button disabled={busy || !changed} onClick={() => void saveSettings(employee)}>{saving === employee.uid ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}설정 저장</Button><Button onClick={() => setDetailsId(employee.uid)}><Calculator size={16} />산출 상세</Button><Button disabled={!!downloading || listLoading} onClick={() => void download('annual', employee.uid)}><Download size={16} />연간 PDF</Button></div></div>
+      <div className="pyre-result">
+        <span>예상 월 실수령액</span>
+        <strong>{won(result?.netPay ?? 0)}</strong>
+        <p>지급액 {won(result?.monthlyGross ?? 0)}{(result?.bonus ?? 0) > 0 ? ` (상여 ${won(result?.bonus ?? 0)})` : ''}</p>
+        <p>공제액 {won(result?.totalDeductions ?? 0)}</p>
+        <div className="pyre-row-actions">
+          <Button disabled={busy || !changed} onClick={() => void saveSettings(employee)}>{saving === employee.uid ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}설정 저장</Button>
+          <Button onClick={() => setDetailsId(employee.uid)}><Calculator size={16} />산출 상세</Button>
+          <Button disabled={!!downloading || listLoading} onClick={() => void download('annual', employee.uid)}><Download size={16} />연간 PDF</Button>
+        </div>
+      </div>
     </article>;
   }
 
@@ -280,19 +346,39 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
     <Panel className="pyre-filters"><label>본부<Select aria-label="급여 조회 본부" value={selectedDivision} onChange={event => { setSelectedDivision(event.target.value); setSelectedTeam('ALL'); }}><option value="ALL">전체 본부</option>{divisions.map(division => <option key={division.id} value={division.id}>{division.name}</option>)}</Select></label><label>팀<Select aria-label="급여 조회 팀" value={selectedTeam} onChange={event => setSelectedTeam(event.target.value)}><option value="ALL">전체 팀</option>{teams.filter(team => selectedDivision === 'ALL' || team.divisionId === selectedDivision).map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</Select></label><label className="pyre-search">직원 이름<div><Search size={17} aria-hidden="true" /><Input type="search" aria-label="급여 대상 직원 검색" placeholder="직원 이름 검색" value={searchTerm} onChange={event => setSearchTerm(event.target.value)} /></div></label></Panel>
     <div className="pyre-list-heading"><h2>급여 설정 <span>{filteredEmployees.length}명</span></h2><p>저장된 연봉을 12개월로 나누어 계산합니다. 설정 변경은 확정된 문서에 영향을 주지 않습니다.</p></div>
     <div className="pyre-employees">{filteredEmployees.map(employeeEditor)}</div>{!filteredEmployees.length && <Panel className="pyre-empty">선택한 조건의 직원이 없습니다. 검색어와 본부·팀 필터를 확인하세요.</Panel>}
-    {detailsEmployee && details && <PayrollDialog title={`${detailsEmployee.name}님 예상 급여 산출 내역`} error={error} onClose={() => setDetailsId(null)}><p className="pyre-dialog-note">{selectedYear}년 {selectedMonth}월 현재 입력한 설정의 예상 계산입니다. 확정 급여명세서는 승인 이력으로 생성한 PDF를 사용하세요.</p><div className="pyre-detail-summary"><div><span>월 지급액</span><strong>{won(details.monthlyGross)}</strong></div><div><span>예상 실수령액</span><strong>{won(details.netPay)}</strong></div></div><dl className="pyre-detail-rows">{detailItems(details).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{won(value)}</dd></div>)}</dl><p className="pyre-dialog-note">공제대상 가족 {details.dependents}명 · 8~20세 자녀 {details.children}명 · {details.metadata.tableSource === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표'}<br />{pensionAgeNote(details)} · 건강보험 3.595% · 장기요양 건강보험료의 13.14% · 고용보험 0.9%. 실제 지급액은 회사의 수당·보험 가입 조건에 따라 달라질 수 있습니다.</p><Button disabled={!!downloading} onClick={() => void download('annual', detailsEmployee.uid)}><Download size={17} />{selectedYear}년 확정 급여명세서 PDF</Button></PayrollDialog>}
+    {detailsEmployee && details && <PayrollDialog title={`${detailsEmployee.name}님 예상 급여 산출 내역`} error={error} onClose={() => setDetailsId(null)}><p className="pyre-dialog-note">{selectedYear}년 {selectedMonth}월 현재 입력한 설정의 예상 계산입니다. 확정 급여명세서는 승인 이력으로 생성한 PDF를 사용하세요.</p><div className="pyre-detail-summary"><div><span>월 지급액</span><strong>{won(details.monthlyGross)}</strong></div><div><span>예상 실수령액</span><strong>{won(details.netPay)}</strong></div></div><dl className="pyre-detail-rows">{detailItems(details).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{won(value)}</dd></div>)}</dl><p className="pyre-dialog-note">{details.isIrregular ? `비정규직 (${details.withholdingTaxRate ?? '3.3'}% 원천징수) · 4대보험 미신고 · 비과세 식대 미적용. 실제 지급액은 회사의 원천징수 조건에 따라 달라질 수 있습니다.` : `공제대상 가족 ${details.dependents}명 · 8~20세 자녀 ${details.children}명 · ${details.metadata.tableSource === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표'}\n${pensionAgeNote(details)} · 건강보험 3.595% · 장기요양 건강보험료의 13.14% · 고용보험 0.9%. 실제 지급액은 회사의 수당·보험 가입 조건에 따라 달라질 수 있습니다.`}</p><Button disabled={!!downloading} onClick={() => void download('annual', detailsEmployee.uid)}><Download size={17} />{selectedYear}년 확정 급여명세서 PDF</Button></PayrollDialog>}
     {showHistory && <PayrollDialog title="급여 지출 승인 이력" error={error} onClose={() => { historyRequest.current += 1; setShowHistory(false); setHistoryLoading(false); }}><div className="pyre-history-filters"><label>시작월<Input type="month" aria-label="급여 이력 시작월" value={historyStart} onChange={event => setHistoryStart(event.target.value)} /></label><label>종료월<Input type="month" aria-label="급여 이력 종료월" value={historyEnd} onChange={event => setHistoryEnd(event.target.value)} /></label><Button disabled={historyLoading} onClick={() => void fetchHistory()}>조회</Button></div><p className="pyre-dialog-note">발행된 승인본과 수정 이력은 보관됩니다. 금액 변경은 과거 급여 등록·정정 메뉴에서 정정·재승인 절차로 진행하세요. 이전 집계 기록은 직원별 상세자료가 없어 PDF를 생성할 수 없습니다.</p>{historyLoading ? <p role="status">승인 이력을 불러오는 중입니다.</p> : <div className="pyre-history-scroll"><table><thead><tr><th>승인 기간</th><th>인원</th><th>총 지급액</th><th>실지급액</th><th>승인 정보</th><th>문서·관리</th></tr></thead><tbody>{historyRecords.map(record => <tr key={record.id}><td>{record.year}년 {record.month}월<br /><small>{record.legacy ? '이전 집계' : '회사 전체 확정'}</small></td><td>{record.employeeCount}명</td><td>{won(record.totalGross)}</td><td>{won(record.totalNet)}</td><td>{record.approvedAtIso.slice(0, 10)}<br /><small>{record.approvedByName}</small></td><td>{record.legacy ? <div className="pyre-history-actions"><span>상세내역 없음</span><Button aria-label={`${record.year}년 ${record.month}월 이전 집계 삭제`} onClick={() => void deleteLegacy(record)}><Trash2 size={16} /></Button></div> : <Button disabled={!!downloading} onClick={() => void download('monthly', record.id)}><Download size={16} />PDF</Button>}</td></tr>)}</tbody></table>{!historyRecords.length && <p className="pyre-empty">조회 기간의 승인 내역이 없습니다.</p>}</div>}</PayrollDialog>}
   </div></div>;
 }
 
 function pensionAgeNote(result: PayrollResult): string {
+  if (result.isIrregular) return `비정규직: 4대보험 미신고 (${result.withholdingTaxRate ?? '3.3'}% 원천징수)`;
   if (result.metadata.pensionAgeStatus === 'AGE_EXEMPT') return '국민연금 0원 (급여월 기준 만 60세 의무가입 제외)';
   if (result.metadata.pensionAgeStatus === 'BIRTH_DATE_UNAVAILABLE') return '국민연금 4.75% (생년월일 확인 불가: 만 60세 미만으로 계산)';
   return '국민연금 4.75% (해당 급여월 납부 대상)';
 }
 
 function detailItems(result: PayrollResult): Array<[string, number]> {
-  return [['기본급', result.monthlyGross - result.nonTaxable], ['비과세액', result.nonTaxable], ['국민연금', result.pension], ['건강보험', result.health], ['장기요양보험', result.longTerm], ['고용보험', result.employment], ['근로소득세', result.incomeTax], ['지방소득세', result.localTax], ['공제 합계', result.totalDeductions]];
+  const items: Array<[string, number]> = [];
+  const basePayOnly = result.monthlyGross - (result.bonus ?? 0) - result.nonTaxable;
+  items.push(['기본급', Math.max(0, basePayOnly)]);
+  if ((result.bonus ?? 0) > 0) items.push(['상여금', result.bonus ?? 0]);
+  if (result.nonTaxable > 0) items.push(['비과세액', result.nonTaxable]);
+  if (result.isIrregular) {
+    const rate = result.withholdingTaxRate ?? '3.3';
+    items.push(['4대보험 (미신고)', 0]);
+    items.push([rate === '3.3' ? '사업소득세 (3%)' : '기타소득세 (8%)', result.incomeTax]);
+    items.push([rate === '3.3' ? '지방소득세 (0.3%)' : '지방소득세 (0.8%)', result.localTax]);
+  } else {
+    items.push(['국민연금', result.pension]);
+    items.push(['건강보험', result.health]);
+    items.push(['장기요양보험', result.longTerm]);
+    items.push(['고용보험', result.employment]);
+    items.push(['근로소득세', result.incomeTax]);
+    items.push(['지방소득세', result.localTax]);
+  }
+  items.push(['공제 합계', result.totalDeductions]);
+  return items;
 }
 
 export function SalaryManagement() {

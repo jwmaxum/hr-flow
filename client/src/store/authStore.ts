@@ -46,7 +46,9 @@ export interface UserData {
   mustChangePassword?: boolean; // 최초 로그인 시 비밀번호 변경 여부
   status?: 'ACTIVE' | 'RESIGNED'; // 계정 상태
   annualSalary?: number; // 연봉/월급 (원)
-  salaryType?: 'ANNUAL' | 'MONTHLY'; // 연봉 혹은 월급
+  salaryType?: 'ANNUAL' | 'MONTHLY' | 'IRREGULAR'; // 연봉, 월급 혹은 비정규
+  bonus?: number; // 상여금 (원)
+  withholdingTaxRate?: '3.3' | '8.8'; // 비정규직 원천징수세율 (3.3%: 사업소득, 8.8%: 기타소득)
   isSeveranceIncluded?: boolean; // 퇴직금 포함 여부
   dependents?: number; // 부양가족 수 (본인 포함)
   childrenUnder20?: number; // 기존 필드명 유지: 간이세액표 자녀 공제 대상인 8~20세 자녀 수
