@@ -159,7 +159,7 @@ try {
   await allow('refreshed session may read company data', getDoc(document('sessionFresh', 'notices', 'notice-a')));
   await deny('member salary self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { annualSalary: 99999999 }));
   await deny('member bonus self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { bonus: 500000 }));
-  await deny('member withholdingTaxRate self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { withholdingTaxRate: '8.8' }));
+  await deny('member withholdingTaxRate self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { withholdingTaxRate: '3.3' }));
   await deny('member role escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { role: 'ADMIN' }));
   await deny('owner cannot be demoted', updateDoc(document('admin2', 'UserProfile', 'alice'), { role: 'MEMBER' }));
   await deny('owner cannot be retired', updateDoc(document('admin2', 'UserProfile', 'alice'), { status: 'RESIGNED' }));
