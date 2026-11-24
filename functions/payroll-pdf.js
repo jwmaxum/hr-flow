@@ -155,9 +155,15 @@ async function renderMonthlyPayrollPdf(value, brandingValue) {
     let y = h.tableHeader(h.header(title, branding, `귀속: ${record.year}년 ${record.month}월\n승인일: ${koreanDate(record.approvedAtIso)}  |  개정 ${record.revision}\n승인자: ${record.approvedByName || '-'}`));
     const totalHeight = h.rowHeight(record.sums, `합계 (${record.rows.length}명)`, 34, true);
     for (const [index, row] of record.rows.entries()) {
+      const irregularTag = row.calculation?.tableSource === 'freelancer-business-3.3%'
+        ? '비정규 (사업소득 3.3% · 4대보험 미가입)'
+        : row.calculation?.tableSource === 'other-income-8.8%'
+          ? '비정규 (기타소득 8.8% · 4대보험 미가입)'
+          : '';
       const identity = [row.name, `사번/직급: ${row.employeeNumber || '-'} / ${row.position || '-'}`,
         [row.divisionName, row.teamName].filter(Boolean).join(' / '),
         `입사: ${shortDate(row.joinDate)}`, row.resignDate ? `퇴사: ${shortDate(row.resignDate)}` : '',
+        irregularTag,
       ].filter(Boolean).join('\n');
       const height = h.rowHeight(row.amounts, identity, 55);
       const reserve = index === record.rows.length - 1 ? totalHeight + 36 : 0;
@@ -167,7 +173,10 @@ async function renderMonthlyPayrollPdf(value, brandingValue) {
     }
     if (y + totalHeight + 36 > h.bottom) y = nextPage();
     y = h.moneyRow(record.sums, `합계 (${record.rows.length}명)`, y, totalHeight, '', true, '#EEEEF2');
-    h.write('승인 저장된 상세자료 기준 · 기본급은 지급합계에서 비과세액을 뺀 금액입니다. 단위: 원', h.left, y + 10, h.width, 7.7);
+    const hasIrregular = record.rows.some(row => row.calculation?.tableSource === 'freelancer-business-3.3%' || row.calculation?.tableSource === 'other-income-8.8%');
+    h.write(hasIrregular
+      ? '승인 저장된 상세자료 기준 · 비정규직(3.3%·8.8%)은 4대보험 미가입으로 원천징수세만 공제됩니다. 단위: 원'
+      : '승인 저장된 상세자료 기준 · 기본급은 지급합계에서 비과세액을 뺀 금액입니다. 단위: 원', h.left, y + 10, h.width, 7.7);
     const sourceLabel = record.taxTable.source === 'uploaded' ? '관리자 등록 세액표'
       : record.taxTable.source.startsWith('official') ? '공식 기본 세액표' : record.taxTable.source;
     const taxLabel = [sourceLabel, record.taxTable.version, record.taxTable.fileName].filter(Boolean).join(' / ');
@@ -214,7 +223,11 @@ async function renderAnnualPayrollPdf(value, brandingValue) {
       const label = item.status === 'APPROVED' ? `${item.month}월` : `${item.month}월 · ${item.status === 'LEGACY' ? '상세자료 없음' : '미등록'}`;
       const height = h.rowHeight(item.row?.amounts || null, label, 23);
       if (y + height > h.bottom) y = nextPage();
-      y = h.moneyRow(item.row?.amounts || null, label, y, height, item.status === 'APPROVED' ? '승인' : '-');
+      const statusText = item.status !== 'APPROVED' ? '-'
+        : item.row?.calculation?.tableSource === 'freelancer-business-3.3%' ? '승인(3.3%)'
+          : item.row?.calculation?.tableSource === 'other-income-8.8%' ? '승인(8.8%)'
+            : '승인';
+      y = h.moneyRow(item.row?.amounts || null, label, y, height, statusText);
     }
     const notes = [
       report.availableMonths ? `합계는 승인 상세자료가 저장된 ${report.availableMonths}개월만 집계했습니다.` : '집계할 승인 상세자료가 없습니다. 현재 급여 설정으로 과거 금액을 계산하지 않습니다.',

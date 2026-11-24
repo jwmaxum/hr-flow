@@ -126,9 +126,17 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
       if (dateOnly(profile.joinDate) > monthEnd) continue;
       if (profile.isSeveranceIncluded === true) fail('failed-precondition', '기존 퇴직급여 포함 설정의 급여 금액을 확인하고 설정을 저장해 주세요.');
       const salary = profile.annualSalary ?? 0;
+      const bonus = profile.bonus ?? 0;
       if (!Number.isSafeInteger(salary) || salary < 0) fail('failed-precondition', '직원의 저장된 급여 금액을 확인해 주세요.');
+      if (!Number.isSafeInteger(bonus) || bonus < 0) fail('failed-precondition', '직원의 저장된 상여금 금액을 확인해 주세요.');
+      if (profile.salaryType !== undefined && !['ANNUAL', 'MONTHLY', 'IRREGULAR'].includes(profile.salaryType)) {
+        fail('failed-precondition', '직원의 급여 기준 설정을 확인해 주세요.');
+      }
+      if (profile.withholdingTaxRate !== undefined && !['3.3', '8.8'].includes(profile.withholdingTaxRate)) {
+        fail('failed-precondition', '직원의 비정규직 원천징수세율 설정을 확인해 주세요.');
+      }
       let result;
-      try { result = calculator.calculateNetPay({ ...profile, annualSalary: salary, currentVal: salary, isSeveranceIncluded: false }, table, period); }
+      try { result = calculator.calculateNetPay({ ...profile, annualSalary: salary, currentVal: salary, bonus, isSeveranceIncluded: false }, table, period); }
       catch { fail('failed-precondition', '직원의 급여와 공제 설정을 확인해 주세요.'); }
       const policy = result || calculator.calculateNetPay({ annualSalary: 12, nonTaxable: 0 }, table, period);
       if (policy?.metadata?.policyPeriodSupported !== true) fail('failed-precondition', '선택한 기간은 현재 세액·보험 기준으로 확정할 수 없습니다. 지원하는 급여 기준을 확인해 주세요.');

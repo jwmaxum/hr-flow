@@ -301,8 +301,8 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
       <div className="pyre-deductions">
         {isIrregular ? (
           <div className="pyre-irregular-notice">
-            <strong>비정규직 원천징수 안내</strong>
-            <p>4대보험(국민연금, 건강보험, 장기요양, 고용보험)에 가입/신고하지 않으며, {settings.withholdingTaxRate === '3.3' ? '사업소득 3.3%(소득세 3% + 지방소득세 0.3%)' : '기타소득 8.8%(소득세 8% + 지방소득세 0.8%)'}만 원천징수 공제됩니다. (식대 비과세 미적용)</p>
+            <strong>비정규직 원천징수 안내 (4대보험 미가입)</strong>
+            <p>4대보험(국민연금, 건강보험, 장기요양, 고용보험)을 납입하지 않으며(0원), {settings.withholdingTaxRate === '3.3' ? '사업소득 3.3%(소득세 3% + 지방소득세 0.3%, 소득세 1,000원 미만 소액부징수 면제)' : '기타소득 8.8%(필요경비 60% 인정, 소득세 8% + 지방소득세 0.8%, 건당 125,000원 이하 과세최저한 면제)'}만 원천징수 공제됩니다. (식대 비과세 미적용)</p>
           </div>
         ) : (
           <>

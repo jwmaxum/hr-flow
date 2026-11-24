@@ -162,3 +162,55 @@ test('irregular worker with 8.8% other income withholding and bonus calculates a
   assert.equal(irregular.isIrregular, true);
   assert.equal(irregular.withholdingTaxRate, '8.8');
 });
+
+test('irregular worker 3.3% small-tax exemption (Art. 86) and 8.8% minimum taxable threshold (Art. 84)', () => {
+  // 3.3% 소액부징수: 지급액 33,000원 -> 소득세 990원 (< 1,000원) => 면제 0원
+  const smallBusiness = calculateNetPay({
+    annualSalary: 33_000 * 12,
+    salaryType: 'IRREGULAR',
+    withholdingTaxRate: '3.3',
+  }, null, { year: 2026, month: 11 });
+  assert.ok(smallBusiness);
+  assert.equal(smallBusiness.totalInsurance, 0);
+  assert.equal(smallBusiness.incomeTax, 0);
+  assert.equal(smallBusiness.localTax, 0);
+  assert.equal(smallBusiness.netPay, 33_000);
+
+  // 8.8% 과세최저한: 지급액 125,000원 -> 기타소득금액 50,000원 (<= 50,000원) => 면제 0원
+  const exemptOther = calculateNetPay({
+    annualSalary: 125_000 * 12,
+    salaryType: 'IRREGULAR',
+    withholdingTaxRate: '8.8',
+  }, null, { year: 2026, month: 11 });
+  assert.ok(exemptOther);
+  assert.equal(exemptOther.totalInsurance, 0);
+  assert.equal(exemptOther.incomeTax, 0);
+  assert.equal(exemptOther.localTax, 0);
+  assert.equal(exemptOther.netPay, 125_000);
+
+  // 8.8% 과세최저한 초과: 지급액 130,000원 -> 소득세 10,400원, 지방소득세 1,040원
+  const taxedOther = calculateNetPay({
+    annualSalary: 130_000 * 12,
+    salaryType: 'IRREGULAR',
+    withholdingTaxRate: '8.8',
+  }, null, { year: 2026, month: 11 });
+  assert.ok(taxedOther);
+  assert.equal(taxedOther.totalInsurance, 0);
+  assert.equal(taxedOther.incomeTax, 10_400);
+  assert.equal(taxedOther.localTax, 1_040);
+  assert.equal(taxedOther.netPay, 130_000 - 11_440);
+
+  // 기본급 0원 + 상여금(일시금) 단독 지급 비정규직 3.3%
+  const bonusOnly = calculateNetPay({
+    annualSalary: 0,
+    bonus: 1_000_000,
+    salaryType: 'IRREGULAR',
+    withholdingTaxRate: '3.3',
+  }, null, { year: 2026, month: 11 });
+  assert.ok(bonusOnly);
+  assert.equal(bonusOnly.monthlyGross, 1_000_000);
+  assert.equal(bonusOnly.totalInsurance, 0);
+  assert.equal(bonusOnly.incomeTax, 30_000);
+  assert.equal(bonusOnly.localTax, 3_000);
+  assert.equal(bonusOnly.netPay, 967_000);
+});

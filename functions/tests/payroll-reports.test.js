@@ -177,3 +177,39 @@ test('legacy-only annual PDF may use scoped identity only and still does not cre
   assert.equal(report.availableMonths, 0);
   assert.equal(report.months.filter(item => item.row !== null).length, 0);
 });
+
+test('irregular worker 3.3% and 8.8% rows reconcile with zero 4-major insurances and render monthly/annual PDFs', async () => {
+  const irregular33 = row('irregular-33', {
+    name: '성재원',
+    amounts: {
+      monthlyGross: 3500000, basePay: 3500000, nonTaxable: 0,
+      pension: 0, health: 0, longTerm: 0, employment: 0,
+      incomeTax: 105000, localTax: 10500, otherDeductions: 0,
+      totalInsurance: 0, totalDeductions: 115500, netPay: 3384500,
+    },
+    calculation: { dependents: 1, children: 0, tableSource: 'freelancer-business-3.3%' },
+  });
+  const irregular88 = row('irregular-88', {
+    name: '자문위원',
+    amounts: {
+      monthlyGross: 2000000, basePay: 2000000, nonTaxable: 0,
+      pension: 0, health: 0, longTerm: 0, employment: 0,
+      incomeTax: 160000, localTax: 16000, otherDeductions: 0,
+      totalInsurance: 0, totalDeductions: 176000, netPay: 1824000,
+    },
+    calculation: { dependents: 1, children: 0, tableSource: 'other-income-8.8%' },
+  });
+  const monthlyRecord = validatePayrollRecord(record(11, [irregular33, irregular88]), 'company-a');
+  assert.equal(monthlyRecord.sums.totalInsurance, 0);
+  assert.equal(monthlyRecord.sums.totalDeductions, 291500);
+  assert.equal(monthlyRecord.sums.netPay, 5208500);
+
+  const monthlyPdf = await renderMonthlyPayrollPdf(monthlyRecord, branding);
+  assert.equal(monthlyPdf.subarray(0, 8).toString(), '%PDF-1.7');
+
+  const annualReport = buildAnnualPayrollReport([monthlyRecord], 'company-a', 2026, 'irregular-33');
+  assert.equal(annualReport.sums.totalInsurance, 0);
+  assert.equal(annualReport.sums.netPay, 3384500);
+  const annualPdf = await renderAnnualPayrollPdf(annualReport, branding);
+  assert.equal(annualPdf.subarray(0, 8).toString(), '%PDF-1.7');
+});

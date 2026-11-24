@@ -172,12 +172,13 @@ export function createPayrollCalculator(officialData) {
   }
   function calculateNetPay(employee, table, period) {
     const salary = employee.currentVal ?? employee.annualSalary ?? 0;
-    if (!Number.isFinite(salary) || salary <= 0 || !Number.isSafeInteger(Math.floor(salary))) return null;
+    if (!Number.isFinite(salary) || salary < 0 || !Number.isSafeInteger(Math.floor(salary))) return null;
     const selected = periodOf(period);
     const { dependents, children } = getDeductionCounts(employee);
     const baseMonthly = Math.floor(salary / 12);
     const bonus = Math.max(0, Number.isFinite(employee.bonus) ? Math.floor(employee.bonus) : 0);
     const monthlyGross = baseMonthly + bonus;
+    if (monthlyGross <= 0) return null;
     const isIrregular = employee.salaryType === 'IRREGULAR';
     const salaryBasis = isIrregular ? 'IRREGULAR' : (employee.salaryType === 'MONTHLY' ? 'MONTHLY' : 'ANNUAL');
 
@@ -188,12 +189,16 @@ export function createPayrollCalculator(officialData) {
     const effectiveKnown = !effective || /^2026-\d{2}-\d{2}$/.test(effective) && Number.isFinite(effectiveTime) && new Date(effectiveTime).toISOString().slice(0, 10) === effective && effective <= selectedDate;
 
     if (isIrregular) {
-      // 비정규직: 4대보험 미신고, 사업소득 3.3% 또는 기타소득 8.8% 공제
+      // 비정규직: 4대보험 미신고(0원), 사업소득 3.3% 또는 기타소득 8.8%(필요경비 60% 인정) 원천징수
+      // 소득세법 제84조(기타소득 과세최저한: 기타소득금액 5만원 이하 = 총지급액 125,000원 이하 면제)
+      // 소득세법 제86조(소액부징수: 원천징수 소득세 1,000원 미만 면제)
       const isOther = employee.withholdingTaxRate === '8.8' || employee.withholdingRate === 0.088 || employee.withholdingRate === '8.8';
       const withholdingTaxRate = isOther ? '8.8' : '3.3';
       const taxRate = isOther ? 0.08 : 0.03;
-      const incomeTax = tenWon(monthlyGross * taxRate);
-      const localTax = tenWon(incomeTax * 0.1);
+      const exemptByThreshold = isOther && monthlyGross <= 125000;
+      const rawIncomeTax = exemptByThreshold ? 0 : tenWon(monthlyGross * taxRate);
+      const incomeTax = rawIncomeTax < 1000 ? 0 : rawIncomeTax;
+      const localTax = incomeTax === 0 ? 0 : tenWon(incomeTax * 0.1);
       const totalInsurance = 0;
       const totalDeductions = incomeTax + localTax;
       const netPay = monthlyGross - totalDeductions;
