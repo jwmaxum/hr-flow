@@ -1,15 +1,17 @@
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../firebase';
 import { useAuthStore } from '../store/authStore';
-import type { PayrollDraft, PayrollDraftRowUpdate, PayrollDraftSummary, PayrollDraftVersion, PayrollExcelFile, PayrollListResult,
-  PayrollPdfFile, PayrollRecordSummary, PayrollRevision, PayrollSourceFile, PayrollSourceInput, PayrollSourceSelector } from '../utils/payrollStatements';
+import type {
+  PayrollDraft, PayrollDraftRowUpdate, PayrollDraftSummary, PayrollDraftVersion, PayrollExcelFile, PayrollListResult,
+  PayrollPdfFile, PayrollRecordSummary, PayrollRevision, PayrollSourceFile, PayrollSourceInput, PayrollSourceSelector
+} from '../utils/payrollStatements';
 
 const manage = httpsCallable<Record<string, unknown>, unknown>(functions, 'managePayroll');
 export function payrollSessionKey(): string {
   const { userData, companyData, sessionReady } = useAuthStore.getState();
   return JSON.stringify([auth.currentUser?.uid, userData?.uid, userData?.companyId, userData?.role,
-    userData?.status, userData?.mustChangePassword, companyData?.id, companyData?.status,
-    companyData?.accessUntil, companyData?.subscriptionStatus, sessionReady]);
+  userData?.status, userData?.mustChangePassword, companyData?.id, companyData?.status,
+  companyData?.accessUntil, companyData?.subscriptionStatus, sessionReady]);
 }
 export function assertPayrollSession(expected?: string): string {
   const { userData, companyData, sessionReady } = useAuthStore.getState();
@@ -17,9 +19,9 @@ export function assertPayrollSession(expected?: string): string {
   const deadline = hasDeadline ? Date.parse(companyData!.accessUntil!) : NaN;
   const expired = hasDeadline ? !Number.isFinite(deadline) || deadline <= Date.now() : companyData?.subscriptionStatus === 'EXPIRED';
   if (!auth.currentUser || auth.currentUser.uid !== userData?.uid || userData.role !== 'ADMIN' ||
-      (userData.status && userData.status !== 'ACTIVE') || userData.mustChangePassword || !sessionReady ||
-      !userData.companyId || companyData?.id !== userData.companyId || companyData.status !== 'ACTIVE' || expired ||
-      (expected !== undefined && expected !== payrollSessionKey())) throw new Error('로그인 또는 소속 정보가 변경되었습니다. 다시 확인해 주세요.');
+    (userData.status && userData.status !== 'ACTIVE') || userData.mustChangePassword || !sessionReady ||
+    !userData.companyId || companyData?.id !== userData.companyId || companyData.status !== 'ACTIVE' || expired ||
+    (expected !== undefined && expected !== payrollSessionKey())) throw new Error('로그인 또는 소속 정보가 변경되었습니다. 다시 확인해 주세요.');
   return userData.companyId;
 }
 async function request<T>(action: string, data: Record<string, unknown>): Promise<T> {
@@ -50,7 +52,7 @@ export const payrollService = {
     const companyId = assertPayrollSession();
     const result = await request<PayrollListResult>('list', { year });
     if (!Array.isArray(result.records) || !Array.isArray(result.employees) ||
-        result.records.some(record => record.companyId !== companyId) || result.employees.some(employee => employee.companyId !== companyId)) {
+      result.records.some(record => record.companyId !== companyId) || result.employees.some(employee => employee.companyId !== companyId)) {
       throw new Error('급여 이력의 소속 정보를 확인할 수 없습니다.');
     }
     return result;
@@ -62,13 +64,15 @@ export const payrollService = {
     return result;
   },
   monthlyPdf: (id: string, revision?: number) => request<PayrollPdfFile>('monthlyPdf', revision === undefined ? { id } : { id, revision }),
-  monthlyExcel: (id: string) => request<PayrollExcelFile>('monthlyExcel', { id }),
+  monthlyExcel: (id: string, revision?: number) => request<PayrollExcelFile>('monthlyExcel', revision === undefined ? { id } : { id, revision }),
   annualPdf: (year: number, employeeId: string) => request<PayrollPdfFile>('annualPdf', { year, employeeId }),
   importSource: (year: number, month: number, reason: string, source: PayrollSourceInput) => draftRequest('importSource', { year, month, reason, source }),
   startCorrection: (recordId: string, reason: string) => draftRequest('startCorrection', { recordId, reason }),
   getDraft: (id: string) => draftRequest('getDraft', { id }),
   updateDraft: (id: string, expectedDraftVersion: number, reason: string, rows: PayrollDraftRowUpdate[]) =>
     draftRequest('updateDraft', { id, expectedDraftVersion, reason, rows }),
+  recalculateDraft: (id: string, expectedDraftVersion: number, reason: string) =>
+    draftRequest('recalculateDraft', { id, expectedDraftVersion, reason }),
   cancelDraft: (id: string, expectedDraftVersion: number, reason: string) => draftRequest('cancelDraft', { id, expectedDraftVersion, reason }),
   getDraftVersion: (id: string, draftVersion: number) => draftRequest('getDraftVersion', { id, draftVersion }),
   async listDrafts(year: number): Promise<{ drafts: PayrollDraftSummary[] }> {
@@ -144,7 +148,7 @@ export async function downloadPayrollSourceFile(file: PayrollSourceFile, expecte
 export function downloadPayrollPdf(file: PayrollPdfFile, expectedScope: string): void {
   assertPayrollSession(expectedScope);
   if (file?.mimeType !== 'application/pdf' || typeof file.base64 !== 'string' || file.base64.length > 14 * 1024 * 1024 ||
-      !/^[A-Za-z0-9+/]+={0,2}$/.test(file.base64)) throw new Error('PDF 파일의 형식 또는 크기를 확인해 주세요.');
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(file.base64)) throw new Error('PDF 파일의 형식 또는 크기를 확인해 주세요.');
   const binary = atob(file.base64);
   if (!binary.startsWith('%PDF-') || binary.length > 10 * 1024 * 1024) throw new Error('올바른 급여 PDF가 아닙니다.');
   const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
@@ -160,7 +164,7 @@ const EXCEL_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.
 export function downloadPayrollExcel(file: PayrollExcelFile, expectedScope: string): void {
   assertPayrollSession(expectedScope);
   if (file?.mimeType !== EXCEL_MIME || typeof file.base64 !== 'string' || file.base64.length > 14 * 1024 * 1024 ||
-      !/^[A-Za-z0-9+/]+={0,2}$/.test(file.base64)) throw new Error('Excel 파일의 형식 또는 크기를 확인해 주세요.');
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(file.base64)) throw new Error('Excel 파일의 형식 또는 크기를 확인해 주세요.');
   const binary = atob(file.base64);
   if (binary.length < 4 || binary.charCodeAt(0) !== 0x50 || binary.charCodeAt(1) !== 0x4b || binary.length > 10 * 1024 * 1024) {
     throw new Error('올바른 급여 Excel 파일이 아닙니다.');

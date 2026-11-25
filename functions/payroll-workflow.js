@@ -4,7 +4,7 @@ const { authorizeContext, fail } = require('./security-context');
 const { PAYROLL_MONEY_FIELDS, normalizePayrollRow, sumPayrollRows, validatePayrollRecord } = require('./payroll-report-model');
 const { completePayrollAmounts } = require('./payroll-import-schema.mjs');
 
-const ACTIONS = new Set(['importSource', 'startCorrection', 'listDrafts', 'getDraft', 'updateDraft', 'approveDraft', 'cancelDraft',
+const ACTIONS = new Set(['importSource', 'startCorrection', 'listDrafts', 'getDraft', 'updateDraft', 'recalculateDraft', 'approveDraft', 'cancelDraft',
   'listDraftVersions', 'getDraftVersion', 'listRevisions', 'getRevision', 'sourceDownload']);
 const COMPONENTS = ['monthlyGross', 'nonTaxable', 'pension', 'health', 'longTerm', 'employment', 'incomeTax', 'localTax', 'otherDeductions'];
 const MAX_BYTES = 900 * 1024, MAX_SOURCE = 3 * 1024 * 1024;
@@ -62,7 +62,7 @@ function diffRows(before, rows, legacyTotals = null) {
 
 function createPayrollWorkflow({ db, bucket, now = () => new Date(), parseSourceFile }, hooks) {
   const { current, verifySession, recordSummary, payrollRecordId, identifier, inputShape, yearInput, monthInput,
-    renderMonthlyPdf, branding, pdfFile } = hooks;
+    renderMonthlyPdf, renderMonthlyExcel, branding, pdfFile, excelFile, calculateRows } = hooks;
   const get = (reader, reference) => reader === db ? reference.get() : reader.get(reference);
   const draftRef = id => db.collection('payroll_drafts').doc(identifier(id));
   const recordRef = id => db.collection('payroll_records').doc(identifier(id));
@@ -295,7 +295,7 @@ function createPayrollWorkflow({ db, bucket, now = () => new Date(), parseSource
       const data = { schemaVersion: 2, scope: 'COMPANY', companyId: caller.companyId, year: draft.year, month: draft.month,
         rows, sums, revision, approvedAtIso, approvedAt: Timestamp.fromDate(approvedDate), approvedBy: caller.uid,
         approvedByName: nullableText(caller.name, 100), origin: draft.kind, reason: draft.reason, sourceDraftId: draft.id,
-        taxTable: { source: draft.kind === 'IMPORT' ? 'imported-source' : 'manual-correction', version: '', fileName: draft.source?.name || '' },
+        taxTable: draft.taxTable || { source: draft.kind === 'IMPORT' ? 'imported-source' : 'manual-correction', version: '', fileName: draft.source?.name || '' },
         ...(draft.source ? { source: draft.source } : {}), previousHash: state.active ? hash(snapshotOnly(state.active)) : state.fingerprint,
         divisionId: 'ALL', divisionName: '전체 본부', employeeCount: rows.length, totalGross: sums.monthlyGross,
         totalNet: sums.netPay, totalDeductions: sums.totalDeductions, totalTax: sums.incomeTax + sums.localTax,
@@ -353,6 +353,26 @@ function createPayrollWorkflow({ db, bucket, now = () => new Date(), parseSource
     });
     const result = await dto(user, draft); await current(request, user); return { draft: result };
   }
+  async function recalculate(request, user) {
+    if (typeof calculateRows !== 'function') fail('failed-precondition', '전체 재계산 기능을 사용할 수 없습니다.');
+    const input = request.data;
+    inputShape(input, ['action', 'id', 'expectedDraftVersion', 'reason']);
+    const expected = integer(input.expectedDraftVersion), reason = reasonText(input.reason);
+    const draft = await db.runTransaction(async tx => {
+      const caller = await guard(request, user, tx), { reference, draft: existing } = await loadDraft(tx, caller, input.id);
+      if (existing.status !== 'PENDING' || existing.draftVersion !== expected) fail('aborted', '초안이 변경되었거나 검토가 종료되었습니다.');
+      if (existing.kind !== 'CORRECTION') fail('failed-precondition', '승인본 정정 초안에서만 현재 설정으로 전체 재계산할 수 있습니다.');
+      const calculated = await calculateRows(tx, caller.companyId, { year: existing.year, month: existing.month });
+      const rows = rowsChecked(calculated.rows, caller.companyId);
+      const data = { ...existing, rows, sums: sumPayrollRows(rows), reason, status: 'PENDING',
+        taxTable: calculated.taxTable,
+        draftVersion: expected + 1, updatedAtIso: now().toISOString(), updatedBy: caller.uid, updatedByName: nullableText(caller.name, 100) };
+      data.dataHash = dataHash(data); const { id, ...stored } = data; bound(stored); await verifySession(request);
+      tx.set(reference, stored); tx.create(reference.collection('versions').doc(versionId(data.draftVersion)), versionSnapshot(data));
+      return { ...stored, id };
+    });
+    const result = await dto(user, draft); await current(request, user); return { draft: result };
+  }
   async function sourceDownload(request, user) {
     const input = request.data;
     inputShape(input, input.draftId !== undefined ? ['action', 'draftId'] : ['action', 'recordId', 'revision']);
@@ -387,10 +407,11 @@ function createPayrollWorkflow({ db, bucket, now = () => new Date(), parseSource
 
   return async (request, user) => {
     const input = request.data;
-    if (!ACTIONS.has(input?.action) && !(input?.action === 'monthlyPdf' && input.revision !== undefined)) return null;
+    if (!ACTIONS.has(input?.action) && !((input?.action === 'monthlyPdf' || input?.action === 'monthlyExcel') && input.revision !== undefined)) return null;
     if (input.action === 'importSource') return createDraft(request, user, 'IMPORT');
     if (input.action === 'startCorrection') return createDraft(request, user, 'CORRECTION');
     if (input.action === 'approveDraft') return approve(request, user);
+    if (input.action === 'recalculateDraft') return recalculate(request, user);
     if (input.action === 'updateDraft' || input.action === 'cancelDraft') return edit(request, user, input.action === 'cancelDraft');
     if (input.action === 'sourceDownload') return sourceDownload(request, user);
     if (input.action === 'listDrafts') {
@@ -457,6 +478,14 @@ function createPayrollWorkflow({ db, bucket, now = () => new Date(), parseSource
     inputShape(input, ['action', 'id', 'revision']);
     const selected = await resolveRevision(user, identifier(input.id), input.revision);
     if (input.action === 'getRevision') { await current(request, user); return { record: { ...selected.checked, active: selected.revision === selected.activeRevision } }; }
+    if (input.action === 'monthlyExcel') {
+      const bytes = await renderMonthlyExcel(selected.checked, branding(user));
+      await current(request, user);
+      const latest = await resolveRevision(user, input.id, input.revision);
+      if (latest.fingerprint !== selected.fingerprint) fail('aborted', '급여 개정본이 변경되었습니다. 다시 조회해 주세요.');
+      await current(request, user);
+      return excelFile(bytes, `${selected.checked.year}년_${String(selected.checked.month).padStart(2, '0')}월_급여대장_개정${selected.revision}.xlsx`);
+    }
     const bytes = await renderMonthlyPdf(selected.checked, branding(user));
     await current(request, user);
     const latest = await resolveRevision(user, input.id, input.revision);

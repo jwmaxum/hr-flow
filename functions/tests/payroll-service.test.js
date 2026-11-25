@@ -552,6 +552,36 @@ test('server-approved payroll, PDF privacy, tenant separation and immutable fina
       f.faults.onMonthly = async () => { f.faults.onMonthly = null; await f.call('admin', 'approveDraft', { id: next.draft.id, expectedDraftVersion: 1 }); };
       await denied(f.call('admin', 'monthlyPdf', { id: record.id }), 'aborted');
     });
+    await t.test('correction draft can recalculate all employees from live settings and export updated monthly Excel', async () => {
+      const f = await fixture(); const { record } = await f.approve();
+      await db.doc('UserProfile/member').update({ salaryType: 'IRREGULAR', withholdingTaxRate: '3.3' });
+      await db.doc('UserProfile/admin').update({ employmentInsuranceIncluded: false });
+      const { draft } = await f.call('admin', 'startCorrection', { recordId: record.id, reason: '비정규직 및 고용보험 제외 반영' });
+      await denied(f.call('foreignAdmin', 'recalculateDraft', { id: draft.id, expectedDraftVersion: 1, reason: '타사 접근 차단' }), 'not-found');
+      const { draft: recalculated } = await f.call('admin', 'recalculateDraft', {
+        id: draft.id, expectedDraftVersion: 1, reason: '최신 설정 전체 재계산',
+      });
+      assert.equal(recalculated.draftVersion, 2);
+      const memberRow = recalculated.rows.find(row => row.userId === 'member');
+      const adminRow = recalculated.rows.find(row => row.userId === 'admin');
+      assert.equal(memberRow.calculation.tableSource, 'freelancer-business-3.3%');
+      assert.equal(memberRow.amounts.totalInsurance, 0);
+      assert.equal(memberRow.amounts.nonTaxable, 0);
+      assert.equal(memberRow.amounts.incomeTax, 75000);
+      assert.equal(memberRow.amounts.localTax, 7500);
+      assert.equal(adminRow.amounts.employment, 0);
+      assert.ok(adminRow.amounts.pension > 0);
+      assert.ok(recalculated.diff.changed.some(item => item.userId === 'member'));
+      const approved = await f.call('admin', 'approveDraft', { id: draft.id, expectedDraftVersion: 2 });
+      assert.equal(approved.revision, 2);
+      const excel = await f.call('admin', 'monthlyExcel', { id: record.id });
+      const bytes = Buffer.from(excel.base64, 'base64');
+      assert.equal(bytes[0], 0x50); assert.equal(bytes[1], 0x4b);
+      const revExcel = await f.call('admin', 'monthlyExcel', { id: record.id, revision: 2 });
+      assert.match(revExcel.filename, /개정2\.xlsx$/);
+      const imported = await f.importDraft();
+      await denied(f.call('admin', 'recalculateDraft', { id: imported.draft.id, expectedDraftVersion: 1, reason: '원본 초안 재계산 차단' }), 'failed-precondition');
+    });
     await t.test('existing company deletion removes all payroll drafts, revisions and source bytes while preserving another company', async () => {
       const f = await fixture(); const a = await f.importDraft(), b = await f.importDraft(1, [historic({ employeeLoginId: '', archiveCode: 'former-b' })], 'foreignAdmin');
       const { record } = await f.call('admin', 'approveDraft', { id: a.draft.id, expectedDraftVersion: 1 });

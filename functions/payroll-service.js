@@ -66,24 +66,30 @@ function recordSummary(record, companyId) {
     try { checked = validatePayrollRecord(record, companyId); }
     catch { fail('failed-precondition', '승인 급여 상세자료의 형식을 확인해 주세요.'); }
     const extra = record.taxTable || {};
-    return { id: checked.id, companyId, year: checked.year, month: checked.month, schemaVersion: 2, legacy: false,
+    return {
+      id: checked.id, companyId, year: checked.year, month: checked.month, schemaVersion: 2, legacy: false,
       employeeCount: checked.rows.length, approvedAtIso: checked.approvedAtIso, approvedByName: checked.approvedByName,
       revision: checked.revision, totalGross: checked.sums.monthlyGross, totalNet: checked.sums.netPay,
       totalDeductions: checked.sums.totalDeductions, sums: checked.sums,
       ...(checked.origin ? { origin: checked.origin } : {}), ...(checked.reason ? { reason: checked.reason } : {}),
       ...(checked.source ? { source: checked.source } : {}), ...(checked.dataHash ? { dataHash: checked.dataHash } : {}),
-      taxTable: { ...checked.taxTable, uploadedInvalid: extra.uploadedInvalid === true,
-        fallbackReason: safeText(extra.fallbackReason, 300), highIncomeSource: safeText(extra.highIncomeSource, 80) } };
+      taxTable: {
+        ...checked.taxTable, uploadedInvalid: extra.uploadedInvalid === true,
+        fallbackReason: safeText(extra.fallbackReason, 300), highIncomeSource: safeText(extra.highIncomeSource, 80)
+      }
+    };
   }
   // Keep the old aggregate values, but never turn them into employee amounts.
   if (![record.totalGross, record.totalNet].every(Number.isSafeInteger) || record.totalGross < 0 ||
-      !Number.isInteger(record.employeeCount) || record.employeeCount < 0) {
+    !Number.isInteger(record.employeeCount) || record.employeeCount < 0) {
     fail('failed-precondition', '기존 급여 집계자료의 금액과 인원 정보를 확인해 주세요.');
   }
-  return { id: record.id, companyId, year: record.year, month: record.month, schemaVersion: 1, legacy: true,
+  return {
+    id: record.id, companyId, year: record.year, month: record.month, schemaVersion: 1, legacy: true,
     employeeCount: record.employeeCount, totalGross: record.totalGross, totalNet: record.totalNet,
     ...(Number.isSafeInteger(record.totalDeductions) ? { totalDeductions: record.totalDeductions } : {}),
-    approvedAtIso: approvalIso(record), approvedByName: safeText(record.approvedByName, 100) };
+    approvedAtIso: approvalIso(record), approvedByName: safeText(record.approvedByName, 100)
+  };
 }
 
 function createPayrollService({ db, auth, bucket, now = () => new Date(), parseSourceFile,
@@ -114,9 +120,11 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
     if (profile.companyId !== companyId || !validId(uid)) fail('permission-denied', '소속 회사의 직원만 처리할 수 있습니다.');
     const team = teams.get(profile.teamId);
     const division = divisions.get(profile.divisionId);
-    return normalizePayrollIdentity({ userId: uid, companyId, name: safeText(profile.name, 100),
+    return normalizePayrollIdentity({
+      userId: uid, companyId, name: safeText(profile.name, 100),
       employeeNumber: safeText(profile.employeeNumber, 80), joinDate: dateOnly(profile.joinDate), resignDate: dateOnly(profile.resignDate),
-      position: safeText(profile.position, 100), divisionName: safeText(division?.name), teamName: safeText(team?.name) }, companyId);
+      position: safeText(profile.position, 100), divisionName: safeText(division?.name), teamName: safeText(team?.name)
+    }, companyId);
   }
   function limited(snapshot, maximum, message) { if (snapshot.size > maximum) fail('resource-exhausted', message); }
   function validatedRows(profiles, divisions, teams, companyId, period, table) {
@@ -146,16 +154,24 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
       const policy = result || calculator.calculateNetPay({ annualSalary: 12, nonTaxable: 0 }, table, period);
       if (policy?.metadata?.policyPeriodSupported !== true) fail('failed-precondition', '선택한 기간은 현재 세액·보험 기준으로 확정할 수 없습니다. 지원하는 급여 기준을 확인해 주세요.');
       const nonTaxable = result ? Math.min(result.monthlyGross, result.nonTaxable) : 0;
-      const amounts = result ? { monthlyGross: result.monthlyGross, basePay: result.monthlyGross - nonTaxable, nonTaxable,
+      const amounts = result ? {
+        monthlyGross: result.monthlyGross, basePay: result.monthlyGross - nonTaxable, nonTaxable,
         pension: result.pension, health: result.health, longTerm: result.longTerm, employment: result.employment,
         incomeTax: result.incomeTax, localTax: result.localTax, totalInsurance: result.totalInsurance,
-        totalDeductions: result.totalDeductions, netPay: result.netPay } : Object.fromEntries([
+        totalDeductions: result.totalDeductions, netPay: result.netPay
+      } : Object.fromEntries([
         'monthlyGross', 'basePay', 'nonTaxable', 'pension', 'health', 'longTerm', 'employment', 'incomeTax', 'localTax', 'totalInsurance', 'totalDeductions', 'netPay',
       ].map(field => [field, 0]));
       const counts = calculator.getDeductionCounts(profile);
-      try { rows.push(normalizePayrollRow({ ...identity(profile, doc.id, companyId, divisions, teams), amounts,
-        calculation: { dependents: counts.dependents, children: counts.children,
-          tableSource: result?.metadata.tableSource || policy.metadata.tableSource } }, companyId)); }
+      try {
+        rows.push(normalizePayrollRow({
+          ...identity(profile, doc.id, companyId, divisions, teams), amounts,
+          calculation: {
+            dependents: counts.dependents, children: counts.children,
+            tableSource: result?.metadata.tableSource || policy.metadata.tableSource
+          }
+        }, companyId));
+      }
       catch { fail('failed-precondition', '직원의 급여 상세 설정을 확인해 주세요.'); }
     }
     if (!rows.length) fail('failed-precondition', '승인할 재직 직원이 없습니다.');
@@ -176,40 +192,58 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
     if (bytes.length > MAX_PDF_BYTES) fail('resource-exhausted', 'Excel 파일이 너무 큽니다. 관리자에게 문의해 주세요.');
     return { filename, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', base64: bytes.toString('base64') };
   }
-  const branding = user => ({ companyName: safeText(user.company.nameKo || user.company.nameEn, 120) || '회사',
-    address: safeText(user.company.address, 300), representative: safeText(user.company.representative, 100) });
+  const branding = user => ({
+    companyName: safeText(user.company.nameKo || user.company.nameEn, 120) || '회사',
+    address: safeText(user.company.address, 300), representative: safeText(user.company.representative, 100)
+  });
+
+  async function calculateRows(transaction, companyId, period) {
+    const [profiles, divisionDocs, teamDocs, taxDoc] = await Promise.all([
+      transaction.get(profilesQuery(companyId)),
+      transaction.get(db.collection('divisions').where('companyId', '==', companyId)),
+      transaction.get(db.collection('teams').where('companyId', '==', companyId)),
+      transaction.get(db.collection('system_config').doc('tax_table')),
+    ]);
+    limited(profiles, MAX_EMPLOYEES, '승인 대상 직원이 너무 많아 한 문서에 저장할 수 없습니다. 관리자에게 문의해 주세요.');
+    const table = taxDoc.exists ? taxDoc.data() : null;
+    const tableStatus = calculator.getTaxTableStatus(table);
+    const rows = validatedRows(profiles, scopedMap(divisionDocs, companyId), scopedMap(teamDocs, companyId), companyId, period, table);
+    const taxTable = {
+      source: tableStatus.source, version: safeText(tableStatus.updateDate || tableStatus.effectiveFrom, 100),
+      fileName: safeText(tableStatus.fileName, 240), highIncomeSource: safeText(tableStatus.highIncomeSource, 80),
+      uploadedInvalid: table != null && !tableStatus.valid, fallbackReason: safeText(tableStatus.reason, 300)
+    };
+    return { rows, taxTable, taxDoc };
+  }
 
   async function prepareApproval(transaction, request, user, period) {
     const caller = await authorizeContext({ db, request, reader: transaction, now, roles: ['ADMIN'] });
     if (caller.companyId !== user.companyId || caller.role !== user.role) fail('permission-denied', '계정 또는 소속 회사가 변경되었습니다.');
     const id = payrollRecordId(caller.companyId, period.year, period.month);
     const reference = db.collection('payroll_records').doc(id);
-    const [existing, profiles, divisionDocs, teamDocs, taxDoc] = await Promise.all([
-      transaction.get(reference), transaction.get(profilesQuery(caller.companyId)),
-      transaction.get(db.collection('divisions').where('companyId', '==', caller.companyId)),
-      transaction.get(db.collection('teams').where('companyId', '==', caller.companyId)),
-      transaction.get(db.collection('system_config').doc('tax_table')),
+    const [existing, calculated] = await Promise.all([
+      transaction.get(reference),
+      calculateRows(transaction, caller.companyId, period),
     ]);
     if (existing.exists) fail('already-exists', '해당 월의 급여대장이 이미 승인되었습니다. 승인된 PDF와 이력을 확인해 주세요.');
-    limited(profiles, MAX_EMPLOYEES, '승인 대상 직원이 너무 많아 한 문서에 저장할 수 없습니다. 관리자에게 문의해 주세요.');
-    const table = taxDoc.exists ? taxDoc.data() : null;
-    const tableStatus = calculator.getTaxTableStatus(table);
-    const rows = validatedRows(profiles, scopedMap(divisionDocs, caller.companyId), scopedMap(teamDocs, caller.companyId), caller.companyId, period, table);
+    const { rows, taxTable, taxDoc } = calculated;
     let sums;
     try { sums = sumPayrollRows(rows); }
     catch { fail('failed-precondition', '급여 합계가 정확하게 계산할 수 있는 금액 범위를 초과했습니다. 저장된 급여 설정을 확인해 주세요.'); }
-    const taxTable = { source: tableStatus.source, version: safeText(tableStatus.updateDate || tableStatus.effectiveFrom, 100),
-      fileName: safeText(tableStatus.fileName, 240), highIncomeSource: safeText(tableStatus.highIncomeSource, 80),
-      uploadedInvalid: table != null && !tableStatus.valid, fallbackReason: safeText(tableStatus.reason, 300) };
     // Exclude the approval time so a confirmation can be compared against fresh transactional reads.
-    const expected = createHash('sha256').update(canonicalJson({ companyId: caller.companyId, ...period, rows, taxTable,
+    const expected = createHash('sha256').update(canonicalJson({
+      companyId: caller.companyId, ...period, rows, taxTable,
       taxDocument: fingerprint(taxDoc),
-      calculationBasis: 'FULL_MONTH_SAVED_SETTINGS', employmentProration: 'NOT_APPLIED' })).digest('hex');
+      calculationBasis: 'FULL_MONTH_SAVED_SETTINGS', employmentProration: 'NOT_APPLIED'
+    })).digest('hex');
     return { id, reference, caller, rows, sums, taxTable, fingerprint: expected };
   }
 
-  const workflow = createPayrollWorkflow({ db, auth, bucket, now, parseSourceFile }, { current, verifySession, recordSummary,
-    payrollRecordId, identifier, inputShape, yearInput, monthInput, renderMonthlyPdf, branding, pdfFile });
+  const workflow = createPayrollWorkflow({ db, auth, bucket, now, parseSourceFile }, {
+    current, verifySession, recordSummary,
+    payrollRecordId, identifier, inputShape, yearInput, monthInput,
+    renderMonthlyPdf, renderMonthlyExcel, branding, pdfFile, excelFile, calculateRows
+  });
 
   return async request => {
     const user = await current(request);
@@ -225,22 +259,27 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
       const record = await db.runTransaction(async transaction => {
         const prepared = await prepareApproval(transaction, request, user, period);
         const { id, reference, caller, rows, sums, taxTable } = prepared;
-        if (input.action === 'preview') return { fingerprint: prepared.fingerprint, employeeCount: rows.length,
+        if (input.action === 'preview') return {
+          fingerprint: prepared.fingerprint, employeeCount: rows.length,
           totalGross: sums.monthlyGross, totalNet: sums.netPay, totalDeductions: sums.totalDeductions,
-          zeroCount: rows.filter(row => row.amounts.monthlyGross === 0).length, taxTable };
+          zeroCount: rows.filter(row => row.amounts.monthlyGross === 0).length, taxTable
+        };
         if (prepared.fingerprint !== input.expectedFingerprint) {
           fail('aborted', '직원의 저장된 급여 설정 또는 세액표가 변경되었습니다. 최신 미리보기를 확인한 뒤 다시 승인해 주세요.');
         }
         const approvedDate = now();
-        const data = { schemaVersion: 2, scope: 'COMPANY', companyId: caller.companyId, ...period, rows,
+        const data = {
+          schemaVersion: 2, scope: 'COMPANY', companyId: caller.companyId, ...period, rows,
           sums, approvedAtIso: approvedDate.toISOString(), approvedAt: Timestamp.fromDate(approvedDate),
           approvedBy: caller.uid, approvedByName: safeText(caller.name, 100), revision: 1,
           taxTable,
           calculationBasis: 'FULL_MONTH_SAVED_SETTINGS', employmentProration: 'NOT_APPLIED',
           divisionId: 'ALL', divisionName: '전체 본부', employeeCount: rows.length,
         };
-        Object.assign(data, { totalGross: data.sums.monthlyGross, totalNet: data.sums.netPay, totalDeductions: data.sums.totalDeductions,
-          totalTax: data.sums.incomeTax + data.sums.localTax, totalInsurance: data.sums.totalInsurance });
+        Object.assign(data, {
+          totalGross: data.sums.monthlyGross, totalNet: data.sums.netPay, totalDeductions: data.sums.totalDeductions,
+          totalTax: data.sums.incomeTax + data.sums.localTax, totalInsurance: data.sums.totalInsurance
+        });
         try { validatePayrollRecord({ ...data, id }, caller.companyId); }
         catch { fail('failed-precondition', '급여 상세자료의 합계와 설정을 확인해 주세요.'); }
         if (Buffer.byteLength(JSON.stringify(data)) > MAX_SNAPSHOT_BYTES) fail('resource-exhausted', '급여 상세자료가 한 문서의 저장 한도를 초과했습니다. 관리자에게 문의해 주세요.');
