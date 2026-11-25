@@ -31,6 +31,7 @@ export interface AnnualPayrollReport {
   legacyAfterSnapshotMonths: number[];
 }
 export interface PayrollPdfFile { filename: string; mimeType: 'application/pdf'; base64: string }
+export interface PayrollExcelFile { filename: string; mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; base64: string }
 export interface PayrollRecordSummary {
   id: string; companyId: string; year: number; month: number;
   schemaVersion?: number; legacy: boolean; employeeCount: number;

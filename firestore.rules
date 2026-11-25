@@ -98,6 +98,10 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['name']) ||
         (request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100);
     }
+    function validEmploymentInsuranceIncluded() {
+      return unchanged(['employmentInsuranceIncluded']) ||
+        request.resource.data.get('employmentInsuranceIncluded', true) is bool;
+    }
     function validDivision(id, divisionId) {
       return divisionId is string && (divisionId == '' ||
         (exists(/databases/$(database)/documents/divisions/$(divisionId)) &&
@@ -176,13 +180,13 @@ service cloud.firestore {
       return signedIn() && exists(profilePath(request.auth.uid)) && canReadUserProfileWith(profile(), uid);
     }
     function canUpdateUserProfileWith(p, uid) {
-      return readyProfile(p) && profileSecurityUnchanged() && validProfileName() && (
+      return readyProfile(p) && profileSecurityUnchanged() && validProfileName() && validEmploymentInsuranceIncluded() && (
         (request.auth.uid == uid && onlyChanged(['name'])) ||
         (request.auth.uid == uid && p.role == 'ADMIN' && onlyChanged([
           'name', 'joinDate', 'annualLeaveTotal', 'usedLeave', 'annualSalary', 'salaryType',
           'isSeveranceIncluded', 'dependents', 'childrenUnder20', 'nonTaxable', 'additionalLeave',
           'teamId', 'divisionId', 'teamHistory', 'rrn', 'address', 'phone', 'personalEmail',
-          'bonus', 'withholdingTaxRate'
+          'bonus', 'withholdingTaxRate', 'employmentInsuranceIncluded'
         ]) && validProfileOrg(request.resource.data)) ||
         ((isSuperAdminProfile(p) ||
           (request.auth.uid != uid && p.role == 'ADMIN' &&
@@ -192,7 +196,7 @@ service cloud.firestore {
             'annualSalary', 'salaryType', 'isSeveranceIncluded', 'dependents', 'childrenUnder20',
             'nonTaxable', 'additionalLeave', 'teamId', 'divisionId', 'teamHistory',
             'rrn', 'address', 'phone', 'personalEmail',
-            'bonus', 'withholdingTaxRate']) &&
+            'bonus', 'withholdingTaxRate', 'employmentInsuranceIncluded']) &&
           resource.data.role != 'SUPER_ADMIN' && request.resource.data.role in ['ADMIN', 'SUB_ADMIN', 'MEMBER'] &&
           validProfileOrg(request.resource.data) &&
           (!owner(resource.data.companyId, uid) || unchanged(['role', 'status'])))

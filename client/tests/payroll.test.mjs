@@ -214,3 +214,26 @@ test('irregular worker 3.3% small-tax exemption (Art. 86) and 8.8% minimum taxab
   assert.equal(bonusOnly.localTax, 3_000);
   assert.equal(bonusOnly.netPay, 967_000);
 });
+
+test('regular employee employment insurance defaults to included and can be exempted for executives/representatives', () => {
+  const included = calculateNetPay({ annualSalary: 30_000_000, nonTaxable: 200_000 }, null, { year: 2026, month: 11 });
+  const explicitIncluded = calculateNetPay({ annualSalary: 30_000_000, nonTaxable: 200_000, employmentInsuranceIncluded: true }, null, { year: 2026, month: 11 });
+  const exempted = calculateNetPay({ annualSalary: 30_000_000, nonTaxable: 200_000, employmentInsuranceIncluded: false }, null, { year: 2026, month: 11 });
+  assert.ok(included && explicitIncluded && exempted);
+  assert.equal(included.employment, 20_700);
+  assert.equal(included.employmentInsuranceIncluded, true);
+  assert.equal(included.metadata.employmentRate, 0.009);
+  assert.equal(explicitIncluded.netPay, included.netPay);
+
+  assert.equal(exempted.employment, 0);
+  assert.equal(exempted.employmentInsuranceIncluded, false);
+  assert.equal(exempted.metadata.employmentRate, 0);
+  assert.equal(exempted.pension, included.pension);
+  assert.equal(exempted.health, included.health);
+  assert.equal(exempted.longTerm, included.longTerm);
+  assert.equal(exempted.incomeTax, included.incomeTax);
+  assert.equal(exempted.localTax, included.localTax);
+  assert.equal(exempted.totalInsurance, included.totalInsurance - included.employment);
+  assert.equal(exempted.totalDeductions, included.totalDeductions - included.employment);
+  assert.equal(exempted.netPay, included.netPay + included.employment);
+});

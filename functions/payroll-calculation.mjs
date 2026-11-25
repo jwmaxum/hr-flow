@@ -222,6 +222,7 @@ export function createPayrollCalculator(officialData) {
         dependents,
         children,
         isSeveranceIncluded: false,
+        employmentInsuranceIncluded: false,
         salaryBasis,
         isIrregular: true,
         withholdingTaxRate,
@@ -248,7 +249,9 @@ export function createPayrollCalculator(officialData) {
     const ageStatus = pensionAgeStatus(employee, selected);
     const pensionRate = ageStatus === 'AGE_EXEMPT' ? 0 : .0475;
     const pension = taxableIncome > 0 ? tenWon(pensionBase * pensionRate) : 0;
-    const health = tenWon(taxableIncome * .03595), longTerm = tenWon(health * .1314), employment = tenWon(taxableIncome * .009);
+    const employmentInsuranceIncluded = employee.employmentInsuranceIncluded !== false;
+    const employmentRate = employmentInsuranceIncluded ? .009 : 0;
+    const health = tenWon(taxableIncome * .03595), longTerm = tenWon(health * .1314), employment = employmentInsuranceIncluded ? tenWon(taxableIncome * .009) : 0;
     const totalInsurance = pension + health + longTerm + employment;
     const { incomeTax, tableSource } = calculateIncomeTax(taxableIncome, dependents, children, table);
     const localTax = tenWon(incomeTax * .1), totalDeductions = totalInsurance + incomeTax + localTax;
@@ -270,6 +273,7 @@ export function createPayrollCalculator(officialData) {
       dependents,
       children,
       isSeveranceIncluded: false,
+      employmentInsuranceIncluded,
       salaryBasis,
       isIrregular: false,
       metadata: {
@@ -282,7 +286,7 @@ export function createPayrollCalculator(officialData) {
         pensionAgeStatus: ageStatus,
         healthRate: .03595,
         longTermRate: .1314,
-        employmentRate: .009,
+        employmentRate,
         calculationVersion: '2026-03-separate-age60-v2'
       }
     };

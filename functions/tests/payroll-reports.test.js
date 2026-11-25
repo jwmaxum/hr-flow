@@ -4,6 +4,8 @@ const {
   normalizePayrollIdentity, normalizePayrollRow, sumPayrollRows, validatePayrollRecord, buildAnnualPayrollReport,
 } = require('../payroll-report-model');
 const { renderMonthlyPayrollPdf, renderAnnualPayrollPdf } = require('../payroll-pdf');
+const { renderMonthlyPayrollExcel } = require('../payroll-xlsx');
+const JSZip = require('jszip');
 const { editableAmounts } = require('../payroll-workflow');
 
 function row(id = 'employee-a', patch = {}) {
@@ -212,4 +214,40 @@ test('irregular worker 3.3% and 8.8% rows reconcile with zero 4-major insurances
   assert.equal(annualReport.sums.netPay, 3384500);
   const annualPdf = await renderAnnualPayrollPdf(annualReport, branding);
   assert.equal(annualPdf.subarray(0, 8).toString(), '%PDF-1.7');
+});
+
+test('monthly payroll Excel workbook exports all employees, employment-insurance-exempt executives, irregular workers and totals safely', async () => {
+  const executive = row('exec-1', {
+    name: '대표이사',
+    amounts: {
+      monthlyGross: 5000000, basePay: 4800000, nonTaxable: 200000,
+      pension: 228000, health: 172560, longTerm: 22670, employment: 0,
+      incomeTax: 300000, localTax: 30000, otherDeductions: 0,
+      totalInsurance: 423230, totalDeductions: 753230, netPay: 4246770,
+    },
+    calculation: { dependents: 1, children: 0, tableSource: 'official-2026' },
+  });
+  const irregular = row('irregular-33', {
+    name: '=성재원',
+    amounts: {
+      monthlyGross: 3500000, basePay: 3500000, nonTaxable: 0,
+      pension: 0, health: 0, longTerm: 0, employment: 0,
+      incomeTax: 105000, localTax: 10500, otherDeductions: 0,
+      totalInsurance: 0, totalDeductions: 115500, netPay: 3384500,
+    },
+    calculation: { dependents: 1, children: 0, tableSource: 'freelancer-business-3.3%' },
+  });
+  const monthlyRecord = validatePayrollRecord(record(11, [executive, irregular]), 'company-a');
+  const bytes = await renderMonthlyPayrollExcel(monthlyRecord, branding);
+  assert.equal(bytes[0], 0x50);
+  assert.equal(bytes[1], 0x4b);
+  const zip = await JSZip.loadAsync(bytes);
+  const sheet1 = await zip.file('xl/worksheets/sheet1.xml').async('string');
+  const sheet2 = await zip.file('xl/worksheets/sheet2.xml').async('string');
+  assert.match(sheet1, /대표이사/);
+  assert.match(sheet1, /t="inlineStr"[^>]*><is><t xml:space="preserve">=성재원<\/t>/);
+  assert.match(sheet1, /비정규 \(사업소득 3\.3%\)/);
+  assert.match(sheet1, /합계 \(2명\)/);
+  assert.match(sheet1, /<v>7631270<\/v>/); // total netPay = 4246770 + 3384500
+  assert.match(sheet2, /급여 검증 주식회사/);
 });

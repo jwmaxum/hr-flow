@@ -60,6 +60,9 @@
 .pyre-irregular-notice { padding: 14px 16px; border-radius: 8px; background: var(--wf-subtle); border: 1px solid var(--wf-border); display: grid; gap: 6px; }
 .pyre-irregular-notice strong { font-size: 12px; color: var(--wf-primary-800); font-weight: 600; }
 .pyre-irregular-notice p { margin: 0; font-size: 11px; color: var(--wf-muted); line-height: 1.6; }
+.pyre-workspace label.pyre-checkbox-option { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--wf-muted); cursor: pointer; user-select: none; margin-top: 2px; line-height: 1.4; }
+.workflow-theme .salary-screen .pyre-checkbox-option input[type="checkbox"],
+.pyre-workspace .pyre-checkbox-option input[type="checkbox"] { width: 15px; height: 15px; min-width: 15px; min-height: 15px; padding: 0; margin: 0; flex: 0 0 auto; accent-color: var(--wf-primary-800); cursor: pointer; border-radius: 4px; }
 .pyre-salary-hint { display: flex; justify-content: space-between; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 11px; color: var(--wf-muted); }
 .pyre-salary-hint > span { min-width: 0; overflow-wrap: anywhere; }
 .pyre-salary-hint > span:last-child { display: flex; gap: 5px; }

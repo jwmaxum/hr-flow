@@ -4,6 +4,7 @@ const { authorizeContext, fail } = require('./security-context');
 const { createPayrollCalculator } = require('./payroll-calculation.mjs');
 const officialTable = require('./data/withholdingTaxTable2026.json');
 const { createPayrollWorkflow } = require('./payroll-workflow');
+const { renderMonthlyPayrollExcel } = require('./payroll-xlsx');
 const {
   normalizePayrollIdentity, normalizePayrollRow, sumPayrollRows, validatePayrollRecord, buildAnnualPayrollReport,
 } = require('./payroll-report-model');
@@ -86,7 +87,8 @@ function recordSummary(record, companyId) {
 }
 
 function createPayrollService({ db, auth, bucket, now = () => new Date(), parseSourceFile,
-  calculator = createPayrollCalculator(officialTable), renderMonthlyPdf, renderAnnualPdf }) {
+  calculator = createPayrollCalculator(officialTable), renderMonthlyPdf, renderAnnualPdf,
+  renderMonthlyExcel = renderMonthlyPayrollExcel }) {
   const authorize = request => authorizeContext({ db, request, now, roles: ['ADMIN'] });
   async function verifySession(request) {
     if (!request.auth?.uid) fail('unauthenticated', '로그인이 필요합니다.');
@@ -135,6 +137,9 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
       if (profile.withholdingTaxRate !== undefined && !['3.3', '8.8'].includes(profile.withholdingTaxRate)) {
         fail('failed-precondition', '직원의 비정규직 원천징수세율 설정을 확인해 주세요.');
       }
+      if (profile.employmentInsuranceIncluded !== undefined && typeof profile.employmentInsuranceIncluded !== 'boolean') {
+        fail('failed-precondition', '직원의 고용보험 적용 설정을 확인해 주세요.');
+      }
       let result;
       try { result = calculator.calculateNetPay({ ...profile, annualSalary: salary, currentVal: salary, bonus, isSeveranceIncluded: false }, table, period); }
       catch { fail('failed-precondition', '직원의 급여와 공제 설정을 확인해 주세요.'); }
@@ -165,6 +170,11 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
     if (!Buffer.isBuffer(bytes) || bytes.length < 5 || bytes.subarray(0, 5).toString() !== '%PDF-') fail('internal', '급여 PDF를 생성하지 못했습니다.');
     if (bytes.length > MAX_PDF_BYTES) fail('resource-exhausted', 'PDF가 너무 큽니다. 관리자에게 문의해 주세요.');
     return { filename, mimeType: 'application/pdf', base64: bytes.toString('base64') };
+  }
+  async function excelFile(bytes, filename) {
+    if (!Buffer.isBuffer(bytes) || bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) fail('internal', '급여 Excel을 생성하지 못했습니다.');
+    if (bytes.length > MAX_PDF_BYTES) fail('resource-exhausted', 'Excel 파일이 너무 큽니다. 관리자에게 문의해 주세요.');
+    return { filename, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', base64: bytes.toString('base64') };
   }
   const branding = user => ({ companyName: safeText(user.company.nameKo || user.company.nameEn, 120) || '회사',
     address: safeText(user.company.address, 300), representative: safeText(user.company.representative, 100) });
@@ -288,6 +298,26 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
       if (fingerprint(snapshot) !== fingerprint(latest)) fail('aborted', '급여 문서가 변경되었습니다. 다시 조회해 주세요.');
       await current(request, user);
       return pdfFile(bytes, `${checked.year}년_${String(checked.month).padStart(2, '0')}월_급여대장.pdf`);
+    }
+    if (input?.action === 'monthlyExcel') {
+      inputShape(input, ['action', 'id']);
+      const reference = db.collection('payroll_records').doc(identifier(input.id));
+      const snapshot = await reference.get();
+      if (!snapshot.exists) fail('not-found', '급여 문서를 찾을 수 없습니다.');
+      const record = snapshotData(snapshot);
+      if (record.companyId !== user.companyId) fail('permission-denied', '소속 회사의 급여 문서만 조회할 수 있습니다.');
+      if (record.schemaVersion !== 2) fail('failed-precondition', '이전 집계 기록에는 직원별 상세자료가 없어 급여대장 Excel을 생성할 수 없습니다.');
+      let checked;
+      try { checked = validatePayrollRecord(record, user.companyId); }
+      catch { fail('failed-precondition', '승인 급여 상세자료의 형식을 확인해 주세요.'); }
+      const bytes = await renderMonthlyExcel(checked, branding(user));
+      await current(request, user);
+      const latest = await reference.get();
+      if (!latest.exists) fail('not-found', '급여 문서가 삭제되었습니다.');
+      if (latest.data().companyId !== user.companyId) fail('permission-denied', '급여 문서의 소속 회사가 변경되었습니다.');
+      if (fingerprint(snapshot) !== fingerprint(latest)) fail('aborted', '급여 문서가 변경되었습니다. 다시 조회해 주세요.');
+      await current(request, user);
+      return excelFile(bytes, `${checked.year}년_${String(checked.month).padStart(2, '0')}월_급여대장.xlsx`);
     }
     if (input?.action === 'annualPdf') {
       inputShape(input, ['action', 'year', 'employeeId']);

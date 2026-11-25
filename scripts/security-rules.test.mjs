@@ -134,11 +134,16 @@ try {
   await deny('self name rejects invalid type', updateDoc(document('bob', 'UserProfile', 'bob'), { name: { injected: true } }));
   await allow('ADMIN self salary update', updateDoc(document('alice', 'UserProfile', 'alice'), { annualSalary: 44444444 }));
   await allow('ADMIN self bonus and withholding tax rate update', updateDoc(document('alice', 'UserProfile', 'alice'), { bonus: 500000, withholdingTaxRate: '3.3' }));
+  await allow('ADMIN self employmentInsuranceIncluded update to false', updateDoc(document('alice', 'UserProfile', 'alice'), { employmentInsuranceIncluded: false }));
+  await allow('ADMIN self employmentInsuranceIncluded update to true', updateDoc(document('alice', 'UserProfile', 'alice'), { employmentInsuranceIncluded: true }));
   await allow('ADMIN self private HR fields preserve existing personnel edit', updateDoc(document('alice', 'UserProfile', 'alice'), {
     rrn: 'synthetic-private-field', address: 'synthetic address', phone: 'synthetic phone', personalEmail: 'private@example.test'
   }));
   await allow('ADMIN employee salary update', updateDoc(document('alice', 'UserProfile', 'bob'), { annualSalary: 55555555 }));
   await allow('ADMIN employee bonus and withholding tax rate update', updateDoc(document('alice', 'UserProfile', 'bob'), { bonus: 1000000, withholdingTaxRate: '8.8' }));
+  await allow('ADMIN employee employmentInsuranceIncluded update to false', updateDoc(document('alice', 'UserProfile', 'bob'), { employmentInsuranceIncluded: false }));
+  await deny('ADMIN employmentInsuranceIncluded rejects non-boolean string', updateDoc(document('alice', 'UserProfile', 'bob'), { employmentInsuranceIncluded: 'false' }));
+  await deny('ADMIN employmentInsuranceIncluded rejects null', updateDoc(document('alice', 'UserProfile', 'bob'), { employmentInsuranceIncluded: null }));
   await allow('ADMIN employee role update', updateDoc(document('alice', 'UserProfile', 'bob'), { role: 'SUB_ADMIN' }));
   await allow('ADMIN restores employee role', updateDoc(document('alice', 'UserProfile', 'bob'), { role: 'MEMBER' }));
   await allow('ADMIN reads payroll', getDoc(document('alice', 'payroll_records', 'payroll-a')));
@@ -160,6 +165,9 @@ try {
   await deny('member salary self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { annualSalary: 99999999 }));
   await deny('member bonus self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { bonus: 500000 }));
   await deny('member withholdingTaxRate self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { withholdingTaxRate: '3.3' }));
+  await deny('member employmentInsuranceIncluded self escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { employmentInsuranceIncluded: true }));
+  await deny('SUB_ADMIN employmentInsuranceIncluded self escalation', updateDoc(document('manager', 'UserProfile', 'manager'), { employmentInsuranceIncluded: false }));
+  await deny('SUB_ADMIN employmentInsuranceIncluded employee update', updateDoc(document('manager', 'UserProfile', 'bob'), { employmentInsuranceIncluded: true }));
   await deny('member role escalation', updateDoc(document('bob', 'UserProfile', 'bob'), { role: 'ADMIN' }));
   await deny('owner cannot be demoted', updateDoc(document('admin2', 'UserProfile', 'alice'), { role: 'MEMBER' }));
   await deny('owner cannot be retired', updateDoc(document('admin2', 'UserProfile', 'alice'), { status: 'RESIGNED' }));

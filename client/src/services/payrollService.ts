@@ -1,7 +1,7 @@
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../firebase';
 import { useAuthStore } from '../store/authStore';
-import type { PayrollDraft, PayrollDraftRowUpdate, PayrollDraftSummary, PayrollDraftVersion, PayrollListResult,
+import type { PayrollDraft, PayrollDraftRowUpdate, PayrollDraftSummary, PayrollDraftVersion, PayrollExcelFile, PayrollListResult,
   PayrollPdfFile, PayrollRecordSummary, PayrollRevision, PayrollSourceFile, PayrollSourceInput, PayrollSourceSelector } from '../utils/payrollStatements';
 
 const manage = httpsCallable<Record<string, unknown>, unknown>(functions, 'managePayroll');
@@ -62,6 +62,7 @@ export const payrollService = {
     return result;
   },
   monthlyPdf: (id: string, revision?: number) => request<PayrollPdfFile>('monthlyPdf', revision === undefined ? { id } : { id, revision }),
+  monthlyExcel: (id: string) => request<PayrollExcelFile>('monthlyExcel', { id }),
   annualPdf: (year: number, employeeId: string) => request<PayrollPdfFile>('annualPdf', { year, employeeId }),
   importSource: (year: number, month: number, reason: string, source: PayrollSourceInput) => draftRequest('importSource', { year, month, reason, source }),
   startCorrection: (recordId: string, reason: string) => draftRequest('startCorrection', { recordId, reason }),
@@ -151,6 +152,34 @@ export function downloadPayrollPdf(file: PayrollPdfFile, expectedScope: string):
   const link = document.createElement('a');
   link.href = url;
   link.download = (typeof file.filename === 'string' ? file.filename : '급여명세서.pdf').replace(/[\\/]/g, '_').replace(/\p{Cc}/gu, '_').slice(0, 180);
+  document.body.append(link); link.click(); link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const EXCEL_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+export function downloadPayrollExcel(file: PayrollExcelFile, expectedScope: string): void {
+  assertPayrollSession(expectedScope);
+  if (file?.mimeType !== EXCEL_MIME || typeof file.base64 !== 'string' || file.base64.length > 14 * 1024 * 1024 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(file.base64)) throw new Error('Excel 파일의 형식 또는 크기를 확인해 주세요.');
+  const binary = atob(file.base64);
+  if (binary.length < 4 || binary.charCodeAt(0) !== 0x50 || binary.charCodeAt(1) !== 0x4b || binary.length > 10 * 1024 * 1024) {
+    throw new Error('올바른 급여 Excel 파일이 아닙니다.');
+  }
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: EXCEL_MIME }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = (typeof file.filename === 'string' ? file.filename : '급여대장.xlsx').replace(/[\\/]/g, '_').replace(/\p{Cc}/gu, '_').slice(0, 180);
+  document.body.append(link); link.click(); link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function downloadPayrollBlob(blob: Blob, filename: string, expectedScope: string): void {
+  assertPayrollSession(expectedScope);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename.replace(/[\\/:*?"<>|]/g, '_').replace(/\p{Cc}/gu, '_').slice(0, 180);
   document.body.append(link); link.click(); link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
