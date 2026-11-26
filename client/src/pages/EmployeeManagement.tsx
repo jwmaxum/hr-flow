@@ -17,7 +17,7 @@ import { useAuthStore } from '../store/authStore';
 import { getRoleDisplayName } from '../utils/roleDisplay';
 import { formatRrnInput } from '../utils/rrnFormat';
 import { getErrorCode, getErrorMessage } from '../utils/errors';
-import { calculateLeaveEntitlement } from '../utils/leaveCalculator';
+import { calculateLeaveEntitlement, calculateTotalLeave, isValidJoinDateString } from '../utils/leaveCalculator';
 import './EmployeeManagement.css';
 import {ErpEmployeeAccess} from '../components/ErpEmployeeAccess';
 
@@ -31,6 +31,7 @@ interface Employee {
   teamId?: string;
   status?: 'ACTIVE' | 'RESIGNED';
   joinDate?: string;
+  annualLeaveTotal?: number;
   rrn?: string;
   phone?: string;
   address?: string;
@@ -80,7 +81,7 @@ export const EmployeeManagement: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Personnel Info
-  const [editingInfo, setEditingInfo] = useState({ rrn: '', address: '', phone: '', personalEmail: '', additionalLeave: 0 });
+  const [editingInfo, setEditingInfo] = useState({ joinDate: '', rrn: '', address: '', phone: '', personalEmail: '', additionalLeave: 0 });
   const [isSaving, setIsSaving] = useState(false);
   const isAdmin = userData?.role === 'ADMIN';
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -156,6 +157,7 @@ export const EmployeeManagement: React.FC = () => {
 
   const handleOpenDetail = async (emp: Employee) => {
     setEditingInfo({
+      joinDate: emp.joinDate || '',
       rrn: emp.rrn || '',
       address: emp.address || '',
       phone: emp.phone || '',
@@ -183,17 +185,32 @@ export const EmployeeManagement: React.FC = () => {
 
   const handleSavePersonalInfo = async () => {
     if (!selectedEmpRecords || !isAdmin) return;
+    const trimmedJoinDate = editingInfo.joinDate.trim();
+    if (trimmedJoinDate && !isValidJoinDateString(trimmedJoinDate)) {
+      alert('입사일자는 유효한 날짜(YYYY-MM-DD)로 입력해 주세요.');
+      return;
+    }
+    const additionalLeave = Number.isFinite(editingInfo.additionalLeave) ? editingInfo.additionalLeave : 0;
+    if (additionalLeave < 0) {
+      alert('추가 연차는 0 이상으로 입력해 주세요.');
+      return;
+    }
+    const annualLeaveTotal = calculateTotalLeave(trimmedJoinDate, additionalLeave);
+    const payload = {
+      ...editingInfo,
+      joinDate: trimmedJoinDate,
+      additionalLeave,
+      annualLeaveTotal
+    };
     setIsSaving(true);
     try {
       const userRef = doc(db, 'UserProfile', selectedEmpRecords.emp.uid);
-      await updateDoc(userRef, {
-        ...editingInfo
-      });
-      alert('개인정보가 저장되었습니다.');
+      await updateDoc(userRef, payload);
+      alert('인사 정보 및 연차 산정 내역이 저장되었습니다.');
       // Update local state to reflect changes without reload
       setSelectedEmpRecords(prev => prev ? {
         ...prev,
-        emp: { ...prev.emp, ...editingInfo }
+        emp: { ...prev.emp, ...payload }
       } : null);
     } catch (e) {
       alert('저장 실패: ' + (e as Error).message);
@@ -428,7 +445,7 @@ export const EmployeeManagement: React.FC = () => {
                         <td className="px-8 py-6">
                           <div className="text-sm font-black text-slate-700">{getRoleDisplayName({ ...emp, companyId: userData?.companyId || '' }, companyData ?? undefined)}</div>
                           <div className="text-[10px] text-slate-400 font-bold mt-1 flex items-center gap-1">
-                            <Calendar className="w-3 h-3" /> {emp.joinDate || '-'} 입사
+                            <Calendar className="w-3 h-3" /> {emp.joinDate || '입사일 미등록'}{emp.joinDate ? ` 입사 · 연차 ${calculateTotalLeave(emp.joinDate, emp.additionalLeave || 0)}일` : ''}
                           </div>
                         </td>
                         <td className="px-8 py-6">
@@ -590,8 +607,8 @@ export const EmployeeManagement: React.FC = () => {
               {/* Leave Dashboard Widget */}
               <div className="personnel-leave-summary">
                  {(() => {
-                   const baseLeave = selectedEmpRecords.emp.joinDate ? calculateLeaveEntitlement(new Date(selectedEmpRecords.emp.joinDate)) : 0;
-                   const totalLeave = baseLeave + (selectedEmpRecords.emp.additionalLeave || 0);
+                   const baseLeave = calculateLeaveEntitlement(editingInfo.joinDate);
+                   const totalLeave = calculateTotalLeave(editingInfo.joinDate, editingInfo.additionalLeave);
                    const usedLeave = selectedEmpRecords.leaves
                      .filter(req => req.status === 'APPROVED' && (req.type === 'annual' || req.type === 'half'))
                      .reduce((sum, req) => sum + (req.requestDays || 0), 0);
@@ -599,7 +616,7 @@ export const EmployeeManagement: React.FC = () => {
 
                    return (
                      <>
-                       <div className="flex flex-col items-center justify-center px-4 py-2 bg-white rounded-xl shadow-sm border border-slate-50 min-w-[70px]">
+                       <div className="flex flex-col items-center justify-center px-4 py-2 bg-white rounded-xl shadow-sm border border-slate-50 min-w-[70px]" title={`기본 연차 ${baseLeave}일 + 추가 연차 ${editingInfo.additionalLeave || 0}일`}>
                          <span className="text-[9px] font-black text-slate-400">총 발생</span>
                          <span className="text-lg font-black text-slate-700">{totalLeave}</span>
                        </div>
@@ -623,6 +640,22 @@ export const EmployeeManagement: React.FC = () => {
               {(()=>{const employee=employees.find(e=>e.uid===selectedEmpRecords.emp.uid);return employee&&userData?.companyId?<ErpEmployeeAccess key={`${userData.companyId}:${employee.uid}:${employee.erpAccess}:${employee.role}:${employee.status}`} companyId={userData.companyId} uid={employee.uid} role={employee.role} currentAccess={employee.erpAccess} active={(employee.status||'ACTIVE')==='ACTIVE'} canManage={isAdmin}/>:null;})()}
               <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-300">
                   <div className="personnel-form-grid">
+                    <div className="space-y-2 md:col-span-2">
+                        <label htmlFor="personnel-joinDate" className="text-[10px] font-black text-indigo-500 uppercase tracking-widest ml-1">입사일자 (연차 자동 연동)</label>
+                        <Input
+                          type="date"
+                          id="personnel-joinDate"
+                          value={editingInfo.joinDate}
+                          onChange={(e) => setEditingInfo({...editingInfo, joinDate: e.target.value})}
+                          disabled={!isAdmin}
+                          className="wf-input"
+                        />
+                        <p className="text-xs leading-relaxed text-slate-500">
+                          {editingInfo.joinDate && isValidJoinDateString(editingInfo.joinDate)
+                            ? `입사일 기준 법정 기본 연차 ${calculateLeaveEntitlement(editingInfo.joinDate)}일 + 추가 연차 ${editingInfo.additionalLeave || 0}일 = 총 ${calculateTotalLeave(editingInfo.joinDate, editingInfo.additionalLeave)}일 자동 산정`
+                            : '입사일자를 입력하면 근로기준법(1년 미만 월 1일·최대 11일, 1년 이상 15일+2년당 1일·최대 25일)에 따라 연차가 자동 부여됩니다.'}
+                        </p>
+                    </div>
                     <div className="space-y-2">
                         <label htmlFor="personnel-rrn" className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">주민등록번호</label>
                         <Input

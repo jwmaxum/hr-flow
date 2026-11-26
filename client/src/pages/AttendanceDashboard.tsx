@@ -10,7 +10,7 @@ import { getRoleDisplayName } from '../utils/roleDisplay';
 import { collection, query, where, onSnapshot, addDoc, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isToday, addMonths, subMonths } from 'date-fns';
-import { calculateLeaveEntitlement } from '../utils/leaveCalculator';
+import { calculateTotalLeave } from '../utils/leaveCalculator';
 import { MyIssuedDocuments } from '../components/MyIssuedDocuments';
 import { accountSecurity } from '../services/accountSecurityService';
 import type { DirectoryUser } from '../services/accountSecurityService';
@@ -234,8 +234,7 @@ export const AttendanceDashboard: React.FC = () => {
     });
   }, [sessionReady, user?.uid, selectedUserId, userData?.companyId, userData?.role, userData?.divisionId]);
 
-  const joinDate = userData?.joinDate ? new Date(userData.joinDate) : new Date();
-  const totalLeave = calculateLeaveEntitlement(joinDate);
+  const totalLeave = calculateTotalLeave(userData?.joinDate, userData?.additionalLeave || 0);
   const usedLeave = leaveRequests
     .filter(req => req.status === 'APPROVED' && (req.type === 'annual' || req.type === 'half'))
     .reduce((sum, req) => sum + (req.requestDays || 0), 0);

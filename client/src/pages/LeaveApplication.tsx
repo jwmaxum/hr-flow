@@ -6,7 +6,7 @@ import { db } from '../firebase';
 import { uploadCompanyAttachment } from '../services/attachmentService';
 import { SecureAttachment } from '../components/SecureAttachment';
 import { useAuthStore } from '../store/authStore';
-import { calculateLeaveEntitlement } from '../utils/leaveCalculator';
+import { calculateTotalLeave } from '../utils/leaveCalculator';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import './RequestForms.css';
 
@@ -49,10 +49,8 @@ export const LeaveApplication: React.FC = () => {
     file: null
   });
 
-  // 연차 계산 (실시간 집계 로직으로 변경)
-  const joinDate = userData?.joinDate ? new Date(userData.joinDate) : new Date();
-  const baseLeave = calculateLeaveEntitlement(joinDate);
-  const totalLeave = baseLeave + (userData?.additionalLeave || 0);
+  // 연차 계산 (입사일 기반 법정 기본 연차 + 관리자 추가 연차 실시간 집계)
+  const totalLeave = calculateTotalLeave(userData?.joinDate, userData?.additionalLeave || 0);
   
   // 승인된 연차/반차 내역만 합산하여 실시간으로 '사용 완료' 계산
   const usedLeave = requests
