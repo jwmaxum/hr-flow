@@ -39,7 +39,26 @@ export interface PendingOpeningRecord {id: string; code: string; name: string; u
 export interface PendingOpeningList {companyId: string; records: PendingOpeningRecord[]; basisDate: string; lastDate: string; suggestedDate: string}
 export interface PendingOpeningInput {date: string; warehouseId: string; reason: string; zeroCostConfirmed: boolean; lines: {itemId: string; quantity: string; price: string}[]}
 export interface ErpSourceFile { name: string; mimeType: string; base64: string }
+export interface ErpBootstrapSummary {
+  warehouseCode: string; warehouseName: string; basisDate: string;
+  totalItems: number; positiveItems: number; zeroItems: number;
+  ownedQuantity: number; ownedValue: number;
+  borrowingCount: number; borrowedQuantity: number; borrowedValue: number;
+  netBookQuantity: number; netBookValue: number;
+  partnerCount: number; receivableCount: number;
+  receivableTotals: { currency: string; amountMinor: number }[];
+}
+export interface ErpBootstrapJob {
+  id: string; companyId: string; status: 'PENDING' | 'COMMITTED' | 'CANCELLED';
+  companyLabel: string; basisDate: string;
+  source: { kind: 'BOOTSTRAP'; name: string; size: number; sha256: string };
+  summary: ErpBootstrapSummary; fingerprint: string;
+  borrowings: { code: string; name: string; warehouseName: string; quantity: number; evaluationValue: number; ownerName: string; buyerName: string; date: string }[];
+  receivables: { date: string; partnerCode: string; partnerName: string; currency: string; amountMinor: number; documentNo: string }[];
+  createdAt: string; committedAt: string | null;
+}
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpImport', { timeout: 120000 });
+const bootstrapCallable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpBootstrap', { timeout: 300000 });
 function scope(companyId: string) {
   const { userData, companyData, sessionReady } = useAuthStore.getState();
   if (!auth.currentUser || auth.currentUser.uid !== userData?.uid || userData.companyId !== companyId || !erpCanOperate(erpAccessOf(userData)) ||
@@ -67,6 +86,21 @@ export const erpImportService = {
   list: (companyId: string) => call<{ imports: ErpImportSummary[] }>(companyId, 'list'),
   template: (companyId: string, type: ErpImportType) => call<ErpSourceFile>(companyId, 'template', { type }),
   source: (companyId: string, id: string) => call<ErpSourceFile>(companyId, 'downloadSource', { id }),
+};
+async function bootstrapCall(companyId: string, action: string, data: Record<string, unknown>) {
+  const expected = scope(companyId);
+  const { userData } = useAuthStore.getState();
+  if (userData?.role !== 'ADMIN') throw new Error('회사 ADMIN만 초기화·통합 이관을 실행할 수 있습니다.');
+  const result = await bootstrapCallable({ ...data, companyId, action });
+  if (scope(companyId) !== expected) throw new Error('로그인 회사가 변경되었습니다.');
+  const response = result.data as { bootstrap: ErpBootstrapJob; idempotent?: boolean };
+  if (response.bootstrap.companyId !== companyId) throw new Error('통합 이관 응답의 소속 회사를 확인할 수 없습니다.');
+  return response;
+}
+export const erpBootstrapService = {
+  preview: (companyId: string, id: string, source: ErpSourceFile) => bootstrapCall(companyId, 'preview', { id, source }),
+  commit: (companyId: string, job: ErpBootstrapJob, confirmPhrase: string) => bootstrapCall(companyId, 'commit', { id: job.id, fingerprint: job.fingerprint, confirmPhrase }),
+  cancel: (companyId: string, id: string) => bootstrapCall(companyId, 'cancel', { id }),
 };
 export async function readErpFile(companyId: string, file: File): Promise<ErpSourceFile> {
   const expected = scope(companyId);

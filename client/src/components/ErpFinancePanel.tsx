@@ -7,7 +7,7 @@ import { erpChoices, erpFinance as api, erpMoney as money, erpToday } from '../s
 import type { ReceiptInput, ReceiptJob, ReceivableReport } from '../services/erpAccountService';
 import type { ErpRecord } from '../services/erpService';
 import { getErrorMessage } from '../utils/errors';
-const labels: Record<string, string> = { SALE: '출고 매출', SALES_RETURN: '판매 반품', CANCEL: '취소', RECEIPT: '수금', REFUND: '환불', BANK: '계좌이체', CASH: '현금', CARD: '카드', OTHER: '기타' };
+const labels: Record<string, string> = { SALE: '출고 매출', SALES_RETURN: '판매 반품', CANCEL: '취소', RECEIPT: '수금', REFUND: '환불', OPENING_RECEIVABLE: '기초미수 이관', BANK: '계좌이체', CASH: '현금', CARD: '카드', OTHER: '기타' };
 export function ErpFinancePanel({companyId,onDocument}: {companyId: string;onDocument?:(documentNo:string)=>void}) {
   const [collection,setCollection]=useState<{target:CollectionTarget;key:string}|null>(null),[legacyOpen,setLegacyOpen]=useState(false);
   const collect=(target:CollectionTarget)=>setCollection({target,key:crypto.randomUUID()});

@@ -23,12 +23,13 @@ function createShipmentHandler({db,now,context,load}) {
         const snapshot=M.hash({data,filters,asOf});
         if(offset&&input.snapshot!==snapshot)fail('failed-precondition','출고·수금 내역이 변경되었습니다. 처음부터 다시 조회해 주세요.');
         const search=master.normalize(filters.search),recoveries=recoveryBalances(data,report,asOf);
-        const rows=report.documents.map(d=>({...d,recoveryCredit:recoveries.get(d.id)?.credit||0})).filter(d=>d.date>=filters.from&&d.date<=filters.to&&(!search||master.normalize(`${d.documentNo} ${d.partnerName}`).includes(search))&&
+        const rows=report.documents.filter(d=>!d.openingReceivable).map(d=>({...d,recoveryCredit:recoveries.get(d.id)?.credit||0})).filter(d=>d.date>=filters.from&&d.date<=filters.to&&(!search||master.normalize(`${d.documentNo} ${d.partnerName}`).includes(search))&&
           (filters.status==='ALL'||filters.status==='OPEN'&&d.balance>0||filters.status==='PAID'&&d.balance===0&&!d.recoveryCredit||filters.status==='REFUND'&&(d.balance<0||d.recoveryCredit>0)));
         return {companyId:parent.id,asOf,snapshot,rows:rows.slice(offset,offset+30),total:rows.length,nextOffset:rows.length>offset+30?offset+30:null};
       }
       const doc=report.documents.find(d=>d.id===input.documentId);
       if(!doc)fail('not-found','현재 회사의 확정 출고 문서를 찾을 수 없습니다.');
+      if(doc.openingReceivable)fail('failed-precondition','기초 미수금 이관 문서입니다. 미수금·수금 화면에서 확인해 주세요.');
       const registry=await tx.get(parent.collection('erpDocuments').doc(doc.id));
       if(!registry.exists)fail('failed-precondition','출고 문서 연결을 확인해 주세요.');master.verifyTenant(registry.data(),parent.id);
       if(registry.data().direction!=='출고'||registry.data().partnerId!==doc.partnerId||registry.data().currency!==doc.currency)fail('failed-precondition','출고 문서 연결을 확인해 주세요.');

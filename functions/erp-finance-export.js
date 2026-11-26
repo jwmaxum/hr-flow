@@ -7,7 +7,7 @@ const {settlementReport,financeSnapshot}=require('./erp-settlement-model');
 
 const MAX_BYTES=5*1024*1024,MAX_PDF_ROWS=2000;
 const amount=(value,currency)=>value/10**digits(currency);
-const types={SALE:'출고',PURCHASE:'입고',SALES_RETURN:'판매반품',PURCHASE_RETURN:'매입반품',CANCEL:'취소',RECEIPT:'수금',REFUND:'환불'};
+const types={SALE:'출고',PURCHASE:'입고',SALES_RETURN:'판매반품',PURCHASE_RETURN:'매입반품',CANCEL:'취소',RECEIPT:'수금',REFUND:'환불',OPENING_RECEIVABLE:'기초미수 이관'};
 const statuses={CREDIT:'외상출고',PAID:'입금완료',PARTIAL:'부분입금',UNCONFIRMED:'입금 미확인',REFUND_DUE:'초과수금',NO_BALANCE:'청구잔액 없음'};
 const c=(label,width=1,numeric=false)=>({label,width,numeric});
 const section=(name,columns,rows,note='')=>({name,columns,rows,note});

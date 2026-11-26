@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw, Download, Plus, Search, Eye, ArrowDownToLine, ArrowUpFromLine, Layers, Package } from 'lucide-react';
 import { erpService } from '../services/erpService';
 import type { ErpRecord } from '../services/erpService';
+import { erpChoices, erpCustody } from '../services/erpAccountService';
 import { erpLedgerService } from '../services/erpLedgerService';
 import { createStockSnapshotWorkbook, type StockSnapshotItem } from '../utils/erpWorkbook';
 import { getErrorMessage } from '../utils/errors';
@@ -38,12 +39,12 @@ export function ErpStockGrid({
 }: ErpStockGridProps) {
   const [items, setItems] = useState<ErpRecord[]>([]);
   const [warehouses, setWarehouses] = useState<ErpRecord[]>([]);
-  const [stockMap, setStockMap] = useState<Map<string, { totalQuantity: number; totalValue: number; byWarehouse: Map<string, number> }>>(new Map());
+  const [stockMap, setStockMap] = useState<Map<string, { totalQuantity: number; totalValue: number; borrowedQuantity: number; borrowedValue: number; byWarehouse: Map<string, number>; borrowedByWarehouse: Map<string, number> }>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [search, setSearch] = useState('');
-  const [filterType, setFilterType] = useState<'ALL' | 'IN_STOCK' | 'OUT_OF_STOCK' | 'NORMAL' | 'BUNDLE'>('ALL');
+  const [filterType, setFilterType] = useState<'ALL' | 'IN_STOCK' | 'BORROWED' | 'OUT_OF_STOCK' | 'NORMAL' | 'BUNDLE'>('ALL');
   const [exporting, setExporting] = useState(false);
 
   const live = useRef(true);
@@ -52,23 +53,38 @@ export function ErpStockGrid({
     setLoading(true);
     setError('');
     try {
-      // 1. 전체 품목 목록 및 창고 목록 조회
-      const [itemResult, warehouseResult, ledgerMeta] = await Promise.all([
-        erpService.list(companyId, 'items', '', 'name'),
-        erpService.list(companyId, 'warehouses', '', 'name'),
-        erpLedgerService.meta(companyId).catch(() => null)
+      // 1. 전체 품목 목록(페이지네이션 전체 수집), 창고 목록, 보관·차용 목록 조회
+      const [allItems, allWarehouses, ledgerMeta, custodyData] = await Promise.all([
+        erpChoices(companyId, 'items'),
+        erpChoices(companyId, 'warehouses'),
+        erpLedgerService.meta(companyId).catch(() => null),
+        canManage ? erpCustody.list(companyId).catch(() => null) : Promise.resolve(null),
       ]);
 
       if (!live.current) return;
-      const allItems = itemResult.records;
-      const activeWarehouses = warehouseResult.records.filter(w => w.active);
+      const activeWarehouses = allWarehouses.filter(w => w.active);
       setItems(allItems);
       setWarehouses(activeWarehouses);
 
       // 2. 전체 수불부 요약(Summary) 원장 조회하여 품목/창고별 기말재고 가져오기
-      const newStockMap = new Map<string, { totalQuantity: number; totalValue: number; byWarehouse: Map<string, number> }>();
+      const makeEntry = () => ({ totalQuantity: 0, totalValue: 0, borrowedQuantity: 0, borrowedValue: 0, byWarehouse: new Map<string, number>(), borrowedByWarehouse: new Map<string, number>() });
+      const newStockMap = new Map<string, ReturnType<typeof makeEntry>>();
       for (const item of allItems) {
-        newStockMap.set(item.id, { totalQuantity: 0, totalValue: 0, byWarehouse: new Map() });
+        newStockMap.set(item.id, makeEntry());
+      }
+
+      if (custodyData?.borrowings?.length) {
+        for (const loan of custodyData.borrowings) {
+          if (!loan.outstandingQuantityScaled || loan.outstandingQuantityScaled <= 0) continue;
+          const entry = newStockMap.get(loan.itemId) || makeEntry();
+          const bQty = loan.outstandingQuantityScaled / 10000;
+          entry.borrowedQuantity += bQty;
+          entry.borrowedValue += loan.outstandingValue || 0;
+          if (loan.warehouseId) {
+            entry.borrowedByWarehouse.set(loan.warehouseId, (entry.borrowedByWarehouse.get(loan.warehouseId) || 0) + bQty);
+          }
+          newStockMap.set(loan.itemId, entry);
+        }
       }
 
       let ledgerLoaded = false;
@@ -91,7 +107,7 @@ export function ErpStockGrid({
           const processRows = (rows: typeof currentReport.rows) => {
             for (const row of rows) {
               const it = allItems.find(i => i.id === row.itemId);
-              const entry = newStockMap.get(row.itemId) || { totalQuantity: 0, totalValue: 0, byWarehouse: new Map() };
+              const entry = newStockMap.get(row.itemId) || makeEntry();
               const closingQty = row.closingQuantity || 0;
               const closingVal = row.closingValue != null ? row.closingValue : (closingQty * (it?.purchasePrice || 0));
               entry.byWarehouse.set(row.warehouseId, closingQty);
@@ -135,7 +151,7 @@ export function ErpStockGrid({
           for (const res of results) {
             if (res.status === 'fulfilled' && res.value) {
               const inv = res.value;
-              const entry = newStockMap.get(inv.item.id) || { totalQuantity: 0, totalValue: 0, byWarehouse: new Map() };
+              const entry = newStockMap.get(inv.item.id) || makeEntry();
               const qty = inv.quantity || 0;
               const val = inv.value != null ? inv.value : (qty * (inv.item.purchasePrice || 0));
               entry.totalQuantity = qty;
@@ -159,7 +175,7 @@ export function ErpStockGrid({
     } finally {
       if (live.current) setLoading(false);
     }
-  }, [companyId]);
+  }, [companyId, canManage]);
 
   useEffect(() => {
     live.current = true;
@@ -190,6 +206,8 @@ export function ErpStockGrid({
           unit: item.unit || 'EA',
           itemType: item.itemType,
           quantity: totalQty,
+          borrowedQuantity: stockEntry?.borrowedQuantity ?? 0,
+          borrowedValue: stockEntry?.borrowedValue ?? 0,
           warehouses: whObj,
           purchasePrice: item.purchasePrice,
           totalValue: totalVal,
@@ -217,6 +235,7 @@ export function ErpStockGrid({
   const filteredItems = items.filter(item => {
     const stock = stockMap.get(item.id);
     const qty = stock?.totalQuantity ?? 0;
+    const bQty = stock?.borrowedQuantity ?? 0;
 
     // 검색어 필터
     if (search.trim()) {
@@ -229,7 +248,8 @@ export function ErpStockGrid({
 
     // 탭 필터
     if (filterType === 'IN_STOCK' && qty <= 0) return false;
-    if (filterType === 'OUT_OF_STOCK' && qty > 0) return false;
+    if (filterType === 'BORROWED' && bQty <= 0) return false;
+    if (filterType === 'OUT_OF_STOCK' && (qty > 0 || bQty > 0)) return false;
     if (filterType === 'NORMAL' && item.itemType === 'BUNDLE') return false;
     if (filterType === 'BUNDLE' && item.itemType !== 'BUNDLE') return false;
 
@@ -239,7 +259,10 @@ export function ErpStockGrid({
   // 요약 카운트 및 전체 재고자산 총 매입가 계산
   const totalItemCount = items.length;
   const inStockCount = items.filter(item => (stockMap.get(item.id)?.totalQuantity ?? 0) > 0).length;
-  const outOfStockCount = items.filter(item => (stockMap.get(item.id)?.totalQuantity ?? 0) <= 0).length;
+  const borrowedItemCount = items.filter(item => (stockMap.get(item.id)?.borrowedQuantity ?? 0) > 0).length;
+  const outOfStockCount = items.filter(item => (stockMap.get(item.id)?.totalQuantity ?? 0) <= 0 && (stockMap.get(item.id)?.borrowedQuantity ?? 0) <= 0).length;
+  const totalBorrowedQty = items.reduce((sum, item) => sum + (stockMap.get(item.id)?.borrowedQuantity ?? 0), 0);
+  const totalBorrowedVal = items.reduce((sum, item) => sum + (stockMap.get(item.id)?.borrowedValue ?? 0), 0);
 
   const totalInventoryPurchaseValue = items.reduce((sum, item) => {
     const stock = stockMap.get(item.id);
@@ -290,14 +313,27 @@ export function ErpStockGrid({
         </div>
         <div style={{ background: 'var(--color-bg-secondary, #f8fafc)', padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--color-border, #e2e8f0)' }}>
           <small className="wf-muted">재고 0 (품절) 품목</small>
-          <div style={{ fontSize: '18px', fontWeight: 600, color: '#dc2626' }}>{outOfStockCount} <span style={{ fontSize: '12px', fontWeight: 400 }}>개</span></div>
+          <div style={{ fontSize: '18px', fontWeight: 600, color: '#64748b' }}>{outOfStockCount} <span style={{ fontSize: '12px', fontWeight: 400 }}>개</span></div>
         </div>
+        {borrowedItemCount > 0 && (
+          <div style={{ background: '#fef2f2', padding: '8px 16px', borderRadius: '8px', border: '1px solid #fecaca' }}>
+            <small style={{ color: '#991b1b', fontWeight: 500 }}>차용 미반환 (음수재고)</small>
+            <div style={{ fontSize: '18px', fontWeight: 600, color: '#b91c1c' }}>
+              {borrowedItemCount} <span style={{ fontSize: '12px', fontWeight: 400 }}>품목 · -{number(totalBorrowedQty)}</span>
+            </div>
+          </div>
+        )}
         {canManage && (
           <div style={{ background: 'var(--color-bg-secondary, #f8fafc)', padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--color-border, #e2e8f0)' }}>
-            <small className="wf-muted">전체 재고자산 가액 (매입가 총액)</small>
+            <small className="wf-muted">실물 재고자산 가액 (매입가 총액)</small>
             <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--wf-primary, #7c3aed)' }}>
               {number(totalInventoryPurchaseValue)} <span style={{ fontSize: '12px', fontWeight: 400 }}>원</span>
             </div>
+            {totalBorrowedVal > 0 && (
+              <small style={{ color: '#991b1b', display: 'block', marginTop: '2px' }}>
+                차용 평가액 -{number(totalBorrowedVal)}원 · 장부순액 {number(totalInventoryPurchaseValue - totalBorrowedVal)}원
+              </small>
+            )}
           </div>
         )}
       </div>
@@ -319,6 +355,15 @@ export function ErpStockGrid({
           >
             재고 보유 ({inStockCount})
           </button>
+          {borrowedItemCount > 0 && (
+            <button
+              type="button"
+              className={`wf-btn ${filterType === 'BORROWED' ? 'wf-btn-primary' : ''}`}
+              onClick={() => setFilterType('BORROWED')}
+            >
+              차용/음수 ({borrowedItemCount})
+            </button>
+          )}
           <button
             type="button"
             className={`wf-btn ${filterType === 'OUT_OF_STOCK' ? 'wf-btn-primary' : ''}`}
@@ -380,6 +425,8 @@ export function ErpStockGrid({
             {filteredItems.map(item => {
               const stock = stockMap.get(item.id);
               const qty = stock?.totalQuantity ?? 0;
+              const bQty = stock?.borrowedQuantity ?? 0;
+              const bVal = stock?.borrowedValue ?? 0;
               const isBundle = item.itemType === 'BUNDLE';
               const itemTotalVal = (stock?.totalValue && stock.totalValue > 0)
                 ? stock.totalValue
@@ -419,26 +466,33 @@ export function ErpStockGrid({
                       {isBundle ? '합성세트' : '일반'}
                     </span>
                   </td>
-                  <td className="erp-number" style={{ fontWeight: 600, color: qty > 0 ? 'var(--wf-strong, #0f172a)' : 'var(--wf-muted, #94a3b8)' }}>
+                  <td className="erp-number" style={{ fontWeight: 600, color: bQty > 0 && qty === 0 ? '#b91c1c' : qty > 0 ? 'var(--wf-strong, #0f172a)' : 'var(--wf-muted, #94a3b8)' }}>
                     {number(qty)}
+                    {bQty > 0 && (
+                      <small style={{ display: 'block', color: '#b91c1c', fontWeight: 600 }}>
+                        차용 -{number(bQty)}
+                      </small>
+                    )}
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                       {warehouses.map(w => {
                         const wQty = stock?.byWarehouse.get(w.id) ?? 0;
-                        if (wQty === 0 && warehouses.length > 3) return null;
+                        const wBorrowed = stock?.borrowedByWarehouse.get(w.id) ?? 0;
+                        if (wQty === 0 && wBorrowed === 0 && warehouses.length > 3) return null;
                         return (
                           <span
                             key={w.id}
                             style={{
-                              background: wQty > 0 ? 'var(--wf-subtle, #f1f5f9)' : 'transparent',
+                              background: wBorrowed > 0 ? '#fef2f2' : wQty > 0 ? 'var(--wf-subtle, #f1f5f9)' : 'transparent',
                               padding: '2px 6px',
                               borderRadius: '4px',
                               fontSize: '12px',
-                              color: wQty > 0 ? 'var(--wf-text, #1e293b)' : 'var(--wf-muted, #94a3b8)'
+                              color: wBorrowed > 0 ? '#991b1b' : wQty > 0 ? 'var(--wf-text, #1e293b)' : 'var(--wf-muted, #94a3b8)'
                             }}
                           >
                             {w.name}: <strong>{number(wQty)}</strong>
+                            {wBorrowed > 0 && <strong style={{ color: '#b91c1c', marginLeft: '4px' }}>(차용 -{number(wBorrowed)})</strong>}
                           </span>
                         );
                       })}
@@ -451,8 +505,13 @@ export function ErpStockGrid({
                     </td>
                   )}
                   {canManage && (
-                    <td className="erp-number" style={{ fontWeight: 600, color: qty > 0 ? 'var(--wf-primary, #7c3aed)' : 'var(--wf-muted, #94a3b8)' }}>
+                    <td className="erp-number" style={{ fontWeight: 600, color: bQty > 0 && qty === 0 ? '#b91c1c' : qty > 0 ? 'var(--wf-primary, #7c3aed)' : 'var(--wf-muted, #94a3b8)' }}>
                       {isBundle ? '—' : (qty > 0 ? `${number(itemTotalVal)}원` : '0원')}
+                      {!isBundle && bQty > 0 && (
+                        <small style={{ display: 'block', color: '#b91c1c', fontWeight: 500 }}>
+                          차용 -{number(bVal)}원
+                        </small>
+                      )}
                     </td>
                   )}
                   <td className="erp-number">{number(item.salePrice || 0)}원</td>

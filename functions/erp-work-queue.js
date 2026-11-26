@@ -54,7 +54,7 @@ function createWorkQueue({db,now,context,listPlans,reviewMonthly,reviewInbox}){
         const rows=report.documents.filter(d=>d.balance>0).map(d=>{
           const unallocated=Math.max(0,groups.get(`${d.partnerId}:${d.currency}`)?.unallocated||0);
           const overdue=d.overdueDays>0||d.promiseOverdueDays>0,date=d.expectedDate||d.dueDate;
-          return {id:d.id,title:`${d.partnerName} · ${d.documentNo}`,detail:unallocated?'기등록 미배분 수금을 먼저 확인해 주세요.':d.assigneeName?`회수 담당 ${d.assigneeName}`:'회수 담당·예정일을 확인해 주세요.',date,dateLabel:d.expectedDate?'회수 예정일':d.dueDate?'지급기일':'일정 미지정',priority:overdue||date&&date<=today?0:date?2:1,badge:unallocated?'수금 배분 확인':overdue?'기한 경과':date===today?'오늘 회수':date?'회수 예정':'일정 확인',amountMinor:d.balance,currency:d.currency,unallocatedMinor:unallocated,view:'shipments',source:d.documentNo};
+          return {id:d.id,title:`${d.partnerName} · ${d.documentNo}`,detail:unallocated?'기등록 미배분 수금을 먼저 확인해 주세요.':d.assigneeName?`회수 담당 ${d.assigneeName}`:'회수 담당·예정일을 확인해 주세요.',date,dateLabel:d.expectedDate?'회수 예정일':d.dueDate?'지급기일':'일정 미지정',priority:overdue||date&&date<=today?0:date?2:1,badge:unallocated?'수금 배분 확인':overdue?'기한 경과':date===today?'오늘 회수':date?'회수 예정':'일정 확인',amountMinor:d.balance,currency:d.currency,unallocatedMinor:unallocated,view:d.openingReceivable?'finance':'shipments',source:d.documentNo};
         });
         return section('recovery',rows);
       },

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, Upload, FileCheck2, RefreshCw, Pencil, Check, AlertCircle, Sparkles } from 'lucide-react';
+import { Download, Upload, FileCheck2, RefreshCw, Pencil, Check, AlertCircle, Sparkles, ShieldAlert } from 'lucide-react';
 import { erpService } from '../services/erpService';
 import type { ErpCursor, ErpRecord } from '../services/erpService';
-import { downloadErpFile, erpImportService, readErpFile } from '../services/erpImportService';
-import type { ErpImport, ErpImportOptions, ErpImportSummary, ErpImportType } from '../services/erpImportService';
+import { downloadErpFile, erpBootstrapService, erpImportService, readErpFile } from '../services/erpImportService';
+import type { ErpBootstrapJob, ErpImport, ErpImportOptions, ErpImportSummary, ErpImportType } from '../services/erpImportService';
+import { erpMoney } from '../services/erpAccountService';
 import { getErrorMessage } from '../utils/errors';
 import { useAuthStore } from '../store/authStore';
 import {
@@ -11,6 +12,9 @@ import {
   convertToStandardOpeningWorkbook,
   type SimpleOpeningRow
 } from '../utils/erpWorkbook';
+
+type UploadMode = ErpImportType | 'BOOTSTRAP';
+const BOOTSTRAP_CONFIRM_PHRASE = '기존 ERP 삭제 후 이관';
 
 const initialOptions = (): ErpImportOptions => ({
   defaultWarehouseId: '',
@@ -26,12 +30,16 @@ const statusLabels: Record<string, string> = { PENDING: '검토 중', COMMITTED:
 
 export function ErpImportPanel({ companyId, onInventory }: { companyId: string; onInventory: () => void }) {
   const companyData = useAuthStore(s => s.companyData);
+  const userData = useAuthStore(s => s.userData);
+  const isCompanyAdmin = userData?.role === 'ADMIN';
   const companyName = companyData?.nameKo || '소속 회사';
 
-  const [type, setType] = useState<ErpImportType>('OPENING');
+  const [type, setType] = useState<UploadMode>('OPENING');
   const [file, setFile] = useState<File | null>(null);
   const [options, setOptions] = useState(initialOptions);
   const [job, setJob] = useState<ErpImport | null>(null);
+  const [bootstrapJob, setBootstrapJob] = useState<ErpBootstrapJob | null>(null);
+  const [confirmPhrase, setConfirmPhrase] = useState('');
   const [dirty, setDirty] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -99,6 +107,8 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
   async function handleFileSelect(selectedFile: File | null) {
     setFile(selectedFile);
     setJob(null);
+    setBootstrapJob(null);
+    setConfirmPhrase('');
     setConfirmed(false);
     setDirty(true);
     setError('');
@@ -114,7 +124,17 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
       // 엑셀 시트 구조 검사
       const { default: readExcelFile } = await import('read-excel-file/browser');
       const sheets = await readExcelFile(selectedFile);
-      const hasStandardSheets = sheets.some(s => s.sheet === '작성안내') && sheets.some(s => s.sheet === '이관입력' || s.sheet === '거래입력');
+      const sheetNames = sheets.map(s => s.sheet);
+      const hasBootstrapSheets = sheetNames.includes('작성안내') && sheetNames.includes('이관입력') &&
+        (sheetNames.includes('차용이관') || sheetNames.includes('거래처이관') || sheetNames.includes('기초미수이관'));
+
+      if (hasBootstrapSheets && isCompanyAdmin) {
+        setType('BOOTSTRAP');
+        setNotice('통합 이관 패키지(.xlsx)가 감지되었습니다. 기존 ERP 삭제 후 반영 전, 먼저 "검증 및 미리보기"를 실행해 주세요.');
+        return;
+      }
+
+      const hasStandardSheets = sheetNames.includes('작성안내') && (sheetNames.includes('이관입력') || sheetNames.includes('거래입력'));
 
       if (!hasStandardSheets && type === 'OPENING') {
         // 단일 시트 또는 간편 엑셀 감지!
@@ -184,6 +204,23 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
 
   async function preview(customRows?: SimpleOpeningRow[]) {
     if (!file && !customRows?.length) throw new Error('업로드할 파일을 선택해 주세요.');
+
+    if (type === 'BOOTSTRAP') {
+      const source = await readErpFile(companyId, file!);
+      if (!live.current) return;
+      const key = JSON.stringify(['BOOTSTRAP', source.base64]);
+      if (attempt.current?.key !== key) attempt.current = { key, id: crypto.randomUUID() };
+      const result = await erpBootstrapService.preview(companyId, attempt.current.id, source);
+      if (!live.current) return;
+      attempt.current = null;
+      setJob(null);
+      setBootstrapJob(result.bootstrap);
+      setDirty(false);
+      setConfirmed(false);
+      setConfirmPhrase('');
+      setNotice('통합 이관 패키지 검증 완료. 아직 기존 ERP 데이터는 삭제·변경되지 않았습니다. 아래 내역을 확인해 주세요.');
+      return;
+    }
 
     let uploadFile: File = file!;
 
@@ -325,8 +362,10 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
               className="wf-input"
               value={type}
               onChange={e => {
-                setType(e.target.value as ErpImportType);
+                setType(e.target.value as UploadMode);
                 setJob(null);
+                setBootstrapJob(null);
+                setConfirmPhrase('');
                 setConfirmed(false);
                 setDirty(true);
                 setSimpleMode(false);
@@ -334,29 +373,44 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
             >
               <option value="OPENING">기초재고 (간편 / 표준)</option>
               <option value="MOVEMENTS">거래별 입출고</option>
+              {isCompanyAdmin && <option value="BOOTSTRAP">기초 통합 이관 (기존 ERP 삭제 후 반영 · ADMIN)</option>}
             </select>
           </label>
 
           {/* 템플릿 다운로드 버튼 영역 */}
-          <div className="erp-template-button" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {type === 'OPENING' && (
-              <button type="button" className="wf-btn wf-btn-primary" onClick={() => void run(downloadSimpleTemplate)}>
-                <Sparkles size={16} /> 초간편 기초재고 양식 받기 (Simple)
+          {type !== 'BOOTSTRAP' && (
+            <div className="erp-template-button" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {type === 'OPENING' && (
+                <button type="button" className="wf-btn wf-btn-primary" onClick={() => void run(downloadSimpleTemplate)}>
+                  <Sparkles size={16} /> 초간편 기초재고 양식 받기 (Simple)
+                </button>
+              )}
+              <button
+                type="button"
+                className="wf-btn"
+                onClick={() =>
+                  void run(async () => {
+                    const result = await erpImportService.template(companyId, type);
+                    if (live.current) downloadErpFile(result);
+                  })
+                }
+              >
+                <Download size={16} /> 표준 양식 받기 (기존 16·27열)
               </button>
-            )}
-            <button
-              type="button"
-              className="wf-btn"
-              onClick={() =>
-                void run(async () => {
-                  const result = await erpImportService.template(companyId, type);
-                  if (live.current) downloadErpFile(result);
-                })
-              }
-            >
-              <Download size={16} /> 표준 양식 받기 (기존 16·27열)
-            </button>
-          </div>
+            </div>
+          )}
+
+          {type === 'BOOTSTRAP' && (
+            <div className="erp-form-wide" role="alert" style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', color: '#991b1b', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+              <ShieldAlert size={20} style={{ flexShrink: 0, marginTop: '2px', color: '#b91c1c' }} aria-hidden="true" />
+              <div>
+                <strong style={{ display: 'block', marginBottom: '4px' }}>주의: 기존 ERP 데이터 전체 삭제 후 신규 기초 데이터 반영</strong>
+                <p style={{ margin: 0, fontSize: '13px', lineHeight: 1.5 }}>
+                  확정 시 로그인 회사의 기존 ERP 품목·창고·거래처·재고·입출고·차용·미수금 자료가 모두 삭제되고, 업로드한 통합 이관 파일(<code>작성안내</code>·<code>이관입력</code>·<code>차용이관</code>·<code>거래처이관</code>·<code>기초미수이관</code>)로 새로 초기화됩니다. HR·급여·근태·결재 데이터는 변경되지 않습니다.
+                </p>
+              </div>
+            </div>
+          )}
 
           <label className="wf-field erp-form-wide">
             <span>Excel 파일 (.xlsx, 최대 3MB·간편 및 표준 서식 지원)</span>
@@ -397,49 +451,53 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
             </label>
           )}
 
-          <label className="wf-field">
-            <span>창고 공란에 적용할 기본 창고</span>
-            <select className="wf-input" value={options.defaultWarehouseId} onChange={e => update({ defaultWarehouseId: e.target.value })}>
-              {warehouseOptions}
-            </select>
-          </label>
+          {type !== 'BOOTSTRAP' && (
+            <>
+              <label className="wf-field">
+                <span>창고 공란에 적용할 기본 창고</span>
+                <select className="wf-input" value={options.defaultWarehouseId} onChange={e => update({ defaultWarehouseId: e.target.value })}>
+                  {warehouseOptions}
+                </select>
+              </label>
 
-          <div className="erp-template-button">
-            {warehouseCursor && (
-              <button
-                type="button"
-                className="wf-btn"
-                onClick={() =>
-                  void run(async () => {
-                    const result = await erpService.list(companyId, 'warehouses', '', 'name', warehouseCursor);
-                    if (live.current) {
-                      setWarehouses(current => [...current, ...result.records.filter(row => row.active)]);
-                      setWarehouseCursor(result.nextCursor);
+              <div className="erp-template-button">
+                {warehouseCursor && (
+                  <button
+                    type="button"
+                    className="wf-btn"
+                    onClick={() =>
+                      void run(async () => {
+                        const result = await erpService.list(companyId, 'warehouses', '', 'name', warehouseCursor);
+                        if (live.current) {
+                          setWarehouses(current => [...current, ...result.records.filter(row => row.active)]);
+                          setWarehouseCursor(result.nextCursor);
+                        }
+                      })
                     }
-                  })
-                }
-              >
-                창고 더 불러오기
-              </button>
-            )}
-          </div>
+                  >
+                    창고 더 불러오기
+                  </button>
+                )}
+              </div>
 
-          <label className="erp-active-field erp-form-wide">
-            <input type="checkbox" checked={options.allowNewItems} onChange={e => update({ allowNewItems: e.target.checked })} />
-            신규 품목 자동 등록 동의 (기본단가 0원 등록, 파일 단가는 재고원장에 보존)
-          </label>
+              <label className="erp-active-field erp-form-wide">
+                <input type="checkbox" checked={options.allowNewItems} onChange={e => update({ allowNewItems: e.target.checked })} />
+                신규 품목 자동 등록 동의 (기본단가 0원 등록, 파일 단가는 재고원장에 보존)
+              </label>
 
-          {type === 'MOVEMENTS' && (
-            <label className="erp-active-field erp-form-wide">
-              <input type="checkbox" checked={options.allowNewPartners} onChange={e => update({ allowNewPartners: e.target.checked })} />
-              신규 거래처 등록 확인 (동명 거래처는 후보를 확인 후 선택)
-            </label>
+              {type === 'MOVEMENTS' && (
+                <label className="erp-active-field erp-form-wide">
+                  <input type="checkbox" checked={options.allowNewPartners} onChange={e => update({ allowNewPartners: e.target.checked })} />
+                  신규 거래처 등록 확인 (동명 거래처는 후보를 확인 후 선택)
+                </label>
+              )}
+
+              <label className="erp-active-field erp-form-wide">
+                <input type="checkbox" checked={options.acceptExistingItems} onChange={e => update({ acceptExistingItems: e.target.checked })} />
+                이름·규격 차이를 확인했으며 기존 코드의 품목을 사용 (단위 일치 필수)
+              </label>
+            </>
           )}
-
-          <label className="erp-active-field erp-form-wide">
-            <input type="checkbox" checked={options.acceptExistingItems} onChange={e => update({ acceptExistingItems: e.target.checked })} />
-            이름·규격 차이를 확인했으며 기존 코드의 품목을 사용 (단위 일치 필수)
-          </label>
         </fieldset>
 
         <p className="erp-form-note">
@@ -455,6 +513,163 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
 
       {error && <p className="erp-error" role="alert">{error}</p>}
       {notice && <p className="erp-success" role="status">{notice}</p>}
+
+      {bootstrapJob && (
+        <section className="wf-panel erp-import-preview" aria-label="통합 이관 미리보기">
+          <div className="erp-list-head">
+            <div>
+              <h2 className="wf-section-title">기초 통합 이관 미리보기</h2>
+              <p className="wf-muted">
+                {bootstrapJob.source.name} · 재고 기준일 {bootstrapJob.basisDate} · 기본 창고 {bootstrapJob.summary.warehouseName} ({bootstrapJob.summary.warehouseCode}) · {statusLabels[bootstrapJob.status]}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 12px' }}>
+              <small className="wf-muted">기초재고 품목 (실물보유)</small>
+              <div style={{ fontSize: '16px', fontWeight: 700 }}>{bootstrapJob.summary.totalItems}개 (보유 {bootstrapJob.summary.positiveItems}개)</div>
+              <small className="wf-muted">{number(bootstrapJob.summary.ownedQuantity)} EA · {number(bootstrapJob.summary.ownedValue)}원</small>
+            </div>
+            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px' }}>
+              <small style={{ color: '#991b1b' }}>차용 미반환 (마이너스 재고)</small>
+              <div style={{ fontSize: '16px', fontWeight: 700, color: '#b91c1c' }}>{bootstrapJob.summary.borrowingCount}품목 (-{number(bootstrapJob.summary.borrowedQuantity)} EA)</div>
+              <small style={{ color: '#991b1b' }}>평가액 -{number(bootstrapJob.summary.borrowedValue)}원 · 순장부 {number(bootstrapJob.summary.netBookValue)}원</small>
+            </div>
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 12px' }}>
+              <small className="wf-muted">거래처 마스터</small>
+              <div style={{ fontSize: '16px', fontWeight: 700 }}>{bootstrapJob.summary.partnerCount}개처</div>
+              <small className="wf-muted">매입·매출·채권·보관 상대처</small>
+            </div>
+            <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '10px 12px' }}>
+              <small style={{ color: '#5b21b6' }}>기초 미수채권 (부가세 포함)</small>
+              <div style={{ fontSize: '16px', fontWeight: 700, color: '#5b21b6' }}>{bootstrapJob.summary.receivableCount}건</div>
+              <small style={{ color: '#5b21b6' }}>
+                {bootstrapJob.summary.receivableTotals.map(t => `${erpMoney(t.amountMinor, t.currency)} ${t.currency}`).join(' / ') || '0 KRW'}
+              </small>
+            </div>
+          </div>
+
+          {bootstrapJob.borrowings.length > 0 && (
+            <div className="erp-table-scroll" style={{ marginBottom: '16px' }}>
+              <table className="erp-table">
+                <caption>차용 미반환 (마이너스 재고) 이관 내역</caption>
+                <thead>
+                  <tr><th>품목코드</th><th>품목명</th><th>창고</th><th className="erp-number">차용 수량</th><th className="erp-number">평가금액 (원)</th><th>원소유 → 판매처</th><th>기준일</th></tr>
+                </thead>
+                <tbody>
+                  {bootstrapJob.borrowings.map(b => (
+                    <tr key={`${b.code}-${b.date}`}>
+                      <td className="erp-code">{b.code}</td>
+                      <td>{b.name}</td>
+                      <td>{b.warehouseName}</td>
+                      <td className="erp-number" style={{ color: '#b91c1c', fontWeight: 600 }}>-{number(b.quantity)}</td>
+                      <td className="erp-number">-{number(b.evaluationValue)}</td>
+                      <td>{b.ownerName} → {b.buyerName}</td>
+                      <td>{b.date}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {bootstrapJob.receivables.length > 0 && (
+            <div className="erp-table-scroll" style={{ marginBottom: '16px' }}>
+              <table className="erp-table">
+                <caption>기초 미수채권 이관 내역 (부가세 포함)</caption>
+                <thead>
+                  <tr><th>기준일</th><th>거래처코드</th><th>거래처명</th><th>문서번호</th><th>통화</th><th className="erp-number">미수잔액</th></tr>
+                </thead>
+                <tbody>
+                  {bootstrapJob.receivables.map(r => (
+                    <tr key={r.documentNo}>
+                      <td>{r.date}</td>
+                      <td className="erp-code">{r.partnerCode}</td>
+                      <td>{r.partnerName}</td>
+                      <td>{r.documentNo}</td>
+                      <td>{r.currency}</td>
+                      <td className="erp-number" style={{ fontWeight: 600 }}>{erpMoney(r.amountMinor, r.currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="erp-import-confirm">
+            {bootstrapJob.status === 'PENDING' && (
+              <>
+                <label className="wf-field" style={{ maxWidth: '360px', marginBottom: '10px' }}>
+                  <span>안전 확인 문구 입력 (<code>{BOOTSTRAP_CONFIRM_PHRASE}</code>)</span>
+                  <input
+                    className="wf-input"
+                    value={confirmPhrase}
+                    disabled={busy}
+                    placeholder={BOOTSTRAP_CONFIRM_PHRASE}
+                    onChange={e => setConfirmPhrase(e.target.value)}
+                  />
+                </label>
+                <label className="erp-active-field">
+                  <input
+                    type="checkbox"
+                    disabled={busy || dirty}
+                    checked={confirmed}
+                    onChange={e => setConfirmed(e.target.checked)}
+                  />
+                  로그인 회사의 기존 ERP 데이터를 모두 삭제하고 위 기초재고·차용·거래처·미수채권으로 초기화하는 데 동의합니다.
+                </label>
+                <div className="erp-actions">
+                  <button
+                    type="button"
+                    className="wf-btn"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        const result = await erpBootstrapService.cancel(companyId, bootstrapJob.id);
+                        if (live.current) {
+                          setBootstrapJob(result.bootstrap);
+                          setNotice('통합 이관 검토를 취소했습니다. 기존 데이터는 변경되지 않았습니다.');
+                        }
+                      })
+                    }
+                  >
+                    검토 취소
+                  </button>
+                  <button
+                    type="button"
+                    className="wf-btn wf-btn-primary"
+                    style={{ background: '#b91c1c', borderColor: '#991b1b' }}
+                    disabled={busy || dirty || !confirmed || confirmPhrase !== BOOTSTRAP_CONFIRM_PHRASE}
+                    onClick={() =>
+                      void run(async () => {
+                        const result = await erpBootstrapService.commit(companyId, bootstrapJob, confirmPhrase);
+                        if (!live.current) return;
+                        setBootstrapJob(result.bootstrap);
+                        setConfirmed(false);
+                        setConfirmPhrase('');
+                        setNotice('기존 ERP 삭제 및 신규 기초재고·차용·거래처·미수채권 일괄 반영이 완료되었습니다.');
+                        const [masters, imports] = await Promise.all([erpService.list(companyId, 'warehouses', '', 'name'), erpImportService.list(companyId)]);
+                        if (live.current) {
+                          setWarehouses(masters.records.filter(r => r.active));
+                          setHistory(imports.imports);
+                        }
+                      })
+                    }
+                  >
+                    <FileCheck2 size={16} /> 기존 ERP 삭제 후 일괄 반영
+                  </button>
+                </div>
+              </>
+            )}
+            {bootstrapJob.status === 'COMMITTED' && (
+              <button type="button" className="wf-btn wf-btn-primary" onClick={onInventory}>
+                반영된 재고·차용·미수금 확인
+              </button>
+            )}
+          </div>
+        </section>
+      )}
 
       {job && (
         <section className="wf-panel erp-import-preview" aria-label="업로드 미리보기">

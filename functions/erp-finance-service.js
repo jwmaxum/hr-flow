@@ -17,7 +17,7 @@ function createErpFinanceService({ db, now = () => new Date(), renderFinancePdf 
     let normalized = { ...input };
     if (input.type === 'CANCEL') {
       const source = data.paid.find(row => row.id === input.sourceId);
-      if (!source || source.type === 'CANCEL' || data.paid.some(row => row.sourceId === source.id)) fail('failed-precondition', '취소 가능한 수금·환불 원거래를 선택해 주세요.');
+      if (!source || ['CANCEL', 'OPENING_RECEIVABLE'].includes(source.type) || data.paid.some(row => row.sourceId === source.id)) fail('failed-precondition', '취소 가능한 수금·환불 원거래를 선택해 주세요.');
       if (input.date < source.date) fail('invalid-argument', '취소일은 원거래일 이후여야 합니다.');
       normalized = { ...input, partnerId: source.partnerId, currency: source.currency, amountMinor: source.amountMinor, method: source.method, reference: source.reference };
     }

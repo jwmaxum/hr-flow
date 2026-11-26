@@ -24,10 +24,15 @@ function salesEvents(rows) {
 function paymentEvents(rows) {
   const byId = new Map(rows.map(row => [row.id,row]));
   return rows.map(row => {
+    if (row.type === 'OPENING_RECEIVABLE') {
+      const documentNo = row.documentNo || row.reference || `OPEN-AR-${row.id}`;
+      return { id: row.id, partnerId: row.partnerId, partnerName: row.partnerName, currency: row.currency, date: row.date, saleDate: row.date, kind: 'OPENING_RECEIVABLE',
+        documentNo, documentId: M.hash(master.normalize(documentNo)), paymentTerms: 'CREDIT', supply: 0, tax: 0, gross: M.signed(row.amountMinor), receipt: 0, method: '', notes: row.notes || '' };
+    }
     let sign = row.type === 'RECEIPT' ? 1 : -1;
     if (row.type === 'CANCEL') {
       const source = byId.get(row.sourceId);
-      if (!source || source.type === 'CANCEL' || source.partnerId !== row.partnerId || source.currency !== row.currency || source.amountMinor !== row.amountMinor) fail('failed-precondition', '수금 취소 연결을 확인해 주세요.');
+      if (!source || ['CANCEL', 'OPENING_RECEIVABLE'].includes(source.type) || source.partnerId !== row.partnerId || source.currency !== row.currency || source.amountMinor !== row.amountMinor) fail('failed-precondition', '수금 취소 연결을 확인해 주세요.');
       sign = source.type === 'RECEIPT' ? -1 : 1;
     }
     return { id: row.id, partnerId: row.partnerId, partnerName: row.partnerName, currency: row.currency, date: row.date, kind: row.type,
@@ -40,7 +45,7 @@ function summarize(events, from, to, partnerId = '') {
     const key = `${event.partnerId}:${event.currency}`;
     if (!groups.has(key)) groups.set(key, { partnerId: event.partnerId, partnerName: event.partnerName, currency: event.currency, opening: 0, sales: 0, tax: 0, billed: 0, receipts: 0, balance: 0 });
     const group = groups.get(key);
-    if (event.date < from) group.opening = M.signed(group.opening + event.gross - event.receipt);
+    if (event.date < from || event.kind === 'OPENING_RECEIVABLE') group.opening = M.signed(group.opening + event.gross - event.receipt);
     else { group.sales = M.signed(group.sales + event.supply); group.tax = M.signed(group.tax + event.tax); group.billed = M.signed(group.billed + event.gross); group.receipts = M.signed(group.receipts + event.receipt); }
     group.balance = M.signed(group.balance + event.gross - event.receipt);
   }

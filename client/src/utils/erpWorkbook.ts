@@ -138,6 +138,8 @@ export interface StockSnapshotItem {
   unit: string;
   itemType?: string;
   quantity: number;
+  borrowedQuantity?: number;
+  borrowedValue?: number;
   warehouses: { [warehouseName: string]: number };
   purchasePrice?: number;
   totalValue?: number;
@@ -150,16 +152,20 @@ export async function createStockSnapshotWorkbook(
   warehouseNames: string[],
   canManage: boolean
 ): Promise<Blob> {
+  const hasBorrowings = items.some(it => (it.borrowedQuantity || 0) > 0);
   const header: Cell[] = [
     '품목코드', '품목명', '규격', '단위', '상품유형', '전체현재고',
+    ...(hasBorrowings ? ['차용미반환(음수)'] : []),
     ...warehouseNames,
-    ...(canManage ? ['기본매입단가(원)', '재고자산매입금액(원)', '기본판매단가(원)'] : []),
+    ...(canManage ? ['기본매입단가(원)', '재고자산매입금액(원)', ...(hasBorrowings ? ['차용평가액(원)'] : []), '기본판매단가(원)'] : []),
     '상태'
   ];
 
   const rows: Cell[][] = [header];
   for (const item of items) {
     const itemTotalVal = item.totalValue != null ? item.totalValue : (item.quantity * (item.purchasePrice ?? 0));
+    const bQty = item.borrowedQuantity || 0;
+    const bVal = item.borrowedValue || 0;
     const row: Cell[] = [
       item.code,
       item.name,
@@ -167,8 +173,9 @@ export async function createStockSnapshotWorkbook(
       item.unit,
       item.itemType === 'BUNDLE' ? '합성세트' : '일반상품',
       item.quantity,
+      ...(hasBorrowings ? [bQty ? -bQty : 0] : []),
       ...warehouseNames.map(wName => item.warehouses[wName] ?? 0),
-      ...(canManage ? [item.purchasePrice ?? 0, itemTotalVal, item.salePrice ?? 0] : []),
+      ...(canManage ? [item.purchasePrice ?? 0, itemTotalVal, ...(hasBorrowings ? [bVal ? -bVal : 0] : []), item.salePrice ?? 0] : []),
       item.active ? '사용 중' : '사용 중지'
     ];
     rows.push(row);
@@ -176,6 +183,8 @@ export async function createStockSnapshotWorkbook(
 
   if (items.length > 0) {
     const totalQty = items.reduce((s, it) => s + it.quantity, 0);
+    const totalBorrowedQty = items.reduce((s, it) => s + (it.borrowedQuantity || 0), 0);
+    const totalBorrowedVal = items.reduce((s, it) => s + (it.borrowedValue || 0), 0);
     const totalVal = items.reduce((s, it) => s + (it.totalValue != null ? it.totalValue : (it.quantity * (it.purchasePrice ?? 0))), 0);
     const totalRow: Cell[] = [
       '합계',
@@ -184,8 +193,9 @@ export async function createStockSnapshotWorkbook(
       '',
       '',
       totalQty,
+      ...(hasBorrowings ? [totalBorrowedQty ? -totalBorrowedQty : 0] : []),
       ...warehouseNames.map(wName => items.reduce((s, it) => s + (it.warehouses[wName] ?? 0), 0)),
-      ...(canManage ? ['', totalVal, ''] : []),
+      ...(canManage ? ['', totalVal, ...(hasBorrowings ? [totalBorrowedVal ? -totalBorrowedVal : 0] : []), ''] : []),
       ''
     ];
     rows.push(totalRow);
@@ -194,6 +204,6 @@ export async function createStockSnapshotWorkbook(
   return buildErpWorkbook([{
     name: '현재고현황',
     rows,
-    widths: [16, 26, 16, 10, 14, 16, ...warehouseNames.map(() => 14), 14, 18, 14, 12]
+    widths: [16, 26, 16, 10, 14, 16, ...(hasBorrowings ? [16] : []), ...warehouseNames.map(() => 14), ...(canManage ? [14, 18, ...(hasBorrowings ? [16] : []), 14] : []), 12]
   }]);
 }

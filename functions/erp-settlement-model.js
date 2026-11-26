@@ -9,9 +9,11 @@ function settlementReport(data, to, partnerId = '') {
     if (!documents.has(event.documentId)) documents.set(event.documentId, {
       id: event.documentId, documentNo: event.documentNo, date: event.saleDate,
       partnerId: event.partnerId, partnerName: event.partnerName, currency: event.currency,
+      openingReceivable: event.kind === 'OPENING_RECEIVABLE',
       paymentTerms:event.paymentTerms||'UNCONFIRMED', billed: 0, allocated: 0, dueDate: '', termsDate: '', expectedDate:'', assigneeId:'', assigneeName:'', followUpDate:'', followUpNotes:'',
     });
     const doc = documents.get(event.documentId);
+    if (event.kind === 'OPENING_RECEIVABLE') doc.openingReceivable = true;
     if (doc.partnerId !== event.partnerId || doc.currency !== event.currency || doc.date !== event.saleDate) fail('failed-precondition', '출고 문서 연결을 확인해 주세요.');
     doc.billed = M.signed(doc.billed + event.gross);
   }
