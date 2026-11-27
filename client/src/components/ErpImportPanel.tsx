@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Download, Upload, FileCheck2, RefreshCw, Pencil, Check, AlertCircle, Sparkles } from 'lucide-react';
-import { ErpBootstrapConfirmation, ErpBootstrapBackupResult } from './ErpBootstrapConfirmation';
+import { ErpBootstrapConfirmation, ErpBootstrapBackupResult, ErpLedgerComparisonTable } from './ErpBootstrapConfirmation';
 import { erpService } from '../services/erpService';
 import type { ErpCursor, ErpRecord } from '../services/erpService';
 import { downloadErpFile, erpBootstrapService, erpImportService, readErpFile } from '../services/erpImportService';
@@ -26,13 +26,14 @@ const initialOptions = (): ErpImportOptions => ({
 });
 
 const number = (value?: number) => (value === undefined ? '—' : value.toLocaleString('ko-KR', { maximumFractionDigits: 4 }));
-const statusLabels: Record<string, string> = { PENDING: '검토 중', COMMITTED: '확정 완료', CANCELLED: '검토 취소' };
+const statusLabels: Record<string, string> = { PREPARING: '버전 준비 중', PENDING: '검토 중', COMMITTED: '확정 완료', CANCELLED: '검토 취소' };
 
 export function ErpImportPanel({ companyId, onInventory }: { companyId: string; onInventory: () => void }) {
   const companyData = useAuthStore(s => s.companyData);
   const userData = useAuthStore(s => s.userData);
   const isCompanyAdmin = userData?.role === 'ADMIN';
   const companyName = companyData?.nameKo || '소속 회사';
+  const resumeKey = 'erp-bootstrap:' + companyId + ':' + (userData?.uid || '');
 
   const [type, setType] = useState<UploadMode>('OPENING');
   const [file, setFile] = useState<File | null>(null);
@@ -56,6 +57,7 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
   const [rowEditValues, setRowEditValues] = useState<{ quantity?: string; price?: string; name?: string }>({});
 
   const live = useRef(true);
+  const selection = useRef(0);
   const attempt = useRef<{ key: string; id: string } | null>(null);
 
   useEffect(() => {
@@ -76,6 +78,34 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
       live.current = false;
     };
   }, [companyId]);
+
+  useEffect(() => {
+    let active = true;
+    const beforeSelection = selection.current;
+    let id: string | null = null;
+    try { id = sessionStorage.getItem(resumeKey); } catch { /* restricted browser storage */ }
+    if (isCompanyAdmin && id) {
+      void erpBootstrapService.get(companyId, id).then(({ bootstrap }) => {
+        if (!active || beforeSelection !== selection.current || bootstrap.status === 'CANCELLED') return;
+        if (bootstrap.status === 'COMMITTED') {
+          try { sessionStorage.removeItem(resumeKey); } catch { /* restricted browser storage */ }
+        }
+        if (bootstrap.status === 'PREPARING') attempt.current = {key: bootstrap.source.sha256, id: bootstrap.id};
+        setType('BOOTSTRAP');
+        setBootstrapJob(bootstrap);
+        setDirty(false);
+        setNotice(bootstrap.status === 'PREPARING' ? '이전 이관 준비를 이어가려면 같은 Excel 파일을 선택해 검증해 주세요.' : bootstrap.status === 'COMMITTED' ? '통합 이관이 완료되었습니다. 확정 결과를 확인해 주세요.' : '진행 중이던 통합 이관을 불러왔습니다.');
+      }).catch(() => { /* a new preview can still be created */ });
+    }
+    return () => { active = false; };
+  }, [companyId, resumeKey, isCompanyAdmin]);
+
+  function rememberBootstrap(id: string | null) {
+    try {
+      if (id) sessionStorage.setItem(resumeKey, id);
+      else sessionStorage.removeItem(resumeKey);
+    } catch { /* continue in this tab if storage is unavailable */ }
+  }
 
   async function run(action: () => Promise<void>) {
     if (busy) return;
@@ -104,6 +134,8 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
 
   // 파일 선택 및 스마트 감지
   async function handleFileSelect(selectedFile: File | null) {
+    selection.current++;
+    if (bootstrapJob?.status !== 'PREPARING') rememberBootstrap(null);
     setFile(selectedFile);
     setJob(null);
     setBootstrapJob(null);
@@ -114,9 +146,12 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
     setSimpleMode(false);
     setSimpleRows([]);
     setEditingRowIndex(null);
-    attempt.current = null;
+    if (bootstrapJob?.status !== 'PREPARING') attempt.current = null;
 
     if (!selectedFile) return;
+    if (selectedFile.size > 12 * 1024 * 1024) { setError('12MB 이하의 .xlsx 파일을 선택해 주세요.'); return; }
+    if (type === 'BOOTSTRAP') return;
+    if (selectedFile.size > 3 * 1024 * 1024) { setNotice('대용량 통합 양식은 기초 통합 이관을 선택해 검증해 주세요.'); return; }
 
     try {
       // 엑셀 시트 구조 검사
@@ -204,15 +239,18 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
     if (!file && !customRows?.length) throw new Error('업로드할 파일을 선택해 주세요.');
 
     if (type === 'BOOTSTRAP') {
-      const source = await readErpFile(companyId, file!);
+      const source = await readErpFile(companyId, file!, true);
       if (!live.current) return;
-      const key = JSON.stringify(['BOOTSTRAP', source.base64]);
+      const hash = await crypto.subtle.digest('SHA-256', await file!.arrayBuffer());
+      const key = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
       if (attempt.current?.key !== key) attempt.current = { key, id: crypto.randomUUID() };
+      rememberBootstrap(attempt.current.id);
       const result = await erpBootstrapService.preview(companyId, attempt.current.id, source);
       if (!live.current) return;
       attempt.current = null;
       setJob(null);
       setBootstrapJob(result.bootstrap);
+      rememberBootstrap(result.bootstrap.id);
       setDirty(false);
       setConfirmed(false);
       setNotice('통합 이관 패키지 검증 완료. 아직 기존 ERP 데이터는 삭제·변경되지 않았습니다. 아래 내역을 확인해 주세요.');
@@ -401,7 +439,7 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
           </p>}
 
           <label className="wf-field erp-form-wide">
-            <span>Excel 파일 (.xlsx, 최대 3MB·간편 및 표준 서식 지원)</span>
+            <span>Excel 파일 (.xlsx, {type === 'BOOTSTRAP' ? '통합 이관 최대 12MB' : '최대 3MB'})</span>
             <input
               className="wf-input"
               type="file"
@@ -538,10 +576,11 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
             </div>
           </div>
 
+          {bootstrapJob.comparison && <ErpLedgerComparisonTable comparison={bootstrapJob.comparison} />}
           {bootstrapJob.borrowings.length > 0 && (
             <div className="erp-table-scroll" style={{ marginBottom: '16px' }}>
               <table className="erp-table">
-                <caption>차용 미반환 (마이너스 재고) 이관 내역</caption>
+                <caption>차용 미반환 이관 내역 ({bootstrapJob.borrowings.length} / {bootstrapJob.summary.borrowingCount}건)</caption>
                 <thead>
                   <tr><th>품목코드</th><th>품목명</th><th>창고</th><th className="erp-number">차용 수량</th><th className="erp-number">평가금액 (원)</th><th>원소유 → 판매처</th><th>기준일</th></tr>
                 </thead>
@@ -565,7 +604,7 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
           {bootstrapJob.receivables.length > 0 && (
             <div className="erp-table-scroll" style={{ marginBottom: '16px' }}>
               <table className="erp-table">
-                <caption>기초 미수채권 이관 내역 (부가세 포함)</caption>
+                <caption>기초 미수채권 이관 내역 ({bootstrapJob.receivables.length} / {bootstrapJob.summary.receivableCount}건)</caption>
                 <thead>
                   <tr><th>기준일</th><th>거래처코드</th><th>거래처명</th><th>문서번호</th><th>통화</th><th className="erp-number">미수잔액</th></tr>
                 </thead>
@@ -587,22 +626,44 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
 
           <div className="erp-import-confirm">
             {bootstrapJob.status === 'PENDING' && <ErpBootstrapConfirmation
-              key={bootstrapJob.id} job={bootstrapJob} companyName={companyName} busy={busy} dirty={dirty}
+              key={bootstrapJob.id + (bootstrapJob.stageConflict?.challenge || '')} job={bootstrapJob} companyName={companyName} busy={busy} dirty={dirty}
               onCancel={() => void run(async () => {
                 const result = await erpBootstrapService.cancel(companyId, bootstrapJob.id);
                 if (live.current) {
                   setBootstrapJob(result.bootstrap);
+                  rememberBootstrap(null);
                   setNotice('통합 이관 검토를 취소했습니다.');
                 }
               })}
               onCommit={reset => void run(async () => {
-                const result = reset
-                  ? await erpBootstrapService.reset(companyId, bootstrapJob, reset.warningAccepted, reset.password, () => live.current)
-                  : await erpBootstrapService.commit(companyId, bootstrapJob);
-                if (!live.current) return;
+                const current = () => live.current && useAuthStore.getState().userData?.companyId === companyId;
+                const onPending = (updated: ErpBootstrapJob) => {
+                  if (!current()) return;
+                  setBootstrapJob(updated);
+                  setNotice('기존 장부를 백업하고 새 버전을 대사하고 있습니다.');
+                };
+                let result;
+                try {
+                  result = reset
+                    ? await erpBootstrapService.reset(companyId, bootstrapJob, reset.warningAccepted, reset.password, current, onPending)
+                    : await erpBootstrapService.commit(companyId, bootstrapJob, current, onPending);
+                } catch (failure) {
+                  if (!current()) return;
+                  const latest = await erpBootstrapService.get(companyId, bootstrapJob.id).catch(() => null);
+                  if (!current()) return;
+                  if (latest) setBootstrapJob(latest.bootstrap);
+                  if (latest?.bootstrap.status !== 'COMMITTED') throw failure;
+                  result = latest;
+                }
+                if (!current()) return;
                 setBootstrapJob(result.bootstrap);
+                if (result.bootstrap.status !== 'COMMITTED') {
+                  setNotice(result.bootstrap.stageConflict ? '새 장부 재작성에 대한 ADMIN 확인이 필요합니다.' : '새 장부를 준비 중입니다. 현재 상태를 확인해 주세요.');
+                  return;
+                }
+                rememberBootstrap(null);
                 if (result.idempotent) setNotice('이미 확정된 이관입니다. 기존 확정 결과를 표시합니다.');
-                else setNotice(reset ? '기존 장부 백업 후 재이관을 확정했습니다.' : '최초 기초자료 이관을 확정했습니다.');
+                else setNotice(result.bootstrap.backup ? '기존 장부 백업 후 재이관을 확정했습니다.' : '최초 기초자료 이관을 확정했습니다.');
                 const [masters, imports] = await Promise.all([erpService.list(companyId, 'warehouses', '', 'name'), erpImportService.list(companyId)]);
                 if (live.current) {
                   setWarehouses(masters.records.filter(r => r.active));

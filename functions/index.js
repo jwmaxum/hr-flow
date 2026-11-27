@@ -51,7 +51,7 @@ exports.manageErp = callable((request, dep) => createErpService(dep)(request));
 exports.manageErpFinance = callable((request, dep) => createErpFinanceService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.manageErpCustody = callable((request, dep) => createErpCustodyService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.manageErpImport = callable((request, dep) => createErpImportService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
-exports.manageErpBootstrap = callable((request, dep) => createErpBootstrapService(dep)(request), { memory: '512MiB', timeoutSeconds: 300, concurrency: 1 });
+exports.manageErpBootstrap = callable((request, dep) => createErpBootstrapService(dep)(request), { memory: '2GiB', timeoutSeconds: 1800, concurrency: 1 });
 exports.manageErpCorrection = callable((request, dep) => createErpCorrectionService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.manageErpReport = callable((request, dep) => createErpReportService(dep)(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });
 exports.manageErpDocuments = callable((request, dep) => createErpDocumentService({ ...dep, renderPdf: renderErpDocumentPdf })(request), { memory: '512MiB', timeoutSeconds: 120, concurrency: 1 });

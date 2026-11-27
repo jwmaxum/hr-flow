@@ -383,7 +383,26 @@ try {
   await deny('member cannot self-grant ERP access',updateDoc(document('bob','UserProfile','bob'),{erpAccess:'BOTH'}));
   await deny('admin cannot bypass ERP grant audit',updateDoc(document('alice','UserProfile','bob'),{erpAccess:'BOTH'}));
   // ERP must use server authorization and redaction even for company admins.
+  const privateVersionPaths = [
+    'erpBootstrapJobs/import/uploadPages/00000001',
+    'erpLedgerVersions/staged', 'erpLedgerVersions/staged/pages/00000001',
+    'erpLedgerVersions/staged/ledger/a/erpItems/item',
+    'erpLedgerVersions/current/ledger/a/erpInventory/stock',
+    'erpLedgerVersions/previous/ledger/a/erpReceipts/receipt',
+  ];
+  await testEnv.withSecurityRulesDisabled(async context => {
+    const seed = context.firestore();
+    await Promise.all(privateVersionPaths.map(path => setDoc(doc(seed, 'companies/a/' + path), { companyId: 'a' })));
+  });
   for (const uid of ['bob', 'manager', 'alice', 'outsider', 'root', 'anonymous']) {
+    await deny(uid + ' cannot change the active ERP pointer', updateDoc(doc(db(uid), 'companies/a'), {erpActiveLedgerVersion: 'staged'}));
+    await deny(uid + ' cannot change the ERP revision', updateDoc(doc(db(uid), 'companies/a'), {erpLedgerWriteRevision: 123}));
+    for (const path of privateVersionPaths) {
+      const target = doc(db(uid), 'companies/a/' + path);
+      await deny(uid + ' cannot read version data ' + path, getDoc(target));
+      await deny(uid + ' cannot edit version data ' + path, updateDoc(target, {amount: 1}));
+      await deny(uid + ' cannot delete version data ' + path, deleteDoc(target));
+    }
     for (const part of ['archive', 'restoredLedger']) {
       const target = doc(db(uid), 'companies', 'a', 'erpBootstrapBackups', 'private', part, 'a', 'erpInventory', 'row');
       await deny(uid + ' direct backup content read ' + part, getDoc(target));

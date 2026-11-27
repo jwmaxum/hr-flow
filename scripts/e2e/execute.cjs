@@ -21,7 +21,7 @@ const { assertE2EEnvironment } = require('./safety.cjs');
   const erpCode = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--test', '--experimental-test-coverage', '--test-coverage-include=functions/erp-service.js',
       '--test-coverage-include=functions/erp-*.js', '--test-coverage-include=functions/admin-security-service.js', 'functions/tests/admin-security.test.js', 'functions/tests/erp-service.test.js',
-      'functions/tests/erp-import-files.test.js', 'functions/tests/erp-bootstrap-opening-ar.test.js', 'functions/tests/erp-bootstrap-backup.test.js', 'functions/tests/erp-import-service.test.js', 'functions/tests/erp-ledger.test.js',
+      'functions/tests/erp-import-files.test.js', 'functions/tests/erp-bootstrap-opening-ar.test.js', 'functions/tests/erp-bootstrap-backup.test.js', 'functions/tests/erp-bootstrap-versions.test.js', 'functions/tests/erp-bootstrap-repair.test.js', 'functions/tests/erp-version-routing.test.js', 'functions/tests/erp-import-service.test.js', 'functions/tests/erp-ledger.test.js',
       'scripts/tests/erp-total-amount.test.cjs', 'functions/tests/erp-accounts.test.js', 'functions/tests/erp-collection.test.js', 'functions/tests/erp-usability.test.js', 'functions/tests/erp-stock-state.test.js', 'functions/tests/erp-work-queue.test.js', 'functions/tests/erp-governance.test.js', 'functions/tests/erp-change-review.test.js', 'functions/tests/erp-review-inbox.test.js', 'functions/tests/erp-documents.test.js', 'functions/tests/erp-document-pdf.test.js'], { cwd: root, env: process.env, stdio: 'inherit' });
     child.once('error', reject); child.once('exit', code => resolve(code ?? 1));
   });

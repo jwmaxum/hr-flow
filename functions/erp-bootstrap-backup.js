@@ -82,7 +82,7 @@ async function readLedger({ tx, parent, collections = LEDGER_COLLECTIONS }) {
   // Unknown future ERP tables must be reviewed before an existing company can be reset.
   if (parent.listCollections) {
     const children = await parent.listCollections();
-    const controls = new Set([BACKUPS, 'erpBootstrapJobs']);
+    const controls = new Set([BACKUPS, 'erpBootstrapJobs', 'erpLedgerVersions']);
     if (children.some(ref => /^erp[A-Z]/.test(ref.id) && !names.includes(ref.id) && !controls.has(ref.id))) {
       fail('failed-precondition', '미등록 ERP 컬렉션이 있어 전체 이관을 중단했습니다.');
     }
@@ -142,13 +142,14 @@ function childDoc(root, path) {
 }
 
 // All writes are create-only. A retry can continue a partial archive but cannot rewrite one.
-async function saveRows(db, entries) {
+async function saveRows(db, entries, verifyScope) {
   let group = [], bytes = 0;
   async function flush() {
     if (!group.length) return;
     const pending = group;
     group = []; bytes = 0;
     await db.runTransaction(async tx => {
+      if (verifyScope) await verifyScope(tx);
       const docs = tx.getAll ? await tx.getAll(...pending.map(x => x.ref)) : await Promise.all(pending.map(x => tx.get(x.ref)));
       pending.forEach((entry, i) => {
         if (docs[i].exists) {
@@ -226,4 +227,5 @@ async function verifyBackupInTransaction({ tx, parent, jobId, backupId, collecti
   return rows;
 }
 
-module.exports = { LEDGER_COLLECTIONS, readLedger, ledgerFingerprint, versionFingerprint, prepareBackup, verifyBackupInTransaction };
+module.exports = { LEDGER_COLLECTIONS, readLedger, ledgerFingerprint, versionFingerprint, prepareBackup, verifyBackupInTransaction,
+  ...require('./erp-version-backup')({ LEDGER_COLLECTIONS, cmp, digest, sha, numericFingerprint, childDoc, saveRows, mismatch, changed }) };

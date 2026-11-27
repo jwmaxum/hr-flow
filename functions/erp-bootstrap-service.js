@@ -1,20 +1,22 @@
-const { createHash } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { posix } = require('node:path');
-const { isDeepStrictEqual, TextDecoder } = require('node:util');
+const { TextDecoder } = require('node:util');
 const { Parser } = require('saxen');
 const yauzl = require('yauzl');
 const readExcelModule = require('read-excel-file/node');
 const readExcelFile = typeof readExcelModule === 'function' ? readExcelModule : readExcelModule.default;
 const { authorizeContext, recentAuthentication, fail } = require('./security-context');
-const { LEDGER_COLLECTIONS: ERP_COLLECTIONS, readLedger, ledgerFingerprint, versionFingerprint, prepareBackup, verifyBackupInTransaction } = require('./erp-bootstrap-backup');
+const { LEDGER_COLLECTIONS: ERP_COLLECTIONS, inspectVersion, prepareVersionBackup, verifyVersionBackup } = require('./erp-bootstrap-backup');
+const { activeVersion, ledgerParent, writeRevision } = require('./erp-version-routing');
+const { makeUploadPages, persistUpload, fillVersion, matchesUpload } = require('./erp-bootstrap-stage');
 const { erpMaster: master } = require('./erp-service');
 const M = require('./erp-ledger-model');
 const { decimal, round, safe, HEADERS } = require('./erp-import-schema');
 const { currencies, minor } = require('./erp-finance-model');
 
-const MAX_BYTES = 3 * 1024 * 1024;
-const MAX_INFLATED = 12 * 1024 * 1024;
-const MAX_ROWS = 500;
+const MAX_BYTES = 12 * 1024 * 1024;
+const MAX_INFLATED = 72 * 1024 * 1024;
+const MAX_ROWS = 10000;
 const MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const CONFIRM_PHRASE = '기존 ERP 삭제 후 이관';
 const NS = {
@@ -99,8 +101,8 @@ async function unzip(buffer) {
           }));
           current = null;
           const xml = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
-          tags += (xml.match(/</g) || []).length;
-          if (tags > 600000) invalid('XLSX XML 항목이 너무 많습니다.');
+          for (let i = xml.indexOf('<'); i !== -1; i = xml.indexOf('<', i + 1)) tags++;
+          if (tags > 4000000) invalid('XLSX XML 항목이 너무 많습니다.');
           xmlRead(xml, (tag, attrs) => {
             const local = tag.split(':').at(-1);
             if (['externalReference', 'externalLink', 'oleObject', 'control', 'calculatedColumnFormula', 'totalsRowFormula'].includes(local)) {
@@ -170,7 +172,7 @@ function inspectBootstrapSheets(files) {
         invalid(`시트의 최대 행(${MAX_ROWS + 20})을 초과했습니다.`);
       }
       if (tag === 's:c') {
-        const match = /^([A-Z]{1,2})([1-9]\d{0,3})$/.exec(attrs.r || '');
+        const match = /^([A-Z]{1,2})([1-9]\d{0,4})$/.exec(attrs.r || '');
         if (!match) invalid('셀 주소를 확인해 주세요.');
         cell = attrs.r;
         row = +match[2];
@@ -324,7 +326,7 @@ function parseBootstrapMatrix(workbook) {
       if (amountRaw === null || priceRaw !== null) invalid(`이관입력 ${sourceRow}행: 금액 방식은 기초금액만 입력해 주세요.`);
       value = decimal(amountRaw, 0, `이관입력 ${sourceRow}행 기초금액`, 9e12);
       if (quantityScaled === 0 && value !== 0) invalid(`이관입력 ${sourceRow}행: 수량이 0이면 금액도 0이어야 합니다.`);
-      purchasePrice = quantityScaled > 0 ? Math.round((value * 10000) / quantityScaled) : 0;
+      purchasePrice = quantityScaled > 0 ? safe(round(BigInt(value) * 10000n, BigInt(quantityScaled)), '기초 매입단가') : 0;
     }
     const validated = master.validate('items', {
       code, name, specification, unit, purchasePrice, salePrice: 0, taxType, group, notes, active: true, itemType: 'STOCK', components: [],
@@ -427,10 +429,18 @@ function parseBootstrapMatrix(workbook) {
   }
 
   const positiveItems = items.filter(it => it.opening.quantityScaled > 0);
-  const ownedQuantity = positiveItems.reduce((sum, it) => sum + it.opening.quantityScaled, 0) / 10000;
-  const ownedValue = positiveItems.reduce((sum, it) => sum + it.opening.value, 0);
-  const borrowedQuantity = borrowings.reduce((sum, b) => sum + b.quantityScaled, 0) / 10000;
-  const borrowedValue = borrowings.reduce((sum, b) => sum + b.evaluationValue, 0);
+  function total(records, value) {
+    return records.reduce((sum, row) => {
+      const next = sum + value(row);
+      if (!Number.isSafeInteger(next)) invalid('이관 합계가 정밀하게 표시할 수 있는 범위를 초과했습니다.');
+      return next;
+    }, 0);
+  }
+  const ownedScaled = total(positiveItems, it => it.opening.quantityScaled);
+  const borrowedScaled = total(borrowings, b => b.quantityScaled);
+  const ownedQuantity = ownedScaled / 10000, borrowedQuantity = borrowedScaled / 10000;
+  const ownedValue = total(positiveItems, it => it.opening.value);
+  const borrowedValue = total(borrowings, b => b.evaluationValue);
   const receivableTotalsMap = new Map();
   for (const ar of receivables) {
     receivableTotalsMap.set(ar.currency, M.signed((receivableTotalsMap.get(ar.currency) || 0) + ar.amountMinor));
@@ -457,7 +467,7 @@ function parseBootstrapMatrix(workbook) {
       borrowingCount: borrowings.length,
       borrowedQuantity,
       borrowedValue,
-      netBookQuantity: (positiveItems.reduce((sum, it) => sum + it.opening.quantityScaled, 0) - borrowings.reduce((sum, b) => sum + b.quantityScaled, 0)) / 10000,
+      netBookQuantity: (ownedScaled - borrowedScaled) / 10000,
       netBookValue: ownedValue - borrowedValue,
       partnerCount: partners.length,
       receivableCount: receivables.length,
@@ -471,7 +481,7 @@ async function parseBootstrapFile(source) {
     typeof source.name !== 'string' || source.name.length > 180 || /[\\/\p{Cc}]/u.test(source.name) || !/\.xlsx$/i.test(source.name) ||
     !['', MIME, 'application/octet-stream', 'application/zip'].includes(source.mimeType) || typeof source.base64 !== 'string' ||
     source.base64.length > 4 * Math.ceil(MAX_BYTES / 3) || !/^[A-Za-z0-9+/]+={0,2}$/.test(source.base64)) {
-    invalid('3MB 이하의 통합 이관 .xlsx 파일을 선택해 주세요.');
+    invalid('12MB 이하의 통합 이관 .xlsx 파일을 선택해 주세요.');
   }
   const buffer = Buffer.from(source.base64, 'base64');
   if (!buffer.length || buffer.length > MAX_BYTES || buffer.toString('base64') !== source.base64 || buffer.length < 4 || buffer.readUInt32LE(0) !== 0x04034b50) {
@@ -508,16 +518,216 @@ function checkCompanyLabel(label, user) {
   }
 }
 
-function checkJob(job, user, input) {
+function openingOperations(job, parent, companyId, user, at, masterRevision) {
+  const ops = [];
+  const wh = job.warehouse;
+  const whData = {
+    code: wh.code, name: wh.name, address: wh.address || '', notes: wh.notes || '', active: true,
+    codeKey: wh.codeKey, nameKey: wh.nameKey, companyId, revision: masterRevision,
+    createdAt: at, createdBy: user.uid, updatedAt: at, updatedBy: user.uid,
+  };
+  ops.push({ ref: parent.collection('erpWarehouses').doc(wh.id), data: whData });
+  for (const key of master.keys('warehouses', whData)) {
+    ops.push({ ref: parent.collection('erpKeys').doc(key), data: { recordId: wh.id, kind: 'warehouses', companyId } });
+  }
+
+  for (const p of job.partners) {
+    const { id: pId, keys: pKeys, ...rest } = p;
+    const pData = {
+      ...rest, companyId, revision: masterRevision,
+      createdAt: at, createdBy: user.uid, updatedAt: at, updatedBy: user.uid,
+    };
+    ops.push({ ref: parent.collection('erpPartners').doc(pId), data: pData });
+    for (const key of pKeys) {
+      ops.push({ ref: parent.collection('erpKeys').doc(key), data: { recordId: pId, kind: 'partners', companyId } });
+    }
+  }
+
+  for (const it of job.items) {
+    const { id: itemId, keys: iKeys, opening, ...rest } = it;
+    const iData = {
+      ...rest, companyId, revision: masterRevision,
+      createdAt: at, createdBy: user.uid, updatedAt: at, updatedBy: user.uid,
+    };
+    ops.push({ ref: parent.collection('erpItems').doc(itemId), data: iData });
+    for (const key of iKeys) {
+      ops.push({ ref: parent.collection('erpKeys').doc(key), data: { recordId: itemId, kind: 'items', companyId } });
+    }
+    const invId = hash([itemId, wh.id]);
+    const movId = hash(['opening', itemId, wh.id]);
+    const qty = opening.quantityScaled / 10000;
+    ops.push({
+      ref: parent.collection('erpInventory').doc(invId),
+      data: {
+        companyId, itemId, warehouseId: wh.id, quantity: qty, value: opening.value,
+        currency: 'KRW', openingImportId: job.id, updatedAt: at, importId: job.id,
+      },
+    });
+    ops.push({
+      ref: parent.collection('erpMovements').doc(movId),
+      data: {
+        companyId, importId: job.id, type: 'OPENING', sourceRow: opening.sourceRow, rowNo: opening.rowNo,
+        date: job.basisDate, order: 0, direction: '기초', documentNo: 'OPENING',
+        itemId, code: iData.code, name: iData.name, specification: iData.specification || '', unit: iData.unit,
+        taxType: iData.taxType, account: opening.account || '상품', group: iData.group || '',
+        warehouseId: wh.id, warehouseCode: wh.code, warehouseName: wh.name,
+        quantityScaled: opening.quantityScaled, priceMode: opening.priceMode, priceScaled: opening.priceScaled,
+        supply: opening.value, tax: 0, total: opening.value, value: opening.value, cost: 0,
+        currency: 'KRW', exchangeRateScaled: 10000, taxRateScaled: 0, priceBasis: '세금별도',
+        sourceKind: 'BOOTSTRAP', partnerId: null, partnerName: '',
+        afterQuantity: qty, afterValue: opening.value, notes: opening.notes || '',
+        createdAt: at, createdBy: user.uid, committedAt: at,
+      },
+    });
+  }
+
+  let maxCustodyDate = null;
+  for (const b of job.borrowings) {
+    const lotId = `held_open_${hash([job.id, b.itemId, b.warehouseId, b.rowNo]).slice(0, 24)}`;
+    const loanId = `loan_open_${hash([job.id, b.itemId, b.warehouseId, b.rowNo]).slice(0, 24)}`;
+    if (!maxCustodyDate || b.date > maxCustodyDate) maxCustodyDate = b.date;
+    ops.push({
+      ref: parent.collection('erpCustodyLots').doc(lotId),
+      data: {
+        companyId, itemId: b.itemId, code: b.code, name: b.name, unit: b.unit,
+        warehouseId: b.warehouseId, warehouseName: b.warehouseName,
+        ownerPartnerId: b.ownerPartnerId, ownerName: b.ownerName,
+        availableQuantityScaled: 0, borrowedQuantityScaled: b.quantityScaled, deliveredQuantityScaled: 0,
+        sourceMovementId: '', date: b.date, lastDate: b.date, reference: b.reference, notes: b.notes,
+        revision: 1, createdBy: user.uid, createdAt: at, updatedAt: at,
+      },
+    });
+    ops.push({
+      ref: parent.collection('erpBorrowings').doc(loanId),
+      data: {
+        companyId, lotId, itemId: b.itemId, code: b.code, name: b.name, unit: b.unit,
+        warehouseId: b.warehouseId, warehouseName: b.warehouseName,
+        ownerPartnerId: b.ownerPartnerId, ownerName: b.ownerName,
+        buyerPartnerId: b.buyerPartnerId, buyerName: b.buyerName,
+        quantityScaled: b.quantityScaled, outstandingQuantityScaled: b.quantityScaled,
+        evaluationValue: b.evaluationValue, outstandingValue: b.evaluationValue,
+        returnedQuantityScaled: 0, repaidQuantityScaled: 0, sourceMovementId: '',
+        date: b.date, lastDate: b.date, reference: b.reference, notes: b.notes,
+        revision: 1, createdBy: user.uid, createdAt: at, updatedAt: at,
+      },
+    });
+  }
+
+  let maxReceivableDate = null;
+  for (const ar of job.receivables) {
+    const arId = `openar_${hash([job.id, ar.documentNo]).slice(0, 24)}`;
+    if (!maxReceivableDate || ar.date > maxReceivableDate) maxReceivableDate = ar.date;
+    ops.push({
+      ref: parent.collection('erpReceipts').doc(arId),
+      data: {
+        companyId, type: 'OPENING_RECEIVABLE', date: ar.date,
+        partnerId: ar.partnerId, partnerName: ar.partnerName,
+        currency: ar.currency, amountMinor: ar.amountMinor,
+        documentNo: ar.documentNo, reference: ar.documentNo, method: 'OTHER',
+        notes: ar.notes, sourceKind: 'BOOTSTRAP',
+        createdAt: at, createdBy: user.uid, committedAt: at,
+      },
+    });
+  }
+
+  ops.push({
+    ref: parent.collection('erpState').doc('ledger'),
+    data: { companyId, basisDate: job.basisDate, revision: 1, lastDate: null, lastOrder: null, updatedAt: at },
+  });
+  if (maxCustodyDate) {
+    ops.push({
+      ref: parent.collection('erpState').doc('custody'),
+      data: { companyId, revision: 1, lastDate: maxCustodyDate, updatedAt: at },
+    });
+  }
+  if (maxReceivableDate) {
+    ops.push({
+      ref: parent.collection('erpState').doc('receivables'),
+      data: { companyId, revision: 1, lastDate: maxReceivableDate, updatedAt: at },
+    });
+  }
+  ops.push({
+    ref: parent.collection('erpGovernance').doc('control'),
+    data: { companyId, revision: 1, closedThrough: '', lastClosedMonth: '', updatedAt: at },
+  });
+
+  return ops;
+}
+
+function checkOwner(job, user) {
   if (!job) fail('not-found', '이관 미리보기 자료를 찾을 수 없습니다.');
   master.verifyTenant(job, user.companyId);
-  if (job.type !== 'BOOTSTRAP' || job.createdBy !== user.uid) {
-    fail('permission-denied', '본인이 검증한 통합 이관만 처리할 수 있습니다.');
-  }
+  if (job.type !== 'BOOTSTRAP' || job.createdBy !== user.uid) fail('permission-denied', '본인이 검증한 통합 이관만 처리할 수 있습니다.');
+}
+
+function checkJob(job, user, input) {
+  checkOwner(job, user);
   if (input.fingerprint !== job.fingerprint) fail('failed-precondition', '확인한 미리보기 지문으로 다시 시도해 주세요.');
   if (job.status === 'COMMITTED') return;
-  if (job.status !== 'PENDING' || !job.protection) fail('failed-precondition', '파일을 다시 검증하고 새 미리보기를 생성해 주세요.');
+  if (job.status !== 'PENDING' || job.schema !== 3) fail('failed-precondition', '파일을 다시 검증하고 새 미리보기를 생성해 주세요.');
   checkCompanyLabel(job.companyLabel, user);
+}
+
+function fence(company) {
+  return { version: activeVersion(company), revision: writeRevision(company), generation: company.erpBootstrapGeneration || '' };
+}
+
+function checkFence(company, base) {
+  const current = fence(company);
+  if (current.version !== base.version || current.revision !== base.revision || current.generation !== base.generation) {
+    fail('failed-precondition', '미리보기 이후 운영 장부가 변경되었습니다. 새로 검증해 주세요.');
+  }
+}
+
+function authorizeRepair(request, job, now) {
+  const conflict = job.stageConflict;
+  if (!conflict || request.data.repairStage !== true || request.data.repairWarningAccepted !== true ||
+      request.data.repairChallenge !== conflict.challenge) fail('failed-precondition', '현재 새 장부 불일치 경고를 확인해 주세요.');
+  recentAuthentication(request, now);
+  const token = request.auth.token;
+  if (token.firebase?.sign_in_provider !== 'password' || !Number.isSafeInteger(token.auth_time) ||
+      token.auth_time * 1000 <= Date.parse(conflict.challengeIssuedAt)) {
+    fail('failed-precondition', '불일치 경고 이후 ADMIN 비밀번호를 새로 인증해 주세요.');
+  }
+}
+
+function authorizeActivation(request, job, now) {
+  authorizeReset(request,job,now);
+  const authorization = job.repairAuthorization;
+  if (!authorization) return;
+  recentAuthentication(request,now);
+  const token = request.auth.token;
+  if (authorization.authorizedBy !== request.auth.uid || token.firebase?.sign_in_provider !== 'password' ||
+      !Number.isSafeInteger(token.auth_time) || token.auth_time * 1000 <= Date.parse(authorization.challengeIssuedAt)) {
+    fail('failed-precondition','복구한 장부의 전환을 위해 ADMIN 비밀번호를 다시 인증해 주세요.');
+  }
+}
+
+function incomingMetrics(summary) {
+  return { inventoryQuantity: summary.ownedQuantity, inventoryValue: summary.ownedValue, receivableTotals: summary.receivableTotals,
+    bundleCount: 0, pendingQuantity: 0, pendingUnknownCount: 0, monthCloseCount: 0, approvalCount: 0 };
+}
+
+function expose(job) {
+  const borrowings = (job.borrowings || []).slice(0,80).map(b => ({
+    code: b.code, name: b.name, warehouseName: b.warehouseName, quantity: b.quantity ?? b.quantityScaled / 10000,
+    evaluationValue: b.evaluationValue, ownerName: b.ownerName, buyerName: b.buyerName, date: b.date }));
+  const receivables = (job.receivables || []).slice(0,80).map(r => ({
+    date: r.date, partnerCode: r.partnerCode, partnerName: r.partnerName, currency: r.currency, amountMinor: r.amountMinor, documentNo: r.documentNo }));
+  return { id: job.id, companyId: job.companyId, status: job.status, companyLabel: job.companyLabel, basisDate: job.basisDate,
+    source: job.source, summary: job.summary, fingerprint: job.fingerprint,
+    protection: job.protection ? {...job.protection,repairChallengeIssuedAt:job.repairAuthorization?.challengeIssuedAt || null} : null,
+    stage: job.stage || null, stageConflict: job.stageConflict || null, comparison: job.comparison || null,
+    backup: job.backup || null, borrowings, receivables, createdAt: job.createdAt, committedAt: job.committedAt || null };
+}
+
+function versionInfo(job, versionId) {
+  return { companyId: job.companyId, jobId: job.id, versionId, sourceVersion: job.base.version, sourceRevision: job.base.revision,
+    uploadFingerprint: job.upload.fingerprint, documentCount: job.upload.documentCount, state: 'PREPARING', createdAt: job.createdAt };
+}
+
+function conflictFor(versionId, at) {
+  return { versionId, challengeIssuedAt: at, challenge: randomUUID() };
 }
 
 function authorizeReset(request, job, now) {
@@ -537,31 +747,6 @@ function authorizeReset(request, job, now) {
   }
 }
 
-function expose(job) {
-  return {
-    id: job.id,
-    companyId: job.companyId,
-    status: job.status,
-    companyLabel: job.companyLabel,
-    basisDate: job.basisDate,
-    source: job.source,
-    summary: job.summary,
-    fingerprint: job.fingerprint,
-    protection: job.protection || null,
-    backup: job.backup || null,
-    borrowings: job.borrowings.map(b => ({
-      code: b.code, name: b.name, warehouseName: b.warehouseName,
-      quantity: b.quantityScaled / 10000, evaluationValue: b.evaluationValue,
-      ownerName: b.ownerName, buyerName: b.buyerName, date: b.date,
-    })),
-    receivables: job.receivables.map(r => ({
-      date: r.date, partnerCode: r.partnerCode, partnerName: r.partnerName,
-      currency: r.currency, amountMinor: r.amountMinor, documentNo: r.documentNo,
-    })),
-    createdAt: job.createdAt,
-    committedAt: job.committedAt || null,
-  };
-}
 
 function createErpBootstrapService({ db, now = () => new Date() }) {
   async function authorizeAdmin(request, reader = db) {
@@ -574,290 +759,234 @@ function createErpBootstrapService({ db, now = () => new Date() }) {
 
   return async request => {
     const input = request.data;
-    if (!input || typeof input !== 'object' || !['preview', 'commit', 'cancel'].includes(input.action)) {
-      fail('invalid-argument', '통합 이관 요청을 확인해 주세요.');
-    }
     const fields = {
-      preview: ['action', 'companyId', 'id', 'source'],
-      commit: ['action', 'companyId', 'id', 'fingerprint', 'confirmPhrase', 'resetExisting', 'warningAccepted'],
-      cancel: ['action', 'companyId', 'id'],
+      preview: ['action', 'companyId', 'id', 'source'], get: ['action', 'companyId', 'id'],
+      commit: ['action', 'companyId', 'id', 'fingerprint', 'confirmPhrase', 'resetExisting', 'warningAccepted',
+        'repairStage', 'repairWarningAccepted', 'repairChallenge'], cancel: ['action', 'companyId', 'id']
     };
+    if (!input || !Object.hasOwn(fields,input.action)) fail('invalid-argument','통합 이관 요청을 확인해 주세요.');
     M.exactObject(input, fields[input.action]);
-    const user = await authorizeAdmin(request);
-    const companyId = user.companyId;
-    const parent = db.collection('companies').doc(companyId);
+    const initial = await authorizeAdmin(request);
+    const companyId = initial.companyId;
+    const companyRef = db.collection('companies').doc(companyId);
     const id = master.identifier(input.id);
-    const jobRef = parent.collection('erpBootstrapJobs').doc(id);
+    const jobRef = companyRef.collection('erpBootstrapJobs').doc(id);
+    const versions = companyRef.collection('erpLedgerVersions');
+    const guardBatch = base => async tx => {
+      const user = await authorizeAdmin(request,tx);
+      checkFence(user.company,base);
+    };
+
+    if (input.action === 'get' || input.action === 'cancel') {
+      return db.runTransaction(async tx => {
+        const user = await authorizeAdmin(request,tx);
+        const current = (await tx.get(jobRef)).data();
+        checkOwner(current,user);
+        if (input.action === 'get') return {bootstrap:expose(current)};
+        if (current.status === 'COMMITTED') fail('failed-precondition','이미 확정된 이관은 취소할 수 없습니다.');
+        tx.update(jobRef,{status:'CANCELLED',cancelledAt:now().toISOString(),cancelledBy:user.uid});
+        return {bootstrap:expose({...current,status:'CANCELLED'})};
+      });
+    }
+
+    // Sealing makes this generation immutable to stage writers. App writers can
+    // reach it only after the separate activation transaction moves the pointer.
+    async function recordCheck(job, versionId, matches, repair) {
+      return db.runTransaction(async tx => {
+        const user = await authorizeAdmin(request,tx);
+        const version = versions.doc(versionId);
+        const [jobSnap, verSnap] = await tx.getAll(jobRef,version);
+        const fresh = jobSnap.data();
+        checkOwner(fresh,user);
+        if (fresh.status === 'COMMITTED') return fresh;
+        if (!['PREPARING','PENDING'].includes(fresh.status)) fail('failed-precondition','취소된 이관입니다.');
+        checkFence(user.company,fresh.base);
+        const ver = verSnap.data();
+        if (!ver || ver.jobId !== fresh.id || ver.uploadFingerprint !== fresh.upload.fingerprint) fail('data-loss','새 장부 버전을 확인해 주세요.');
+        // A slower verifier may return after another request already repaired this generation.
+        if (fresh.stage.versionId !== versionId) return fresh;
+        if (ver.state === 'REJECTED' || fresh.stage.status === 'MISMATCH') return fresh;
+        if (repair && fresh.stageConflict) {
+          const approval = fresh.repairAuthorization;
+          if (approval?.authorizedBy !== user.uid || approval.challenge !== fresh.stageConflict.challenge ||
+              approval.rejectedVersion !== fresh.stageConflict.versionId || versionId !== hash(['rebuild',companyId,id,approval.challenge])) {
+            fail('failed-precondition','불일치 경고의 재작성 승인 내역을 다시 확인해 주세요.');
+          }
+        }
+        const at = now().toISOString();
+        const conflict = matches ? null : (fresh.stageConflict?.versionId === versionId ? fresh.stageConflict : conflictFor(versionId,at));
+        const update = {status:'PENDING',stage:{versionId,status:matches?'VERIFIED':'MISMATCH',documentCount:fresh.upload.documentCount},stageConflict:conflict,
+          protection:{...fresh.protection,challengeIssuedAt:fresh.status === 'PREPARING' ? at : fresh.protection.challengeIssuedAt}};
+        tx.update(version,{state:matches?'VERIFIED':'REJECTED',checkedAt:at});
+        tx.update(jobRef,update);
+        return {...fresh,...update};
+      });
+    }
 
     if (input.action === 'preview') {
       const parsed = await parseBootstrapFile(input.source);
-      checkCompanyLabel(parsed.companyLabel, user);
-      const job = {
-        id,
-        companyId,
-        type: 'BOOTSTRAP',
-        status: 'PENDING',
-        companyLabel: parsed.companyLabel,
-        basisDate: parsed.basisDate,
-        source: parsed.source,
-        warehouse: parsed.warehouse,
-        partners: parsed.partners,
-        items: parsed.items,
-        borrowings: parsed.borrowings,
-        receivables: parsed.receivables,
-        summary: parsed.summary,
-        rows: [],
-        preview: { errors: [] },
-        createdAt: now().toISOString(),
-        createdBy: user.uid,
-        committedAt: null,
-      };
-      if (Buffer.byteLength(JSON.stringify(job)) > 850000) {
-        fail('resource-exhausted', '통합 이관 파일 크기가 제한을 초과했습니다.');
-      }
-      return db.runTransaction(async tx => {
-        const current = await authorizeAdmin(request, tx);
-        checkCompanyLabel(parsed.companyLabel, current);
-        const existing = await tx.get(jobRef);
-        if (existing.exists) {
-          const old = existing.data();
-          master.verifyTenant(old, companyId);
-          if (old.type !== 'BOOTSTRAP' || old.createdBy !== user.uid || old.source?.sha256 !== parsed.source.sha256 || !old.protection || old.status === 'CANCELLED') {
-            fail('already-exists', '이미 사용 중인 이관 요청 번호입니다. 새로 검증해 주세요.');
-          }
-          return { bootstrap: expose(old) };
+      checkCompanyLabel(parsed.companyLabel,initial);
+      function validatePrior(prior) {
+        checkOwner(prior,initial);
+        if (prior.schema !== 3 || prior.source.sha256 !== parsed.source.sha256 || prior.status === 'CANCELLED') {
+          fail('already-exists','이미 사용 중인 이관 요청 번호입니다. 새로 검증해 주세요.');
         }
-        const source = await readLedger({ tx, parent, collections: ERP_COLLECTIONS });
-        const sourceFingerprint = ledgerFingerprint(source);
-        const sourceVersions = versionFingerprint(source);
-        const fingerprint = hash([2, companyId, id, parsed.source.sha256, sourceFingerprint, sourceVersions]);
-        const protection = { hasExistingData: source.length > 0, existingDocumentCount: source.length, challengeIssuedAt: now().toISOString() };
-        const reviewed = { ...job, fingerprint, sourceFingerprint, sourceVersions, protection };
-        tx.create(jobRef, reviewed);
-        return { bootstrap: expose(reviewed) };
+      }
+      const prior = (await jobRef.get()).data();
+      if (prior) { validatePrior(prior); if (prior.status !== 'PREPARING') return {bootstrap:expose(prior)}; }
+      const base = prior?.base || fence(initial.company);
+      checkFence(initial.company,base);
+      const sourceRoot = ledgerParent(companyRef,base.version);
+      const inspection = prior?.sourceInspection || await inspectVersion({db,companyRef,sourceRoot,sourceVersion:base.version,sourceRevision:base.revision});
+      const masterRevision = inspection.maxMasterRevision + 1;
+      if (!Number.isSafeInteger(masterRevision) || masterRevision < 1) fail('failed-precondition','품목·창고·거래처의 자료 버전을 확인해 주세요.');
+      let createdAt = prior?.createdAt || now().toISOString();
+      function plan(at) {
+        const ops = openingOperations({...parsed,id},companyRef,companyId,initial,at,masterRevision);
+        return makeUploadPages(ops,companyRef);
+      }
+      let upload = plan(createdAt);
+      const versionId = hash(['ledger-version',companyId,id,parsed.source.sha256]);
+      const prepared = {schema:3,type:'BOOTSTRAP',id,companyId,createdBy:initial.uid,status:'PREPARING',createdAt,
+        companyLabel:parsed.companyLabel,basisDate:parsed.basisDate,source:parsed.source,summary:parsed.summary,
+        borrowings:parsed.borrowings.slice(0,80),receivables:parsed.receivables.slice(0,80),
+        base,sourceInspection:inspection,upload:upload.manifest,stageConflict:null,
+        stage:{versionId,status:'PREPARING',documentCount:upload.manifest.documentCount},
+        protection:{hasExistingData:inspection.documentCount>0,existingDocumentCount:inspection.documentCount,challengeIssuedAt:createdAt},
+        comparison:{previous:inspection.metrics,incoming:incomingMetrics(parsed.summary)},
+        fingerprint:hash([3,companyId,id,parsed.source.sha256,base,inspection.fingerprint,upload.manifest.fingerprint])};
+      const job = await db.runTransaction(async tx => {
+        const user = await authorizeAdmin(request,tx);
+        checkCompanyLabel(parsed.companyLabel,user); checkFence(user.company,base);
+        const existing = (await tx.get(jobRef)).data();
+        if (existing) { validatePrior(existing); return existing; }
+        tx.create(jobRef,prepared); tx.create(versions.doc(versionId),versionInfo(prepared,versionId));
+        return prepared;
       });
+      if (job.status !== 'PREPARING') return {bootstrap:expose(job)};
+      if (createdAt !== job.createdAt) upload = plan(job.createdAt);
+      if (upload.manifest.fingerprint !== job.upload.fingerprint) fail('data-loss','업로드 원본을 다시 확인해 주세요.');
+      await persistUpload(db,jobRef,upload.pages,guardBatch(job.base));
+      const bank = ledgerParent(companyRef,versionId);
+      const filled = await fillVersion(db,bank,versions.doc(versionId),jobRef,job,guardBatch(job.base));
+      const verified = filled && await matchesUpload(db,bank,jobRef,job);
+      return {bootstrap:expose(await recordCheck(job,versionId,verified,false))};
     }
 
-    if (input.action === 'cancel') {
-      return db.runTransaction(async tx => {
-        await authorizeAdmin(request, tx);
-        const snap = await tx.get(jobRef);
-        if (!snap.exists) fail('not-found', '이관 미리보기 자료를 찾을 수 없습니다.');
-        const old = snap.data();
-        master.verifyTenant(old, companyId);
-        if (old.type !== 'BOOTSTRAP') fail('failed-precondition', '통합 이관 미리보기만 취소할 수 있습니다.');
-        if (old.createdBy !== user.uid) fail('permission-denied', '본인이 검증한 통합 이관만 취소할 수 있습니다.');
-        if (old.status === 'COMMITTED') fail('failed-precondition', '이미 확정된 이관은 취소할 수 없습니다.');
-        tx.update(jobRef, { status: 'CANCELLED', cancelledAt: now().toISOString(), cancelledBy: user.uid });
-        return { bootstrap: expose({ ...old, status: 'CANCELLED' }) };
+    if (input.confirmPhrase !== CONFIRM_PHRASE) fail('failed-precondition','전체 초기화 확인 문구를 확인해 주세요.');
+    let job = (await jobRef.get()).data();
+    checkJob(job,initial,input);
+    if (job.status === 'COMMITTED') return {bootstrap:expose(job),idempotent:true};
+    authorizeReset(request,job,now);
+    checkFence(initial.company,job.base);
+    const incomplete = current => ({bootstrap:expose(current),idempotent:current.status === 'COMMITTED',
+      pending:current.status !== 'COMMITTED' && !current.stageConflict,stageMismatch:!!current.stageConflict});
+    if (job.stageConflict) {
+      if (!input.repairStage) return incomplete(job);
+      authorizeRepair(request,job,now);
+      const targetId = hash(['rebuild',companyId,id,job.stageConflict.challenge]);
+      job = await db.runTransaction(async tx => {
+        const user = await authorizeAdmin(request,tx);
+        const fresh = (await tx.get(jobRef)).data();
+        checkJob(fresh,user,input);
+        if (fresh.status === 'COMMITTED') return fresh;
+        authorizeReset(request,fresh,now); checkFence(user.company,fresh.base);
+        if (!fresh.stageConflict) return fresh;
+        authorizeRepair(request,fresh,now);
+        if (fresh.stage.versionId === targetId) return fresh;
+        const stage = {versionId:targetId,status:'PREPARING',documentCount:fresh.upload.documentCount};
+        const repairAuthorization = { rejectedVersion: fresh.stage.versionId, challenge: fresh.stageConflict.challenge,
+          challengeIssuedAt: fresh.stageConflict.challengeIssuedAt, authorizedAt: now().toISOString(), authorizedBy: user.uid };
+        tx.create(versions.doc(targetId),{...versionInfo(fresh,targetId),repairAuthorization});
+        tx.update(jobRef,{stage,repairAuthorization});
+        return {...fresh,stage,repairAuthorization};
       });
+      if (job.status === 'COMMITTED') return {bootstrap:expose(job),idempotent:true};
+      if (job.stageConflict) {
+        const target = ledgerParent(companyRef,targetId);
+        const filled = await fillVersion(db,target,versions.doc(targetId),jobRef,job,guardBatch(job.base));
+        job = await recordCheck(job,targetId,filled && await matchesUpload(db,target,jobRef,job),true);
+        if (job.status === 'COMMITTED' || job.stageConflict) return incomplete(job);
+      }
     }
 
-    // action === 'commit'
-    if (input.confirmPhrase !== CONFIRM_PHRASE) {
-      fail('failed-precondition', `확인 문구("${CONFIRM_PHRASE}")를 정확히 입력해 주세요.`);
-    }
-    const job = (await jobRef.get()).data();
-    checkJob(job, user, input);
-    if (job.status === 'COMMITTED') return { bootstrap: expose(job), idempotent: true };
-    authorizeReset(request, job, now);
+    const sourceRoot = ledgerParent(companyRef,job.base.version);
     let backup = null;
     if (job.protection.hasExistingData) {
       try {
-        backup = await prepareBackup({ db, parent, jobId: id, actorId: user.uid, collections: ERP_COLLECTIONS, now, expectedFingerprint: job.sourceFingerprint });
+        backup = await prepareVersionBackup({ db,companyRef,sourceRoot,sourceVersion:job.base.version,sourceRevision:job.base.revision,
+          jobId:id,actorId:initial.uid,expectedFingerprint:job.sourceInspection.fingerprint,expectedInspection:job.sourceInspection,
+          now,deadlineMs:Date.now()+150000 });
       } catch (error) {
-        // A concurrent retry may already have committed while this request was copying the old ledger.
-        const alreadyCommitted = await db.runTransaction(async tx => {
-          const current = await authorizeAdmin(request, tx);
-          const fresh = (await tx.get(jobRef)).data();
-          checkJob(fresh, current, input);
-          return fresh.status === 'COMMITTED' ? expose(fresh) : null;
+        const receipt = await db.runTransaction(async tx => {
+          const user = await authorizeAdmin(request,tx); const latest = (await tx.get(jobRef)).data();
+          checkJob(latest,user,input); return latest.status === 'COMMITTED' ? expose(latest) : null;
         });
-        if (alreadyCommitted) return { bootstrap: alreadyCommitted, idempotent: true };
+        if (receipt) return {bootstrap:receipt,idempotent:true};
         throw error;
       }
+      if (backup.pending) return {bootstrap:expose(job),pending:true,idempotent:false};
     }
-
-    // Construct the replacement in memory. No live ledger writes precede the final transaction.
-    const at = now().toISOString();
-    const ops = [];
-    const wh = job.warehouse;
-    const whData = {
-      code: wh.code, name: wh.name, address: wh.address || '', notes: wh.notes || '', active: true,
-      codeKey: wh.codeKey, nameKey: wh.nameKey, companyId, revision: 1,
-      createdAt: at, createdBy: user.uid, updatedAt: at, updatedBy: user.uid,
-    };
-    ops.push({ ref: parent.collection('erpWarehouses').doc(wh.id), data: whData });
-    for (const key of master.keys('warehouses', whData)) {
-      ops.push({ ref: parent.collection('erpKeys').doc(key), data: { recordId: wh.id, kind: 'warehouses', companyId } });
-    }
-
-    for (const p of job.partners) {
-      const { id: pId, keys: pKeys, ...rest } = p;
-      const pData = {
-        ...rest, companyId, revision: 1,
-        createdAt: at, createdBy: user.uid, updatedAt: at, updatedBy: user.uid,
-      };
-      ops.push({ ref: parent.collection('erpPartners').doc(pId), data: pData });
-      for (const key of pKeys) {
-        ops.push({ ref: parent.collection('erpKeys').doc(key), data: { recordId: pId, kind: 'partners', companyId } });
-      }
-    }
-
-    for (const it of job.items) {
-      const { id: itemId, keys: iKeys, opening, ...rest } = it;
-      const iData = {
-        ...rest, companyId, revision: 1,
-        createdAt: at, createdBy: user.uid, updatedAt: at, updatedBy: user.uid,
-      };
-      ops.push({ ref: parent.collection('erpItems').doc(itemId), data: iData });
-      for (const key of iKeys) {
-        ops.push({ ref: parent.collection('erpKeys').doc(key), data: { recordId: itemId, kind: 'items', companyId } });
-      }
-      const invId = hash([itemId, wh.id]);
-      const movId = hash(['opening', itemId, wh.id]);
-      const qty = opening.quantityScaled / 10000;
-      ops.push({
-        ref: parent.collection('erpInventory').doc(invId),
-        data: {
-          companyId, itemId, warehouseId: wh.id, quantity: qty, value: opening.value,
-          currency: 'KRW', openingImportId: job.id, updatedAt: at, importId: job.id,
-        },
+    const versionId = job.stage.versionId;
+    const bank = ledgerParent(companyRef,versionId);
+    const seal = job.activationSeal;
+    if (seal?.versionId !== versionId || seal.uploadFingerprint !== job.upload.fingerprint || seal.backupId !== (backup?.id || null)) {
+      if (!await matchesUpload(db,bank,jobRef,job)) return incomplete(await recordCheck(job,versionId,false,false));
+      // This sealed, still private bank has no write path until pointer switch.
+      // A long verification can expire the password session. Preserve its result
+      // so a fresh authentication can activate it without another lengthy scan.
+      const ready = await db.runTransaction(async tx => {
+        const user = await authorizeAdmin(request,tx);
+        const fresh = (await tx.get(jobRef)).data();
+        checkJob(fresh,user,input);
+        if (fresh.status === 'COMMITTED') return fresh;
+        checkFence(user.company,fresh.base);
+        if (fresh.stage.versionId !== versionId || fresh.stage.status !== 'VERIFIED' || fresh.stageConflict) return fresh;
+        const activationSeal = {versionId,uploadFingerprint:fresh.upload.fingerprint,backupId:backup?.id || null,verifiedAt:now().toISOString()};
+        tx.update(jobRef,{activationSeal});
+        return {...fresh,activationSeal};
       });
-      ops.push({
-        ref: parent.collection('erpMovements').doc(movId),
-        data: {
-          companyId, importId: job.id, type: 'OPENING', sourceRow: opening.sourceRow, rowNo: opening.rowNo,
-          date: job.basisDate, order: 0, direction: '기초', documentNo: 'OPENING',
-          itemId, code: iData.code, name: iData.name, specification: iData.specification || '', unit: iData.unit,
-          taxType: iData.taxType, account: opening.account || '상품', group: iData.group || '',
-          warehouseId: wh.id, warehouseCode: wh.code, warehouseName: wh.name,
-          quantityScaled: opening.quantityScaled, priceMode: opening.priceMode, priceScaled: opening.priceScaled,
-          supply: opening.value, tax: 0, total: opening.value, value: opening.value, cost: 0,
-          currency: 'KRW', exchangeRateScaled: 10000, taxRateScaled: 0, priceBasis: '세금별도',
-          sourceKind: 'BOOTSTRAP', partnerId: null, partnerName: '',
-          afterQuantity: qty, afterValue: opening.value, notes: opening.notes || '',
-          createdAt: at, createdBy: user.uid, committedAt: at,
-        },
-      });
+      if (ready.status === 'COMMITTED' || ready.stageConflict || ready.stage.versionId !== versionId) return incomplete(ready);
     }
-
-    let maxCustodyDate = null;
-    for (const b of job.borrowings) {
-      const lotId = `held_open_${hash([job.id, b.itemId, b.warehouseId, b.rowNo]).slice(0, 24)}`;
-      const loanId = `loan_open_${hash([job.id, b.itemId, b.warehouseId, b.rowNo]).slice(0, 24)}`;
-      if (!maxCustodyDate || b.date > maxCustodyDate) maxCustodyDate = b.date;
-      ops.push({
-        ref: parent.collection('erpCustodyLots').doc(lotId),
-        data: {
-          companyId, itemId: b.itemId, code: b.code, name: b.name, unit: b.unit,
-          warehouseId: b.warehouseId, warehouseName: b.warehouseName,
-          ownerPartnerId: b.ownerPartnerId, ownerName: b.ownerName,
-          availableQuantityScaled: 0, borrowedQuantityScaled: b.quantityScaled, deliveredQuantityScaled: 0,
-          sourceMovementId: '', date: b.date, lastDate: b.date, reference: b.reference, notes: b.notes,
-          revision: 1, createdBy: user.uid, createdAt: at, updatedAt: at,
-        },
-      });
-      ops.push({
-        ref: parent.collection('erpBorrowings').doc(loanId),
-        data: {
-          companyId, lotId, itemId: b.itemId, code: b.code, name: b.name, unit: b.unit,
-          warehouseId: b.warehouseId, warehouseName: b.warehouseName,
-          ownerPartnerId: b.ownerPartnerId, ownerName: b.ownerName,
-          buyerPartnerId: b.buyerPartnerId, buyerName: b.buyerName,
-          quantityScaled: b.quantityScaled, outstandingQuantityScaled: b.quantityScaled,
-          evaluationValue: b.evaluationValue, outstandingValue: b.evaluationValue,
-          returnedQuantityScaled: 0, repaidQuantityScaled: 0, sourceMovementId: '',
-          date: b.date, lastDate: b.date, reference: b.reference, notes: b.notes,
-          revision: 1, createdBy: user.uid, createdAt: at, updatedAt: at,
-        },
-      });
-    }
-
-    let maxReceivableDate = null;
-    for (const ar of job.receivables) {
-      const arId = `openar_${hash([job.id, ar.documentNo]).slice(0, 24)}`;
-      if (!maxReceivableDate || ar.date > maxReceivableDate) maxReceivableDate = ar.date;
-      ops.push({
-        ref: parent.collection('erpReceipts').doc(arId),
-        data: {
-          companyId, type: 'OPENING_RECEIVABLE', date: ar.date,
-          partnerId: ar.partnerId, partnerName: ar.partnerName,
-          currency: ar.currency, amountMinor: ar.amountMinor,
-          documentNo: ar.documentNo, reference: ar.documentNo, method: 'OTHER',
-          notes: ar.notes, sourceKind: 'BOOTSTRAP',
-          createdAt: at, createdBy: user.uid, committedAt: at,
-        },
-      });
-    }
-
-    ops.push({
-      ref: parent.collection('erpState').doc('ledger'),
-      data: { companyId, basisDate: job.basisDate, revision: 1, lastDate: null, lastOrder: null, updatedAt: at },
-    });
-    if (maxCustodyDate) {
-      ops.push({
-        ref: parent.collection('erpState').doc('custody'),
-        data: { companyId, revision: 1, lastDate: maxCustodyDate, updatedAt: at },
-      });
-    }
-    if (maxReceivableDate) {
-      ops.push({
-        ref: parent.collection('erpState').doc('receivables'),
-        data: { companyId, revision: 1, lastDate: maxReceivableDate, updatedAt: at },
-      });
-    }
-    ops.push({
-      ref: parent.collection('erpGovernance').doc('control'),
-      data: { companyId, revision: 1, closedThrough: '', lastClosedMonth: '', updatedAt: at },
-    });
-
-    const committedJob = {
-      ...job,
-      status: 'COMMITTED',
-      backup,
-      committedAt: at,
-      committedBy: user.uid,
-    };
-    ops.push({ ref: jobRef, data: committedJob });
-    ops.push({
-      ref: parent.collection('erpAudit').doc(),
-      data: {
-        companyId, actorId: user.uid, action: 'ERP_BOOTSTRAP_COMMIT',
-        importId: job.id, summary: job.summary, backupId: backup?.id || null, at,
-      },
-    });
-
     return db.runTransaction(async tx => {
-      const current = await authorizeAdmin(request, tx);
-      const fresh = (await tx.get(jobRef)).data();
-      checkJob(fresh, current, input);
-      if (fresh.status === 'COMMITTED') return { bootstrap: expose(fresh), idempotent: true };
-      authorizeReset(request, fresh, now);
-      const source = backup ? await verifyBackupInTransaction({ tx, parent, jobId: id, backupId: backup.id, collections: ERP_COLLECTIONS })
-        : await readLedger({ tx, parent, collections: ERP_COLLECTIONS });
-      if (ledgerFingerprint(source) !== fresh.sourceFingerprint || versionFingerprint(source) !== fresh.sourceVersions || (!backup && source.length)) {
-        fail('failed-precondition', '미리보기 이후 장부가 변경되었습니다. 새로 검증해 주세요.');
+      const user = await authorizeAdmin(request,tx);
+      const [j,v] = await tx.getAll(jobRef,versions.doc(versionId));
+      const fresh = j.data();
+      checkJob(fresh,user,input);
+      if (fresh.status === 'COMMITTED') return {bootstrap:expose(fresh),idempotent:true};
+      authorizeActivation(request,fresh,now);
+      checkFence(user.company,fresh.base);
+      if (fresh.stageConflict || fresh.stage.status !== 'VERIFIED' || fresh.stage.versionId !== versionId) return incomplete(fresh);
+      if (!v.exists || v.get('state') !== 'VERIFIED' || v.get('jobId') !== id || v.get('uploadFingerprint') !== fresh.upload.fingerprint) {
+        fail('failed-precondition','검증된 새 장부를 다시 확인해 주세요.');
       }
-      const writes = new Map(ops.map(op => [op.ref.path, op]));
-      for (const record of source) {
-        const replacement = writes.get(record.ref.path);
-        if (replacement) {
-          // Reusing identical key reservations avoids rewriting their indexes in a full re-import.
-          if (isDeepStrictEqual(record.data, replacement.data)) writes.delete(record.ref.path);
-        } else if (!record.path.startsWith('erpAudit/')) {
-          tx.delete(record.ref);
+      if (fresh.activationSeal?.versionId !== versionId || fresh.activationSeal.uploadFingerprint !== fresh.upload.fingerprint ||
+          fresh.activationSeal.backupId !== (backup?.id || null)) fail('failed-precondition','최종 대사 결과를 다시 확인해 주세요.');
+      if (backup) await verifyVersionBackup({tx,companyRef,sourceVersion:fresh.base.version,sourceRevision:fresh.base.revision,
+        jobId:id,backupId:backup.id,expectedFingerprint:fresh.sourceInspection.fingerprint});
+      else {
+        // First-import protection also covers old unversioned writers during a rolling deployment.
+        const legacyWrites = await Promise.all(ERP_COLLECTIONS.map(name => tx.get(sourceRoot.collection(name).select().limit(1))));
+        if (legacyWrites.some(snap => !snap.empty)) fail('failed-precondition','최초 이관 검증 이후 기존 장부에 자료가 등록되었습니다. 다시 검증해 주세요.');
+      }
+      const revision = fresh.base.revision + 1;
+      if (!Number.isSafeInteger(revision)) fail('resource-exhausted','장부 버전 범위를 초과했습니다.');
+      const at = now().toISOString();
+      const update = {status:'COMMITTED',committedAt:at,committedBy:user.uid,backup};
+      if (fresh.base.version) {
+        const prior = await tx.get(versions.doc(fresh.base.version));
+        if (!prior.exists || prior.get('state') !== 'ACTIVE' || prior.get('companyId') !== companyId) {
+          fail('failed-precondition','기존 활성 장부의 버전 기록을 확인해 주세요.');
         }
+        tx.update(prior.ref,{state:'ARCHIVED',switchedAt:at,successorVersion:versionId});
       }
-      for (const { ref, data } of writes.values()) tx.set(ref, data);
-      // ERP transaction authorization reads this company document. The write also fences concurrent first imports.
-      tx.update(parent, { erpBootstrapGeneration: id });
-      return { bootstrap: expose(committedJob), idempotent: false };
-    }).catch(error => {
-      if (typeof error?.code === 'number' && /(?:too (?:large|big)|maximum (?:request|transaction) size|transaction .*size limit|10\s*MiB|10485760)/i.test(error.message || '')) {
-        fail('resource-exhausted', '장부 교체가 Firestore의 단일 트랜잭션 크기 한도를 초과했습니다. 기존 장부를 유지합니다.');
-      }
-      throw error;
+      tx.update(companyRef,{erpActiveLedgerVersion:versionId,erpLedgerWriteRevision:revision,erpBootstrapGeneration:id});
+      tx.update(v.ref,{state:'ACTIVE',activatedAt:at,backupId:backup?.id||null});
+      tx.update(jobRef,update);
+      tx.create(bank.collection('erpAudit').doc('bootstrap_'+id),{companyId,actorId:user.uid,action:'ERP_BOOTSTRAP_COMMIT',importId:id,
+        previousVersion:fresh.base.version,versionId,backupId:backup?.id||null,summary:fresh.summary,
+        ...(fresh.repairAuthorization ? {repairAuthorization:fresh.repairAuthorization} : {}),at});
+      return {bootstrap:expose({...fresh,...update}),idempotent:false};
     });
   };
 }

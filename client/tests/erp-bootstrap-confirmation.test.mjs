@@ -55,3 +55,31 @@ test('governance settings and audit records do not increase the count of close o
   assert.match(html, /월마감 관련 기록 · 1건 일치 \(마감 보관 문서 0건\)/);
   assert.match(html, /승인·감사 기록 · 61건 일치 \(승인 요청 문서 0건\)/);
 });
+
+test('a staged mismatch asks for a separate warning and confirmation even for an empty company', () => {
+  const props={ job:{protection:{hasExistingData:false},stage:{status:'MISMATCH'},stageConflict:{challenge:'retry'}},
+    companyName:'샘플',busy:false,dirty:false};
+  const html=render(ErpBootstrapConfirmation,props);
+  assert.match(html,/업로드 자료로 새 장부 재작성 경고/);
+  assert.match(html,/erp-bootstrap-warning/);
+  assert.match(html,/ADMIN 재인증 후 새 장부 재작성/);
+  assert.match(html,/type="submit"[^>]*disabled/);
+});
+
+test('comparison preserves foreign currency precision and changes between old and imported amounts', () => {
+  const metrics={inventoryQuantity:1,inventoryValue:100,bundleCount:0,pendingQuantity:0,monthCloseCount:0,approvalCount:0};
+  const html=render(mod.exports.ErpLedgerComparisonTable,{comparison:{
+    previous:{...metrics,receivableTotals:[{currency:'USD',amountMinor:1250}]},
+    incoming:{...metrics,receivableTotals:[{currency:'USD',amountMinor:1005}]}
+  }});
+  assert.match(html,/12.5 USD/);assert.match(html,/10.05 USD/);assert.match(html,/-2.45 USD/);
+});
+
+test('reopening an approved first-import repair asks for a fresh password to switch', () => {
+  const html = render(ErpBootstrapConfirmation, {
+    job: {protection:{hasExistingData:false,repairChallengeIssuedAt:'2026-11-27T00:00:00Z'}},
+    companyName:'샘플',busy:false,dirty:false
+  });
+  assert.match(html,/재작성한 장부 전환 확인/);
+  assert.match(html,/ADMIN 인증 후 검증된 장부 전환/);
+});

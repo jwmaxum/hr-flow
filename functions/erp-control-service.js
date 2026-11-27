@@ -101,4 +101,8 @@ function createErpControlService({db,bucket,now=()=>new Date(),renderPdf=report=
     return db.runTransaction(async tx=>{await context(request,tx);const state=await stateOf(tx,parent);if(state.revision!==captured.state.revision)fail('aborted','보고서 생성 중 ERP 자료가 변경되었습니다. 마감 미리보기를 다시 확인해 주세요.');plans.finish(tx,parent,captured.plan,'CLOSED',user);tx.create(parent.collection('erpMonthCloses').doc(id),archive);tx.set(parent.collection('erpCloseMonths').doc(month),{companyId:parent.id,status:'CLOSED',version:captured.version,archiveId:id,previousMonth:state.lastClosedMonth,previousThrough:state.closedThrough});tx.set(parent.collection('erpGovernance').doc('control'),{...state,revision:state.revision+1,closedThrough:end,lastClosedMonth:month,reopenMonth:''});audit(tx,parent,user,'MONTH_CLOSE',{month,version:captured.version,archiveId:id,reason});return {archive:{id,...archive}};});
   };
 }
-module.exports={createErpControlService};
+module.exports={createErpControlService: dependencies => async request => {
+  const user = await authorizeErp({ db:dependencies.db, request, now:dependencies.now });
+  const db = require('./erp-version-routing').routeDatabase(dependencies.db, user);
+  return createErpControlService({ ...dependencies, db })(request);
+}};

@@ -1,4 +1,5 @@
 const { authorizeContext, fail } = require('./security-context');
+const { routeDatabase } = require('./erp-version-routing');
 const { createHash } = require('node:crypto');
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
 const digest = value => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -53,8 +54,10 @@ const timed = new Set(['erpMovements','erpReceipts','erpSettlements','erpDocumen
 // transaction callback with a second committing transaction.
 function governedService(factory, domain) {
   return dependencies => async request => {
-    const {db, now=()=>new Date()}=dependencies;
-    requireAction(await authorizeErp({db,request,now}),domain,request.data?.action);
+    const {now=()=>new Date()}=dependencies;
+    const initial = await authorizeErp({db:dependencies.db,request,now});
+    requireAction(initial,domain,request.data?.action);
+    const db = routeDatabase(dependencies.db, initial);
     const proxy = new Proxy(db, {get(target,key) {
       if(key !== 'runTransaction') {const value=target[key];return typeof value==='function'?value.bind(target):value;}
       return callback => db.runTransaction(async tx=>{

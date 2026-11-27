@@ -92,7 +92,10 @@ test('bootstrap protects an active ledger, verifies a full backup, and activates
   const adminId = 'admin-' + suffix;
   const otherAdminId = 'foreign-' + suffix;
   const managerId = 'manager-' + suffix;
-  const old = parent.collection('erpItems').doc('legacy');
+  const active = async () => {
+    const id = (await parent.get()).get('erpActiveLedgerVersion');
+    return id ? parent.collection('erpLedgerVersions').doc(id).collection('ledger').doc(companyId) : parent;
+  };
   let time = Date.parse('2026-11-27T03:00:00Z');
   const now = () => new Date(time);
   const service = createErpBootstrapService({ db, now });
@@ -113,7 +116,12 @@ test('bootstrap protects an active ledger, verifies a full backup, and activates
     zip.file(file,guide);
   }});
   const preview = id => service(req(adminId,{action:'preview',id,source}));
-  const commit = (job,extra={},age=0,provider='password') => service(req(adminId,{action:'commit',id:job.id,fingerprint:job.fingerprint,confirmPhrase:CONFIRM_PHRASE,...extra},age,provider));
+  const commit = async (job,extra={},age=0,provider='password') => {
+    const data = {action:'commit',id:job.id,fingerprint:job.fingerprint,confirmPhrase:CONFIRM_PHRASE,...extra};
+    let result;
+    do { result = await service(req(adminId,data,age,provider)); } while(result.pending && !result.stageMismatch);
+    return result;
+  };
   const deny = promise => assert.rejects(promise,e=>['failed-precondition','permission-denied','aborted','unauthenticated'].includes(e.code));
   await deny(service(req(managerId,{action:'preview',id:'manager',source})));
   await deny(service(req(otherAdminId,{action:'preview',id:'foreign',source})));
@@ -121,14 +129,21 @@ test('bootstrap protects an active ledger, verifies a full backup, and activates
   assert.equal(empty.protection.hasExistingData,false);
   const first=await commit(empty);
   assert.equal(first.bootstrap.status,'COMMITTED');
-  assert.equal((await parent.collection('erpInventory').get()).docs[0].get('quantity'),10);
+  const firstRoot = await active();
+  assert.notEqual(firstRoot.path,parent.path);
+  assert.equal((await firstRoot.collection('erpInventory').get()).docs[0].get('quantity'),10);
+  const old = firstRoot.collection('erpItems').doc('legacy');
   const keep=other.collection('erpItems').doc('keep');
   await keep.set({companyId:otherId,code:'OTHER'});
   await old.set({companyId,code:'OLD',name:'기존 세트',itemType:'BUNDLE',components:[{itemId:'x',quantity:1},{itemId:'y',quantity:2}]});
   const stale=(await preview('stale')).bootstrap;
   assert.equal(stale.protection.hasExistingData,true);
-  const approvals=parent.collection('erpApprovals').doc('approval');
-  await approvals.set({companyId,status:'APPROVED',createdAt:now().toISOString()});
+  const approvals=firstRoot.collection('erpApprovals').doc('approval');
+  await db.runTransaction(async tx => {
+    const company = await tx.get(parent);
+    tx.set(approvals,{companyId,status:'APPROVED',createdAt:now().toISOString()});
+    tx.update(parent,{erpLedgerWriteRevision:(company.get('erpLedgerWriteRevision') || 0) + 1});
+  });
   time+=2000;
   const reset={resetExisting:true,warningAccepted:true};
   await deny(commit(stale,reset));
@@ -144,10 +159,14 @@ test('bootstrap protects an active ledger, verifies a full backup, and activates
   assert.equal(res.bootstrap.status,'COMMITTED');
   assert.equal(res.bootstrap.backup.reconciliation.verified,true);
   assert.ok(res.bootstrap.backup.id);
-  assert.equal((await old.get()).exists,false);
-  assert.equal((await approvals.get()).exists,false);
+  const nextRoot = await active();
+  assert.notEqual(nextRoot.path,firstRoot.path);
+  assert.equal((await nextRoot.collection('erpItems').doc('legacy').get()).exists,false);
+  assert.equal((await nextRoot.collection('erpApprovals').doc('approval').get()).exists,false);
+  assert.equal((await old.get()).exists,true);
+  assert.equal((await approvals.get()).exists,true);
   assert.equal((await keep.get()).exists,true);
-  assert.equal((await parent.collection('erpMovements').get()).size,1);
+  assert.equal((await nextRoot.collection('erpMovements').get()).size,1);
   const again=await commit(job,reset);
   assert.equal(again.idempotent,true);
   assert.equal(again.bootstrap.backup.id,res.bootstrap.backup.id);

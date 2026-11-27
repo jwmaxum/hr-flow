@@ -156,3 +156,63 @@ test('real Firestore restores and reconciles a nested company ledger, native tim
       await db.terminate();
     }
   });
+
+test('paged version backup resumes, retains orphan and exact Firestore numeric types, and rejects later ledger changes',
+  { skip: !process.env.FIRESTORE_EMULATOR_HOST }, async () => {
+    assert.match(process.env.FIRESTORE_EMULATOR_HOST, /^127\.0\.0\.1:\d+$/);
+    const { Firestore } = require('@google-cloud/firestore');
+    const { randomUUID } = require('node:crypto');
+    const { inspectVersion, prepareVersionBackup, verifyVersionBackup, ledgerPage } = require('../erp-bootstrap-backup');
+    const { ledgerParent } = require('../erp-version-routing');
+    const db = new Firestore({ projectId: 'demo-erp-version-backup-integration' });
+    const company = db.collection('companies').doc('replica-' + randomUUID());
+    const sourceVersion = 'activeVersion1', sourceRevision = 7;
+    const sourceRoot = ledgerParent(company, sourceVersion);
+    try {
+      await company.create({ status:'ACTIVE', erpActiveLedgerVersion: sourceVersion, erpLedgerWriteRevision: sourceRevision });
+      const input = db.batch();
+      for (let i = 0; i < 65; i++) input.create(sourceRoot.collection('erpItems').doc('i' + i), {
+        companyId:company.id, name:'합성', revision:i + 1, itemType:i === 0 ? 'BUNDLE' : 'STOCK',
+        ...(i === 1 ? {pendingOpening:{status:'PENDING_COST',quantity:7}} : {})
+      });
+      input.create(sourceRoot.collection('erpInventory').doc('w'),{companyId:company.id,quantity:2.5,value:500});
+      input.create(sourceRoot.collection('erpReceipts').doc('r'),{companyId:company.id,type:'OPENING_RECEIVABLE',
+        documentNo:'opening',date:'2026-01-01',partnerId:'p',currency:'KRW',amountMinor:123});
+      await input.commit();
+      const deep = sourceRoot.collection('erpDocuments').doc('missing').collection('detail').doc('v');
+      await db.request('commit', { database:db.formattedName, writes:[{update:{name:deep.toProto().referenceValue,
+        fields:{exact:{doubleValue:1},large:{integerValue:'9007199254740993'}}},currentDocument:{exists:false}}] }, 'test-native-data');
+      const source = { db, companyRef:company, sourceRoot, sourceVersion, sourceRevision };
+      const before = await inspectVersion(source);
+      assert.equal(before.documentCount,68);
+      assert.equal(before.maxMasterRevision,65);
+      assert.equal(before.metrics.inventoryQuantity,2.5);
+      assert.equal(before.metrics.pendingQuantity,7);
+      assert.deepEqual(before.metrics.receivableTotals,[{currency:'KRW',amountMinor:123}]);
+      const options = {...source, jobId:'test-job', actorId:'admin-test',expectedInspection:before,expectedFingerprint:before.fingerprint};
+      let clockTick = 0;
+      const partial = await prepareVersionBackup({...options,deadlineMs:1,currentMillis:()=>clockTick++});
+      assert.equal(partial.pending,true);
+      assert.ok(partial.copied > 0 && partial.copied < before.documentCount);
+      await company.update({status:'DELETING'});
+      await assert.rejects(prepareVersionBackup(options),/원장이 변경/);
+      await company.update({status:'ACTIVE'});
+      const verified = await prepareVersionBackup(options);
+      assert.equal(verified.reconciliation.documentCount,68);
+      assert.equal(verified.id,partial.id);
+      const clone = company.collection('erpBootstrapBackups').doc(verified.id).collection('restoredLedger').doc(company.id);
+      const page = await ledgerPage({db,root:clone,collection:'erpDocuments'});
+      assert.equal(page.rows.length,1);
+      assert.equal(page.rows[0].path,'erpDocuments/missing/detail/v');
+      assert.equal(page.rows[0].fields.exact.doubleValue,1);
+      assert.equal(String(page.rows[0].fields.large.integerValue),'9007199254740993');
+      assert.equal((await prepareVersionBackup(options)).id,verified.id);
+      const verify = () => db.runTransaction(tx=>verifyVersionBackup({...options,tx,backupId:verified.id}));
+      assert.equal((await verify()).id,verified.id);
+      await company.update({erpLedgerWriteRevision:8});
+      await assert.rejects(verify(),/원장이 변경/);
+    } finally {
+      await db.recursiveDelete(company);
+      await db.terminate();
+    }
+  });

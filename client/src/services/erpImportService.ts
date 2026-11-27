@@ -49,12 +49,21 @@ export interface ErpBootstrapSummary {
   partnerCount: number; receivableCount: number;
   receivableTotals: { currency: string; amountMinor: number }[];
 }
+export interface ErpLedgerComparison {
+  inventoryQuantity: number; inventoryValue: number;
+  receivableTotals: { currency: string; amountMinor: number }[];
+  bundleCount: number; pendingQuantity: number; pendingUnknownCount?: number; monthCloseCount: number; approvalCount: number;
+}
 export interface ErpBootstrapJob {
-  id: string; companyId: string; status: 'PENDING' | 'COMMITTED' | 'CANCELLED';
+  stage?: {versionId: string; status: 'VERIFIED' | 'MISMATCH' | 'PREPARING'; documentCount: number};
+  stageConflict?: {challengeIssuedAt: string; challenge: string} | null;
+  comparison?: {previous: ErpLedgerComparison; incoming: ErpLedgerComparison};
+
+  id: string; companyId: string; status: 'PREPARING' | 'PENDING' | 'COMMITTED' | 'CANCELLED';
   companyLabel: string; basisDate: string;
   source: { kind: 'BOOTSTRAP'; name: string; size: number; sha256: string };
   summary: ErpBootstrapSummary; fingerprint: string;
-  protection?: { hasExistingData: boolean; existingDocumentCount: number; challengeIssuedAt: string };
+  protection?: { hasExistingData: boolean; existingDocumentCount: number; challengeIssuedAt: string; repairChallengeIssuedAt?: string | null };
   backup?: {
     id: string;
     counts: Record<string, number>;
@@ -69,7 +78,7 @@ export interface ErpBootstrapJob {
   createdAt: string; committedAt: string | null;
 }
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpImport', { timeout: 120000 });
-const bootstrapCallable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpBootstrap', { timeout: 330000 });
+const bootstrapCallable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpBootstrap', { timeout: 1830000 });
 function scope(companyId: string) {
   const { userData, companyData, sessionReady } = useAuthStore.getState();
   if (!auth.currentUser || auth.currentUser.uid !== userData?.uid || userData.companyId !== companyId || !erpCanOperate(erpAccessOf(userData)) ||
@@ -104,24 +113,48 @@ async function bootstrapCall(companyId: string, action: string, data: Record<str
   if (userData?.role !== 'ADMIN') throw new Error('회사 ADMIN만 초기화·통합 이관을 실행할 수 있습니다.');
   const result = await bootstrapCallable({ ...data, companyId, action });
   if (scope(companyId) !== expected) throw new Error('로그인 회사가 변경되었습니다.');
-  const response = result.data as { bootstrap: ErpBootstrapJob; idempotent?: boolean };
+  const response = result.data as { bootstrap: ErpBootstrapJob; idempotent?: boolean; pending?: boolean; stageMismatch?: boolean };
   if (response.bootstrap.companyId !== companyId) throw new Error('통합 이관 응답의 소속 회사를 확인할 수 없습니다.');
   return response;
 }
+async function finishBootstrap(companyId: string, job: ErpBootstrapJob, consent: Record<string, unknown>,
+  assertCurrent: () => void, onPending?: (job: ErpBootstrapJob) => void) {
+  for (;;) {
+    assertCurrent();
+    const result = await bootstrapCall(companyId, 'commit', {
+      id: job.id, fingerprint: job.fingerprint, confirmPhrase: BOOTSTRAP_CONFIRM_PHRASE, ...consent
+    });
+    assertCurrent();
+    if (!result.pending || result.stageMismatch || result.bootstrap.stageConflict) return result;
+    if (!result.bootstrap.stageConflict) {
+      delete consent.repairStage;
+      delete consent.repairWarningAccepted;
+      delete consent.repairChallenge;
+    }
+    onPending?.(result.bootstrap);
+    await new Promise(resolve => setTimeout(resolve, 350));
+  }
+}
 export const erpBootstrapService = {
+  get: (companyId: string, id: string) => bootstrapCall(companyId, 'get', { id }),
   preview: (companyId: string, id: string, source: ErpSourceFile) => bootstrapCall(companyId, 'preview', { id, source }),
-  commit: async (companyId: string, job: ErpBootstrapJob) => {
-    if (job.companyId !== companyId || job.protection?.hasExistingData !== false) {
+  commit: async (companyId: string, job: ErpBootstrapJob, stillCurrent = () => true, onPending?: (job: ErpBootstrapJob) => void) => {
+    if (job.companyId !== companyId || job.protection?.hasExistingData !== false || job.stageConflict || job.protection?.repairChallengeIssuedAt || job.stage?.status === 'MISMATCH') {
       throw new Error('기존 장부가 있거나 보호 상태를 확인할 수 없습니다. 미리보기를 다시 확인해 주세요.');
     }
-    return bootstrapCall(companyId, 'commit', { id: job.id, fingerprint: job.fingerprint, confirmPhrase: BOOTSTRAP_CONFIRM_PHRASE });
+    const actor = scope(companyId);
+    return finishBootstrap(companyId, job, {}, () => {
+      if (!stillCurrent() || scope(companyId) !== actor) throw new Error('로그인 상태 또는 이관 화면이 변경되었습니다.');
+    }, onPending);
   },
-  reset: async (companyId: string, job: ErpBootstrapJob, warningAccepted: boolean, password: string, stillCurrent: () => boolean) => {
+  reset: async (companyId: string, job: ErpBootstrapJob, warningAccepted: boolean, password: string, stillCurrent: () => boolean, onPending?: (job: ErpBootstrapJob) => void) => {
     const expected = scope(companyId);
     const administrator = auth.currentUser;
-    const challenge = Date.parse(job.protection?.challengeIssuedAt ?? '');
+    const conflict = job.stageConflict;
+    const challenge = Date.parse(conflict?.challengeIssuedAt ?? job.protection?.repairChallengeIssuedAt ?? job.protection?.challengeIssuedAt ?? '');
     if (!stillCurrent() || useAuthStore.getState().userData?.role !== 'ADMIN' || !administrator?.email ||
-        job.companyId !== companyId || job.status !== 'PENDING' || job.protection?.hasExistingData !== true ||
+        job.companyId !== companyId || job.status !== 'PENDING' || !job.protection || (!job.protection.hasExistingData && !conflict && !job.protection.repairChallengeIssuedAt) ||
+        (job.stage?.status === 'MISMATCH' && !conflict?.challenge) ||
         !Number.isFinite(challenge) || warningAccepted !== true || !password) {
       throw new Error('전체 초기화 경고를 확인하고 회사 ADMIN 비밀번호를 입력해 주세요.');
     }
@@ -144,16 +177,19 @@ export const erpBootstrapService = {
     assertCurrent();
     await administrator.getIdToken(true);
     assertCurrent();
-    return bootstrapCall(companyId, 'commit', {
-      id: job.id, fingerprint: job.fingerprint, confirmPhrase: BOOTSTRAP_CONFIRM_PHRASE, resetExisting: true, warningAccepted: true
-    });
+    const consent = {
+      ...(job.protection.hasExistingData ? {resetExisting: true, warningAccepted: true} : {}),
+      ...(conflict ? {repairStage: true, repairWarningAccepted: true, repairChallenge: conflict.challenge} : {})
+    };
+    return finishBootstrap(companyId, job, consent, assertCurrent, onPending);
   },
   cancel: (companyId: string, id: string) => bootstrapCall(companyId, 'cancel', { id }),
 };
 export const BOOTSTRAP_CONFIRM_PHRASE = '기존 ERP 삭제 후 이관';
-export async function readErpFile(companyId: string, file: File): Promise<ErpSourceFile> {
+export async function readErpFile(companyId: string, file: File, bootstrap = false): Promise<ErpSourceFile> {
   const expected = scope(companyId);
-  if (!/\.xlsx$/i.test(file.name) || !file.size || file.size > 3 * 1024 * 1024) throw new Error('3MB 이하의 .xlsx 파일을 선택해 주세요.');
+  const limit = bootstrap ? 12 : 3;
+  if (!/\.xlsx$/i.test(file.name) || !file.size || file.size > limit * 1024 * 1024) throw new Error(`${limit}MB 이하의 .xlsx 파일을 선택해 주세요.`);
   const base64 = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result).split(',')[1]);

@@ -77,3 +77,32 @@ test('wrong password, incomplete warning, foreign job, changed session and close
     assert.equal(f.state.calls.length,0,kind);
   }
 });
+
+test('repair uses the new warning challenge and a fresh password login, including for a first import',async()=>{
+  const f=fixture(), job=pendingJob();
+  job.protection.hasExistingData=false;
+  job.stage={status:'MISMATCH'};job.stageConflict={challenge:'server-repair',challengeIssuedAt:'2026-01-01T02:00:00Z'};
+  f.state.reply={bootstrap:{companyId:'a',status:'COMMITTED'}};
+  await assert.rejects(f.bootstrap.commit('a',job));
+  await assert.rejects(f.bootstrap.reset('a',job,false,'test-password',()=>true));
+  await assert.rejects(f.bootstrap.reset('a',job,true,'incorrect',()=>true));
+  assert.equal(f.state.calls.length,0);
+  await f.bootstrap.reset('a',job,true,'test-password',()=>true);
+  const sent=f.state.calls[0];assert.equal(sent.repairStage,true);assert.equal(sent.repairWarningAccepted,true);
+  assert.equal(sent.repairChallenge,'server-repair');assert.equal(sent.resetExisting,undefined);assert.equal(sent.password,undefined);
+  assert.deepEqual(f.steps,['reauth','refresh']);
+});
+
+test('final activation after repairing an empty ledger refreshes auth without restarting the repair', async () => {
+  const f = fixture(), job = pendingJob();
+  job.protection.hasExistingData = false;
+  job.protection.repairChallengeIssuedAt = '2026-01-01T02:00:00Z';
+  f.state.reply = {bootstrap:{companyId:'a',status:'COMMITTED'}};
+  await assert.rejects(f.bootstrap.commit('a',job));
+  await f.bootstrap.reset('a',job,true,'test-password',()=>true);
+  assert.deepEqual(f.steps,['reauth','refresh']);
+  const sent = f.state.calls[0];
+  assert.equal(sent.resetExisting,undefined);
+  assert.equal(sent.repairStage,undefined);
+  assert.equal(sent.repairChallenge,undefined);
+});

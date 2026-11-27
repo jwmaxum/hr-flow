@@ -84,6 +84,13 @@ async function seedLifecycle(objects, orphanInbox = false) {
     for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReviewConfirmations', 'erpReviewInbox', 'erpReviewState']) {
       batch.set(db.doc(`companies/${companyId}/${name}/test-record`), { companyId, marker: `${companyId}-erp-private` });
     }
+    // A staged version and its automatic archive can contain descendants before their manifest exists.
+    for (const path of [
+      'erpBootstrapJobs/upload/uploadPages/00000001',
+      'erpLedgerVersions/staged/pages/00000001',
+      'erpLedgerVersions/current/ledger/'+companyId+'/erpItems/item',
+      'erpBootstrapBackups/saved/restoredLedger/'+companyId+'/erpInventory/stock',
+    ]) batch.set(db.doc('companies/'+companyId+'/'+path), { companyId });
     for (const collection of ['attendance', 'divisions', 'teams', 'leaves', 'expenses', 'AuditLogs', 'payroll_records', 'backup_tasks', 'payments', 'payment_claims', 'customCompanyData']) {
       batch.set(db.doc(`${collection}/${companyId}-record`), { companyId, marker: `${companyId}-private` });
       batch.set(db.doc(`${collection}/${companyId}-record/history/version1`), { marker: `${companyId}-nested-without-company-field` });
@@ -306,7 +313,10 @@ test('admin security server authorization and company lifecycle', async t => {
         assert.ok(remaining.includes(path), `foreign path preserved: ${path}`);
         assert.deepEqual((await db.doc(path).get()).data(), data, `foreign data unchanged: ${path}`);
       }
-      for (const path of ['config/a', 'officialLetterSettings/a', 'officialLetterPrinters/a/printers/printer1',
+      for (const path of ['companies/a/erpBootstrapJobs/upload/uploadPages/00000001',
+        'companies/a/erpLedgerVersions/staged/pages/00000001', 'companies/a/erpLedgerVersions/current/ledger/a/erpItems/item',
+        'companies/a/erpBootstrapBackups/saved/restoredLedger/a/erpInventory/stock',
+        'config/a', 'officialLetterSettings/a', 'officialLetterPrinters/a/printers/printer1',
         'officialLetterPrinters/a/printers/printer1/inspections/inspection1', 'officialLetters/a-letter/history/000001']) {
         assert.equal((await db.doc(path).get()).exists, false, `private path erased: ${path}`);
       }
