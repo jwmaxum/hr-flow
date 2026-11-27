@@ -1,6 +1,7 @@
 import {erpAccessOf,erpCanOperate} from '../utils/erpAccess';
 import type {PaymentOptions,PaymentSummary} from './erpAccountService';
 import { httpsCallable } from 'firebase/functions';
+import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { auth, functions } from '../firebase';
 import { useAuthStore } from '../store/authStore';
 
@@ -53,12 +54,22 @@ export interface ErpBootstrapJob {
   companyLabel: string; basisDate: string;
   source: { kind: 'BOOTSTRAP'; name: string; size: number; sha256: string };
   summary: ErpBootstrapSummary; fingerprint: string;
+  protection?: { hasExistingData: boolean; existingDocumentCount: number; challengeIssuedAt: string };
+  backup?: {
+    id: string;
+    counts: Record<string, number>;
+    reconciliation: {
+      verified: boolean;
+      documentCount: number;
+      checks: Record<'inventory' | 'receivables' | 'bundles' | 'pendingCosts' | 'monthCloses' | 'approvals', { count: number; digest: string }>;
+    };
+  } | null;
   borrowings: { code: string; name: string; warehouseName: string; quantity: number; evaluationValue: number; ownerName: string; buyerName: string; date: string }[];
   receivables: { date: string; partnerCode: string; partnerName: string; currency: string; amountMinor: number; documentNo: string }[];
   createdAt: string; committedAt: string | null;
 }
 const callable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpImport', { timeout: 120000 });
-const bootstrapCallable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpBootstrap', { timeout: 300000 });
+const bootstrapCallable = httpsCallable<Record<string, unknown>, unknown>(functions, 'manageErpBootstrap', { timeout: 330000 });
 function scope(companyId: string) {
   const { userData, companyData, sessionReady } = useAuthStore.getState();
   if (!auth.currentUser || auth.currentUser.uid !== userData?.uid || userData.companyId !== companyId || !erpCanOperate(erpAccessOf(userData)) ||
@@ -99,9 +110,47 @@ async function bootstrapCall(companyId: string, action: string, data: Record<str
 }
 export const erpBootstrapService = {
   preview: (companyId: string, id: string, source: ErpSourceFile) => bootstrapCall(companyId, 'preview', { id, source }),
-  commit: (companyId: string, job: ErpBootstrapJob, confirmPhrase: string) => bootstrapCall(companyId, 'commit', { id: job.id, fingerprint: job.fingerprint, confirmPhrase }),
+  commit: async (companyId: string, job: ErpBootstrapJob) => {
+    if (job.companyId !== companyId || job.protection?.hasExistingData !== false) {
+      throw new Error('기존 장부가 있거나 보호 상태를 확인할 수 없습니다. 미리보기를 다시 확인해 주세요.');
+    }
+    return bootstrapCall(companyId, 'commit', { id: job.id, fingerprint: job.fingerprint, confirmPhrase: BOOTSTRAP_CONFIRM_PHRASE });
+  },
+  reset: async (companyId: string, job: ErpBootstrapJob, warningAccepted: boolean, password: string, stillCurrent: () => boolean) => {
+    const expected = scope(companyId);
+    const administrator = auth.currentUser;
+    const challenge = Date.parse(job.protection?.challengeIssuedAt ?? '');
+    if (!stillCurrent() || useAuthStore.getState().userData?.role !== 'ADMIN' || !administrator?.email ||
+        job.companyId !== companyId || job.status !== 'PENDING' || job.protection?.hasExistingData !== true ||
+        !Number.isFinite(challenge) || warningAccepted !== true || !password) {
+      throw new Error('전체 초기화 경고를 확인하고 회사 ADMIN 비밀번호를 입력해 주세요.');
+    }
+    const assertCurrent = () => {
+      if (!stillCurrent() || auth.currentUser?.uid !== administrator.uid || scope(companyId) !== expected) {
+        throw new Error('로그인 상태 또는 이관 화면이 변경되었습니다. 다시 미리보기해 주세요.');
+      }
+    };
+    // Auth timestamps have second precision. Start after a full second has
+    // elapsed since receiving the preview, independent of the device clock.
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    assertCurrent();
+    try {
+      await reauthenticateWithCredential(administrator, EmailAuthProvider.credential(administrator.email, password));
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') throw new Error('ADMIN 비밀번호가 일치하지 않습니다. 다시 입력해 주세요.');
+      throw error;
+    }
+    assertCurrent();
+    await administrator.getIdToken(true);
+    assertCurrent();
+    return bootstrapCall(companyId, 'commit', {
+      id: job.id, fingerprint: job.fingerprint, confirmPhrase: BOOTSTRAP_CONFIRM_PHRASE, resetExisting: true, warningAccepted: true
+    });
+  },
   cancel: (companyId: string, id: string) => bootstrapCall(companyId, 'cancel', { id }),
 };
+export const BOOTSTRAP_CONFIRM_PHRASE = '기존 ERP 삭제 후 이관';
 export async function readErpFile(companyId: string, file: File): Promise<ErpSourceFile> {
   const expected = scope(companyId);
   if (!/\.xlsx$/i.test(file.name) || !file.size || file.size > 3 * 1024 * 1024) throw new Error('3MB 이하의 .xlsx 파일을 선택해 주세요.');

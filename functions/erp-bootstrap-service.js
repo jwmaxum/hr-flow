@@ -1,11 +1,12 @@
 const { createHash } = require('node:crypto');
 const { posix } = require('node:path');
-const { TextDecoder } = require('node:util');
+const { isDeepStrictEqual, TextDecoder } = require('node:util');
 const { Parser } = require('saxen');
 const yauzl = require('yauzl');
 const readExcelModule = require('read-excel-file/node');
 const readExcelFile = typeof readExcelModule === 'function' ? readExcelModule : readExcelModule.default;
-const { authorizeContext, fail } = require('./security-context');
+const { authorizeContext, recentAuthentication, fail } = require('./security-context');
+const { LEDGER_COLLECTIONS: ERP_COLLECTIONS, readLedger, ledgerFingerprint, versionFingerprint, prepareBackup, verifyBackupInTransaction } = require('./erp-bootstrap-backup');
 const { erpMaster: master } = require('./erp-service');
 const M = require('./erp-ledger-model');
 const { decimal, round, safe, HEADERS } = require('./erp-import-schema');
@@ -30,17 +31,6 @@ const EXTRA_HEADERS = {
 };
 
 const ALLOWED_SHEETS = ['작성안내', '이관입력', '참고데이터', '차용이관', '거래처이관', '기초미수이관'];
-
-const ERP_COLLECTIONS = [
-  'erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory',
-  'erpImports', 'erpBootstrapJobs', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts',
-  'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters',
-  'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs',
-  'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings',
-  'erpCustodyJobs', 'erpApprovals', 'erpChangeHistory', 'erpReviewConfirmations',
-  'erpReviewInbox', 'erpReviewState', 'erpMonthCloses', 'erpCloseMonths',
-  'erpClosePlans', 'erpCloseChecklists', 'erpGovernance',
-];
 
 const hash = value => master.hash(JSON.stringify(value));
 const invalid = message => fail('invalid-argument', message);
@@ -509,27 +499,41 @@ async function parseBootstrapFile(source) {
   }
 }
 
-async function commitBatches(db, ops) {
-  for (let i = 0; i < ops.length; i += 350) {
-    const batch = db.batch();
-    for (const op of ops.slice(i, i + 350)) {
-      batch.set(op.ref, op.data);
-    }
-    await batch.commit();
+function checkCompanyLabel(label, user) {
+  const key = value => typeof value === 'string' && master.normalize(value)
+    .replace(/^(?:주식회사|\(주\))\s*|\s*(?:주식회사|\(주\))$/gu, '').trim();
+  const target = key(label);
+  if (!target || ![user.companyId, user.company.nameKo, user.company.nameEn, user.company.name].some(value => key(value) === target)) {
+    fail('failed-precondition', '양식의 대상 회사명과 로그인한 회사가 다릅니다. 작성안내 시트의 대상 회사명을 확인해 주세요.');
   }
 }
 
-async function deleteCollectionDocs(db, colRef) {
-  if (typeof db.recursiveDelete === 'function') {
-    await db.recursiveDelete(colRef);
+function checkJob(job, user, input) {
+  if (!job) fail('not-found', '이관 미리보기 자료를 찾을 수 없습니다.');
+  master.verifyTenant(job, user.companyId);
+  if (job.type !== 'BOOTSTRAP' || job.createdBy !== user.uid) {
+    fail('permission-denied', '본인이 검증한 통합 이관만 처리할 수 있습니다.');
+  }
+  if (input.fingerprint !== job.fingerprint) fail('failed-precondition', '확인한 미리보기 지문으로 다시 시도해 주세요.');
+  if (job.status === 'COMMITTED') return;
+  if (job.status !== 'PENDING' || !job.protection) fail('failed-precondition', '파일을 다시 검증하고 새 미리보기를 생성해 주세요.');
+  checkCompanyLabel(job.companyLabel, user);
+}
+
+function authorizeReset(request, job, now) {
+  const { resetExisting, warningAccepted } = request.data;
+  if (!job.protection.hasExistingData) {
+    if (resetExisting || warningAccepted) fail('failed-precondition', '기존 장부가 없는 회사입니다. 최초 이관을 진행해 주세요.');
     return;
   }
-  while (true) {
-    const snap = await colRef.limit(350).get();
-    if (snap.empty) break;
-    const batch = db.batch();
-    for (const doc of snap.docs) batch.delete(doc.ref);
-    await batch.commit();
+  if (resetExisting !== true || warningAccepted !== true) {
+    fail('failed-precondition', '기존 ERP 자료가 있어 일반 이관이 차단되었습니다. 전체 초기화 경고를 확인하고 ADMIN 비밀번호를 재인증해 주세요.');
+  }
+  recentAuthentication(request, now);
+  const token = request.auth.token;
+  const challenge = Date.parse(job.protection.challengeIssuedAt);
+  if (!Number.isFinite(challenge) || token.firebase?.sign_in_provider !== 'password' || !Number.isSafeInteger(token.auth_time) || token.auth_time * 1000 <= challenge) {
+    fail('failed-precondition', '현재 미리보기 이후에 ADMIN 비밀번호를 다시 인증해 주세요.');
   }
 }
 
@@ -543,6 +547,8 @@ function expose(job) {
     source: job.source,
     summary: job.summary,
     fingerprint: job.fingerprint,
+    protection: job.protection || null,
+    backup: job.backup || null,
     borrowings: job.borrowings.map(b => ({
       code: b.code, name: b.name, warehouseName: b.warehouseName,
       quantity: b.quantityScaled / 10000, evaluationValue: b.evaluationValue,
@@ -573,7 +579,7 @@ function createErpBootstrapService({ db, now = () => new Date() }) {
     }
     const fields = {
       preview: ['action', 'companyId', 'id', 'source'],
-      commit: ['action', 'companyId', 'id', 'fingerprint', 'confirmPhrase'],
+      commit: ['action', 'companyId', 'id', 'fingerprint', 'confirmPhrase', 'resetExisting', 'warningAccepted'],
       cancel: ['action', 'companyId', 'id'],
     };
     M.exactObject(input, fields[input.action]);
@@ -585,17 +591,7 @@ function createErpBootstrapService({ db, now = () => new Date() }) {
 
     if (input.action === 'preview') {
       const parsed = await parseBootstrapFile(input.source);
-      const fingerprint = hash({
-        schema: 1,
-        companyId,
-        sha256: parsed.source.sha256,
-        summary: parsed.summary,
-        warehouse: parsed.warehouse.codeKey,
-        itemCount: parsed.items.length,
-        partnerCount: parsed.partners.length,
-        borrowingCount: parsed.borrowings.length,
-        receivableCount: parsed.receivables.length,
-      });
+      checkCompanyLabel(parsed.companyLabel, user);
       const job = {
         id,
         companyId,
@@ -610,7 +606,6 @@ function createErpBootstrapService({ db, now = () => new Date() }) {
         borrowings: parsed.borrowings,
         receivables: parsed.receivables,
         summary: parsed.summary,
-        fingerprint,
         rows: [],
         preview: { errors: [] },
         createdAt: now().toISOString(),
@@ -620,20 +615,27 @@ function createErpBootstrapService({ db, now = () => new Date() }) {
       if (Buffer.byteLength(JSON.stringify(job)) > 850000) {
         fail('resource-exhausted', '통합 이관 파일 크기가 제한을 초과했습니다.');
       }
-      await db.runTransaction(async tx => {
-        await authorizeAdmin(request, tx);
+      return db.runTransaction(async tx => {
+        const current = await authorizeAdmin(request, tx);
+        checkCompanyLabel(parsed.companyLabel, current);
         const existing = await tx.get(jobRef);
         if (existing.exists) {
           const old = existing.data();
           master.verifyTenant(old, companyId);
-          if (old.type !== 'BOOTSTRAP' || old.fingerprint !== fingerprint) {
+          if (old.type !== 'BOOTSTRAP' || old.createdBy !== user.uid || old.source?.sha256 !== parsed.source.sha256 || !old.protection || old.status === 'CANCELLED') {
             fail('already-exists', '이미 사용 중인 이관 요청 번호입니다. 새로 검증해 주세요.');
           }
-          return;
+          return { bootstrap: expose(old) };
         }
-        tx.create(jobRef, job);
+        const source = await readLedger({ tx, parent, collections: ERP_COLLECTIONS });
+        const sourceFingerprint = ledgerFingerprint(source);
+        const sourceVersions = versionFingerprint(source);
+        const fingerprint = hash([2, companyId, id, parsed.source.sha256, sourceFingerprint, sourceVersions]);
+        const protection = { hasExistingData: source.length > 0, existingDocumentCount: source.length, challengeIssuedAt: now().toISOString() };
+        const reviewed = { ...job, fingerprint, sourceFingerprint, sourceVersions, protection };
+        tx.create(jobRef, reviewed);
+        return { bootstrap: expose(reviewed) };
       });
-      return { bootstrap: expose(job) };
     }
 
     if (input.action === 'cancel') {
@@ -644,6 +646,7 @@ function createErpBootstrapService({ db, now = () => new Date() }) {
         const old = snap.data();
         master.verifyTenant(old, companyId);
         if (old.type !== 'BOOTSTRAP') fail('failed-precondition', '통합 이관 미리보기만 취소할 수 있습니다.');
+        if (old.createdBy !== user.uid) fail('permission-denied', '본인이 검증한 통합 이관만 취소할 수 있습니다.');
         if (old.status === 'COMMITTED') fail('failed-precondition', '이미 확정된 이관은 취소할 수 없습니다.');
         tx.update(jobRef, { status: 'CANCELLED', cancelledAt: now().toISOString(), cancelledBy: user.uid });
         return { bootstrap: expose({ ...old, status: 'CANCELLED' }) };
@@ -654,25 +657,28 @@ function createErpBootstrapService({ db, now = () => new Date() }) {
     if (input.confirmPhrase !== CONFIRM_PHRASE) {
       fail('failed-precondition', `확인 문구("${CONFIRM_PHRASE}")를 정확히 입력해 주세요.`);
     }
-    const snap = await jobRef.get();
-    if (!snap.exists) fail('not-found', '이관 미리보기 자료를 찾을 수 없습니다.');
-    const job = snap.data();
-    master.verifyTenant(job, companyId);
-    if (job.type !== 'BOOTSTRAP') fail('failed-precondition', '통합 이관 미리보기 자료가 아닙니다.');
+    const job = (await jobRef.get()).data();
+    checkJob(job, user, input);
     if (job.status === 'COMMITTED') return { bootstrap: expose(job), idempotent: true };
-    if (job.status !== 'PENDING' || input.fingerprint !== job.fingerprint) {
-      fail('failed-precondition', '확인한 미리보기 지문으로 다시 시도해 주세요.');
+    authorizeReset(request, job, now);
+    let backup = null;
+    if (job.protection.hasExistingData) {
+      try {
+        backup = await prepareBackup({ db, parent, jobId: id, actorId: user.uid, collections: ERP_COLLECTIONS, now, expectedFingerprint: job.sourceFingerprint });
+      } catch (error) {
+        // A concurrent retry may already have committed while this request was copying the old ledger.
+        const alreadyCommitted = await db.runTransaction(async tx => {
+          const current = await authorizeAdmin(request, tx);
+          const fresh = (await tx.get(jobRef)).data();
+          checkJob(fresh, current, input);
+          return fresh.status === 'COMMITTED' ? expose(fresh) : null;
+        });
+        if (alreadyCommitted) return { bootstrap: alreadyCommitted, idempotent: true };
+        throw error;
+      }
     }
 
-    // Re-verify ADMIN right before destructive wipe
-    await authorizeAdmin(request);
-
-    // 1. Delete existing company-scoped ERP collections ONLY
-    for (const name of ERP_COLLECTIONS) {
-      await deleteCollectionDocs(db, parent.collection(name));
-    }
-
-    // 2. Stage all fresh normalized ERP records
+    // Construct the replacement in memory. No live ledger writes precede the final transaction.
     const at = now().toISOString();
     const ops = [];
     const wh = job.warehouse;
@@ -809,6 +815,7 @@ function createErpBootstrapService({ db, now = () => new Date() }) {
     const committedJob = {
       ...job,
       status: 'COMMITTED',
+      backup,
       committedAt: at,
       committedBy: user.uid,
     };
@@ -817,12 +824,41 @@ function createErpBootstrapService({ db, now = () => new Date() }) {
       ref: parent.collection('erpAudit').doc(),
       data: {
         companyId, actorId: user.uid, action: 'ERP_BOOTSTRAP_COMMIT',
-        importId: job.id, summary: job.summary, at,
+        importId: job.id, summary: job.summary, backupId: backup?.id || null, at,
       },
     });
 
-    await commitBatches(db, ops);
-    return { bootstrap: expose(committedJob), idempotent: false };
+    return db.runTransaction(async tx => {
+      const current = await authorizeAdmin(request, tx);
+      const fresh = (await tx.get(jobRef)).data();
+      checkJob(fresh, current, input);
+      if (fresh.status === 'COMMITTED') return { bootstrap: expose(fresh), idempotent: true };
+      authorizeReset(request, fresh, now);
+      const source = backup ? await verifyBackupInTransaction({ tx, parent, jobId: id, backupId: backup.id, collections: ERP_COLLECTIONS })
+        : await readLedger({ tx, parent, collections: ERP_COLLECTIONS });
+      if (ledgerFingerprint(source) !== fresh.sourceFingerprint || versionFingerprint(source) !== fresh.sourceVersions || (!backup && source.length)) {
+        fail('failed-precondition', '미리보기 이후 장부가 변경되었습니다. 새로 검증해 주세요.');
+      }
+      const writes = new Map(ops.map(op => [op.ref.path, op]));
+      for (const record of source) {
+        const replacement = writes.get(record.ref.path);
+        if (replacement) {
+          // Reusing identical key reservations avoids rewriting their indexes in a full re-import.
+          if (isDeepStrictEqual(record.data, replacement.data)) writes.delete(record.ref.path);
+        } else if (!record.path.startsWith('erpAudit/')) {
+          tx.delete(record.ref);
+        }
+      }
+      for (const { ref, data } of writes.values()) tx.set(ref, data);
+      // ERP transaction authorization reads this company document. The write also fences concurrent first imports.
+      tx.update(parent, { erpBootstrapGeneration: id });
+      return { bootstrap: expose(committedJob), idempotent: false };
+    }).catch(error => {
+      if (typeof error?.code === 'number' && /(?:too (?:large|big)|maximum (?:request|transaction) size|transaction .*size limit|10\s*MiB|10485760)/i.test(error.message || '')) {
+        fail('resource-exhausted', '장부 교체가 Firestore의 단일 트랜잭션 크기 한도를 초과했습니다. 기존 장부를 유지합니다.');
+      }
+      throw error;
+    });
   };
 }
 

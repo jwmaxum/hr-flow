@@ -384,7 +384,12 @@ try {
   await deny('admin cannot bypass ERP grant audit',updateDoc(document('alice','UserProfile','bob'),{erpAccess:'BOTH'}));
   // ERP must use server authorization and redaction even for company admins.
   for (const uid of ['bob', 'manager', 'alice', 'outsider', 'root', 'anonymous']) {
-    for (const name of ['erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs','erpClosePlans','erpCloseChecklists','erpGovernance','erpApprovals','erpChangeHistory','erpReviewConfirmations','erpReviewInbox','erpReviewState','erpMonthCloses','erpCloseMonths']) {
+    for (const part of ['archive', 'restoredLedger']) {
+      const target = doc(db(uid), 'companies', 'a', 'erpBootstrapBackups', 'private', part, 'a', 'erpInventory', 'row');
+      await deny(uid + ' direct backup content read ' + part, getDoc(target));
+      await deny(uid + ' direct backup content write ' + part, setDoc(target, {companyId: 'a'}));
+    }
+    for (const name of ['erpBootstrapBackups', 'erpBootstrapJobs', 'erpItems', 'erpWarehouses', 'erpPartners', 'erpKeys', 'erpInventory', 'erpAudit', 'erpImports', 'erpMovements', 'erpDocuments', 'erpState', 'erpImportReceipts', 'erpCorrections', 'erpMovementLinks', 'erpIssuedDocuments', 'erpIssueCounters', 'erpIssueAllocations', 'erpPrintSettings', 'erpReceipts', 'erpReceiptJobs', 'erpSettlements', 'erpSettlementJobs', 'erpCustodyLots', 'erpBorrowings', 'erpCustodyJobs','erpClosePlans','erpCloseChecklists','erpGovernance','erpApprovals','erpChangeHistory','erpReviewConfirmations','erpReviewInbox','erpReviewState','erpMonthCloses','erpCloseMonths']) {
       const target = doc(db(uid), 'companies', 'a', name, 'private');
       await deny(`${uid} direct ERP read ${name}`, getDoc(target));
       await deny(`${uid} direct ERP write ${name}`, setDoc(target, { companyId: 'a', quantity: 999 }));

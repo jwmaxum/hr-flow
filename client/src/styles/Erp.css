@@ -100,6 +100,17 @@
 .erp-import-summary { margin: 0 18px 16px; color: var(--wf-muted); }
 .erp-import-table { min-width: 1100px; }
 .erp-import-notes, .erp-import-confirm { padding: 16px 18px; }
+.erp-bootstrap-warning, .erp-bootstrap-initial { min-width: 0; margin: 0 0 12px; padding: 12px 16px; border: 1px solid var(--wf-border); border-radius: 8px; }
+.erp-bootstrap-warning { border: 2px solid #b91c1c; background: #fff5f5; color: #861818; }
+.erp-bootstrap-warning legend, .erp-bootstrap-initial legend { padding: 0 6px; font-weight: 700; }
+.erp-bootstrap-warning p { margin: 0 0 10px; line-height: 1.55; }
+.erp-bootstrap-warning svg { vertical-align: middle; }
+.erp-bootstrap-warning .erp-active-field { align-items: flex-start; color: #861818; }
+.erp-bootstrap-credentials { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; margin-top: 12px; }
+.workflow-theme .wf-btn.erp-bootstrap-reset { background: #a71919; color: white; border-color: #861818; }
+.erp-bootstrap-backup { margin-bottom: 12px; padding: 12px 16px; border: 1px solid var(--wf-border); border-radius: 8px; }
+.erp-bootstrap-backup p { overflow-wrap: anywhere; }
+.erp-bootstrap-backup ul { display: flex; flex-wrap: wrap; gap: 6px 20px; padding-inline-start: 20px; }
 .erp-import-notes summary { cursor: pointer; min-height: 36px; }
 .erp-import-mappings { display: grid; gap: 16px; max-height: 400px; overflow: auto; padding: 8px 0; }
 .erp-import-mapping { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
