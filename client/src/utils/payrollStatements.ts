@@ -11,7 +11,7 @@ export interface PayrollIdentity {
 }
 export interface PayrollSnapshotRow extends PayrollIdentity {
   amounts: PayrollAmounts;
-  calculation: { mode?: 'CALCULATED'; dependents: number; children: number; tableSource: string } |
+  calculation: { mode?: 'CALCULATED'; calculationVersion?: string; dependents: number; children: number; tableSource: string } |
     { mode: 'IMPORTED' | 'ADJUSTED'; tableSource: string };
 }
 export interface PayrollSnapshotRecord {

@@ -4,8 +4,8 @@
 // https://www.law.go.kr/LSW/flDownload.do?bylClsCd=110201&flSeq=161861245&gubun=
 // NPS 2026: employee 4.75%; July base limits 410,000~6,590,000 KRW.
 // https://ma.nps.or.kr/pnsinfo/ntpsklg/getOHAF0038M0.do?menuId=MN24001113
-// NHIS 2026: employee 3.595%; long-term care 13.14% of health premium.
-// https://edi.nhis.or.kr/portal/images/popup/20251204_pop01longdesc.html
+// LTC Act art. 9, Act 21690 transitional art. 3: apply by insurance month.
+// https://www.law.go.kr/lsInfoP.do?joNo=000900&lsId=010436
 const integer = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const taxArray = value => Array.isArray(value) && value.length === 11 && Array.from(value).every(integer);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -93,11 +93,48 @@ export function getDeductionCounts(employee) {
   const children = wholeCount(employee.childrenUnder20, 0);
   return { dependents: Math.max(wholeCount(employee.dependents, 1), children + 1), children };
 }
-function periodOf(period) {
+export function getPayrollPeriod(period) {
   const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const chosen = period ?? { year: kst.getUTCFullYear(), month: kst.getUTCMonth() + 1 };
   if (!Number.isInteger(chosen.year) || !Number.isInteger(chosen.month) || chosen.year < 1900 || chosen.year > 9999 || chosen.month < 1 || chosen.month > 12) throw new Error('급여 계산 연도와 월을 확인해 주세요.');
   return { year: chosen.year, month: chosen.month };
+}
+
+// Both statutory income rates are in millionths. From the November 2026
+// insurance month, LTC Act art. 9 rounds their ratio to four decimal places.
+const HEALTH_MILLIONTHS = 71_900;
+const healthRate = HEALTH_MILLIONTHS / 2_000_000; // Employee half.
+
+export function getPayrollInsurancePolicy(period) {
+  const { year, month } = getPayrollPeriod(period);
+  const from2027 = year >= 2027;
+  const revisedBounds = year > 2026 || (year === 2026 && month >= 7);
+  // For earlier, unsupported preview years, preserve the legacy 13.14% estimate.
+  const roundsLongTermRatio = year !== 2026 || month >= 11;
+  const careMillionths = from2027 ? 9_994 : 9_448;
+  const longTermNumerator = roundsLongTermRatio
+    ? Math.round(careMillionths * 10_000 / HEALTH_MILLIONTHS)
+    : careMillionths;
+  const longTermDenominator = roundsLongTermRatio ? 10_000 : HEALTH_MILLIONTHS;
+  let calculationVersion = '2026-03-separate-age60-v2';
+  if (from2027) calculationVersion = '2027-01-insurance-v3';
+  else if (year === 2026) calculationVersion = roundsLongTermRatio ? '2026-11-ltc-rounded-v3' : '2026-01-ltc-full-ratio-v3';
+  return {
+    pensionRate: from2027 ? .05 : .0475,
+    pensionMin: revisedBounds ? 410_000 : 400_000,
+    pensionMax: revisedBounds ? 6_590_000 : 6_370_000,
+    pensionLimitsPending: year === 2027 && month >= 7,
+    healthRate, longTermIncomeRate: careMillionths / 1_000_000,
+    roundsLongTermRatio, longTermNumerator, longTermDenominator,
+    longTermRate: longTermNumerator / longTermDenominator,
+    calculationVersion
+  };
+}
+
+// Work in whole won to avoid rounding a premium down by another 10 won
+// when a binary floating-point product falls just below an exact boundary.
+function premiumInTenWon(amount, numerator, denominator) {
+  return Number(BigInt(amount) * BigInt(numerator) / (10n * BigInt(denominator))) * 10;
 }
 function pensionAgeStatus(employee, period) {
   // Read only the registered HR field, never a certificate's birthDate or
@@ -173,11 +210,12 @@ export function createPayrollCalculator(officialData) {
   function calculateNetPay(employee, table, period) {
     const salary = employee.currentVal ?? employee.annualSalary ?? 0;
     if (!Number.isFinite(salary) || salary < 0 || !Number.isSafeInteger(Math.floor(salary))) return null;
-    const selected = periodOf(period);
+    const selected = getPayrollPeriod(period);
     const { dependents, children } = getDeductionCounts(employee);
     const baseMonthly = Math.floor(salary / 12);
     const bonus = Math.max(0, Number.isFinite(employee.bonus) ? Math.floor(employee.bonus) : 0);
     const monthlyGross = baseMonthly + bonus;
+    if (!Number.isSafeInteger(monthlyGross)) throw new Error('기본급과 상여금의 합계 범위를 확인해 주세요.');
     if (monthlyGross <= 0) return null;
     const isIrregular = employee.salaryType === 'IRREGULAR';
     const salaryBasis = isIrregular ? 'IRREGULAR' : (employee.salaryType === 'MONTHLY' ? 'MONTHLY' : 'ANNUAL');
@@ -186,7 +224,15 @@ export function createPayrollCalculator(officialData) {
     const effective = tableStatus.effectiveFrom;
     const selectedDate = `${selected.year}-${String(selected.month).padStart(2, '0')}-01`;
     const effectiveTime = effective ? Date.parse(effective + 'T00:00:00Z') : NaN;
-    const effectiveKnown = !effective || /^2026-\d{2}-\d{2}$/.test(effective) && Number.isFinite(effectiveTime) && new Date(effectiveTime).toISOString().slice(0, 10) === effective && effective <= selectedDate;
+    const effectiveKnown = !effective || /^(?:2026|2027)-\d{2}-\d{2}$/.test(effective) && Number.isFinite(effectiveTime) && new Date(effectiveTime).toISOString().slice(0, 10) === effective && effective <= selectedDate;
+    const insurance = getPayrollInsurancePolicy(selected);
+    // The published pension income limits expire after June 2027. Later
+    // estimates can use the new annual rates but await the next limits for approval.
+    let policyPeriodReason = null;
+    if (insurance.pensionLimitsPending) policyPeriodReason = 'PENSION_LIMITS_PENDING';
+    else if (selectedDate < '2026-03-01' || selectedDate > '2027-06-01') policyPeriodReason = 'OUTSIDE_SUPPORTED_PERIOD';
+    else if (!effectiveKnown) policyPeriodReason = 'TAX_TABLE_EFFECTIVE_DATE';
+    const policyPeriodSupported = policyPeriodReason === null;
 
     if (isIrregular) {
       // 비정규직: 4대보험 미신고(0원), 사업소득 3.3% 또는 기타소득 8.8%(필요경비 60% 인정) 원천징수
@@ -230,28 +276,31 @@ export function createPayrollCalculator(officialData) {
           tableSource,
           tableStatus,
           period: selected,
-          policyPeriodSupported: selected.year === 2026 && selected.month >= 3 && effectiveKnown,
+          policyPeriodSupported, policyPeriodReason,
           pensionBase: 0,
           pensionRate: 0,
           pensionAgeStatus: 'AGE_EXEMPT',
           healthRate: 0,
           longTermRate: 0,
+          longTermIncomeRate: 0,
+          roundsLongTermRatio: insurance.roundsLongTermRatio,
           employmentRate: 0,
-          calculationVersion: '2026-03-separate-age60-v2'
+          calculationVersion: insurance.calculationVersion
         }
       };
     }
 
     const nonTaxable = Math.min(baseMonthly, Math.max(0, Number.isFinite(employee.nonTaxable) ? Math.floor(employee.nonTaxable) : 200000));
     const taxableIncome = Math.max(0, monthlyGross - nonTaxable);
-    const july = selected.year > 2026 || selected.year === 2026 && selected.month >= 7;
-    const pensionBase = Math.min(july ? 6590000 : 6370000, Math.max(july ? 410000 : 400000, Math.floor(taxableIncome / 1000) * 1000));
+    const pensionBase = Math.min(insurance.pensionMax, Math.max(insurance.pensionMin, Math.floor(taxableIncome / 1000) * 1000));
     const ageStatus = pensionAgeStatus(employee, selected);
-    const pensionRate = ageStatus === 'AGE_EXEMPT' ? 0 : .0475;
+    const pensionRate = ageStatus === 'AGE_EXEMPT' ? 0 : insurance.pensionRate;
     const pension = taxableIncome > 0 ? tenWon(pensionBase * pensionRate) : 0;
     const employmentInsuranceIncluded = employee.employmentInsuranceIncluded !== false;
     const employmentRate = employmentInsuranceIncluded ? .009 : 0;
-    const health = tenWon(taxableIncome * .03595), longTerm = tenWon(health * .1314), employment = employmentInsuranceIncluded ? tenWon(taxableIncome * .009) : 0;
+    const health = premiumInTenWon(taxableIncome, HEALTH_MILLIONTHS, 2_000_000);
+    const longTerm = premiumInTenWon(health, insurance.longTermNumerator, insurance.longTermDenominator);
+    const employment = employmentInsuranceIncluded ? tenWon(taxableIncome * .009) : 0;
     const totalInsurance = pension + health + longTerm + employment;
     const { incomeTax, tableSource } = calculateIncomeTax(taxableIncome, dependents, children, table);
     const localTax = tenWon(incomeTax * .1), totalDeductions = totalInsurance + incomeTax + localTax;
@@ -280,14 +329,16 @@ export function createPayrollCalculator(officialData) {
         tableSource,
         tableStatus,
         period: selected,
-        policyPeriodSupported: selected.year === 2026 && selected.month >= 3 && effectiveKnown,
+        policyPeriodSupported, policyPeriodReason,
         pensionBase: ageStatus === 'AGE_EXEMPT' ? 0 : pensionBase,
         pensionRate,
         pensionAgeStatus: ageStatus,
-        healthRate: .03595,
-        longTermRate: .1314,
+        healthRate: insurance.healthRate,
+        longTermRate: insurance.longTermRate,
+        longTermIncomeRate: insurance.longTermIncomeRate,
+        roundsLongTermRatio: insurance.roundsLongTermRatio,
         employmentRate,
-        calculationVersion: '2026-03-separate-age60-v2'
+        calculationVersion: insurance.calculationVersion
       }
     };
   }

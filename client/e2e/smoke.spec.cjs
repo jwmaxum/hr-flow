@@ -1567,6 +1567,35 @@ test('company, document and path tampering cannot cross tenant or division bound
   expect((await probe(wrongDivision, firestoreUrl(ownRecord.id))).status).toBe(403);
 });
 
+test('insurance deductions follow the selected payroll month across October, November and January', async ({ browser }, testInfo) => {
+  const admin = await actorFor(browser, testInfo);
+  await login(admin, fixtures.accounts.adminA);
+  await admin.page.goto('/#/admin/salary');
+  const find = admin.page.getByRole('searchbox', { name: '급여 대상 직원 검색', exact: true });
+  await find.fill(fixtures.accounts.adminA.name);
+  const card = admin.page.locator('.pyre-employee');
+  await expect(card).toHaveCount(1);
+  const year = admin.page.getByRole('combobox', { name: '급여 대상 연도', exact: true });
+  const month = admin.page.getByRole('combobox', { name: '급여 대상 월', exact: true });
+  for (const [yyyy, mm, pension, longTerm] of [
+    [2026, 10, '125,400원', '12,470원'],
+    [2026, 11, '125,400원', '12,460원'],
+    [2027, 1, '132,000원', '13,190원']
+  ]) {
+    await year.selectOption(String(yyyy));
+    await month.selectOption(String(mm));
+    // Unsaved annual pay with the fixture's monthly meal allowance yields a KRW 2,640,000 insurance base.
+    await card.getByRole('textbox', { name: fixtures.accounts.adminA.name + ' 연봉', exact: true }).fill('34,080,000');
+    await card.getByRole('button', { name: '산출 상세', exact: true }).click();
+    const details = admin.page.getByRole('dialog', { name: fixtures.accounts.adminA.name + '님 예상 급여 산출 내역' });
+    const deduction = name => details.locator('.pyre-detail-rows > div').filter({ has: admin.page.getByText(name, { exact: true }) }).locator('dd');
+    await expect(deduction('건강보험')).toHaveText('94,900원');
+    await expect(deduction('국민연금')).toHaveText(pension);
+    await expect(deduction('장기요양보험')).toHaveText(longTerm);
+    await details.getByRole('button', { name: /닫기$/ }).click();
+  }
+});
+
 test('real payroll UI confirms full-company saved wages and downloads immutable monthly and annual PDFs with tenant isolation', async ({ browser }, testInfo) => {
   test.setTimeout(240000);
   const admin = await actorFor(browser, testInfo);

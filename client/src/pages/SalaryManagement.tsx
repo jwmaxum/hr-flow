@@ -8,7 +8,7 @@ import { db } from '../firebase';
 import { useAuthStore } from '../store/authStore';
 import type { UserData } from '../store/authStore';
 import { getRoleDisplayName } from '../utils/roleDisplay';
-import { calculateNetPay, getDeductionCounts, MEAL_ALLOWANCE_DEFAULT } from '../utils/payroll';
+import { calculateNetPay, getDeductionCounts, getPayrollPeriod, insuranceDetailNote, MEAL_ALLOWANCE_DEFAULT } from '../utils/payroll';
 import type { PayrollResult, TaxTable } from '../utils/payroll';
 import { getTaxTableStatus } from '../utils/payrollTaxTable';
 import { assertPayrollSession, downloadPayrollBlob, downloadPayrollExcel, downloadPayrollPdf, payrollService, payrollSessionKey } from '../services/payrollService';
@@ -33,8 +33,6 @@ const settingsOf = (employee: UserData): PayrollSettings => ({ annualSalary: emp
   dependents: getDeductionCounts(employee).dependents, childrenUnder20: getDeductionCounts(employee).children,
   nonTaxable: employee.nonTaxable ?? MEAL_ALLOWANCE_DEFAULT });
 const won = (value: number) => `${value.toLocaleString('ko-KR')}원`;
-const now = new Date();
-const years = Array.from({ length: now.getFullYear() - 1997 }, (_, index) => 2000 + index);
 const monthIndex = (year: number, month: number) => year * 12 + month;
 const failureMessage = (failure: unknown) => failure instanceof Error ? failure.message : '처리하지 못했습니다. 다시 시도해 주세요.';
 
@@ -65,8 +63,10 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
   const [taxReadError, setTaxReadError] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  const [initialPeriod] = useState(() => getPayrollPeriod());
+  const years = Array.from({ length: initialPeriod.year - 1997 }, (_, index) => 2000 + index);
+  const [selectedYear, setSelectedYear] = useState(initialPeriod.year);
+  const [selectedMonth, setSelectedMonth] = useState(initialPeriod.month);
   const [selectedDivision, setSelectedDivision] = useState('ALL');
   const [selectedTeam, setSelectedTeam] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
@@ -84,8 +84,8 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
   const [approvedHistoryRefresh, setApprovedHistoryRefresh] = useState(0);
   const [historyRecords, setHistoryRecords] = useState<PayrollRecordSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyStart, setHistoryStart] = useState(`${now.getFullYear()}-01`);
-  const [historyEnd, setHistoryEnd] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+  const [historyStart, setHistoryStart] = useState(`${initialPeriod.year}-01`);
+  const [historyEnd, setHistoryEnd] = useState(`${initialPeriod.year}-${String(initialPeriod.month).padStart(2, '0')}`);
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
@@ -127,7 +127,8 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
 
   const period = { year: selectedYear, month: selectedMonth };
   const taxStatus = getTaxTableStatus(taxTable);
-  const policySupported = calculateNetPay({ annualSalary: 12, nonTaxable: 0 }, taxTable, period)?.metadata.policyPeriodSupported === true;
+  const policy = calculateNetPay({ annualSalary: 12, nonTaxable: 0 }, taxTable, period)?.metadata;
+  const policySupported = policy?.policyPeriodSupported === true;
   const monthEnd = new Date(Date.UTC(selectedYear, selectedMonth, 0)).toISOString().slice(0, 10);
   const activeEmployees = employees.filter(employee => employee.status !== 'RESIGNED' && (!employee.joinDate || employee.joinDate <= monthEnd));
   const filteredEmployees = activeEmployees.filter(employee => (selectedDivision === 'ALL' || employee.divisionId === selectedDivision) &&
@@ -384,26 +385,27 @@ function PayrollWorkspace({ companyId, scope }: { companyId: string; scope: stri
       {(taxStatus.reason || taxReadError) && <p className="pyre-warning" role="alert">{taxReadError || `등록 세액표 검증 오류: ${taxStatus.reason} 전체 공식 기본표로 계산합니다.`}</p>}
       {taxStatus.source === 'uploaded' && taxStatus.highIncomeSource !== 'uploaded' && <p className="pyre-warning">1,000만원 이상 급여는 등록표의 기준 세액이 없어 공식 기본표 산식을 사용합니다.</p>}
     </Panel>
-    <div className="pyre-summary-layout"><Panel className="pyre-period"><h2>급여 대상 기간</h2><div><Select aria-label="급여 대상 연도" disabled={busy} value={selectedYear} onChange={event => { setListLoading(true); setYearRecords([]); setAnnualEmployees([]); setAnnualEmployeeId(''); setSelectedYear(Number(event.target.value)); }}>{years.map(year => <option key={year} value={year}>{year}년</option>)}</Select><Select aria-label="급여 대상 월" disabled={busy} value={selectedMonth} onChange={event => setSelectedMonth(Number(event.target.value))}>{Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}월</option>)}</Select></div><p>설정은 현재 저장된 급여 기준입니다. 과거 확정액은 승인 이력에서 확인하세요.</p></Panel>
+    <div className="pyre-summary-layout"><Panel className="pyre-period"><h2>급여 대상 기간</h2><div><Select aria-label="급여 대상 연도" disabled={busy} value={selectedYear} onChange={event => { setListLoading(true); setYearRecords([]); setAnnualEmployees([]); setAnnualEmployeeId(''); setSelectedYear(Number(event.target.value)); }}>{years.map(year => <option key={year} value={year}>{year}년</option>)}</Select><Select aria-label="급여 대상 월" disabled={busy} value={selectedMonth} onChange={event => setSelectedMonth(Number(event.target.value))}>{Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}월</option>)}</Select></div><p>보험료는 선택한 급여 귀속월을 기준으로 계산합니다. 과거 확정액은 승인 이력에서 확인하세요.</p></Panel>
       <Panel className="pyre-summary"><h2>조회 목록 예상 합계 <span>{filteredEmployees.length}명</span></h2><dl><div><dt>총 지급액</dt><dd>{won(totals.gross)}</dd></div><div><dt>총 공제액</dt><dd>{won(totals.deductions)}</dd></div><div><dt>예상 실지급액</dt><dd>{won(totals.net)}</dd></div></dl><p>본부·팀·이름으로 조회한 목록의 예상 금액입니다. 월 급여 확정은 회사 전체 저장 설정으로 진행합니다.</p></Panel></div>
     <Panel className="pyre-report-actions"><div><h2>{selectedYear}년 {selectedMonth}월 회사 전체 급여대장</h2>{approved ? <p>확정 {approved.employeeCount}명 · 총 지급 {won(approved.totalGross)} · 실지급 {won(approved.totalNet)} · 승인일 {approved.approvedAtIso.slice(0, 10)}</p> : <p>저장된 회사 전체 직원 {activeEmployees.length}명의 급여를 서버에서 확인한 뒤 확정합니다.</p>}
       {edited.length > 0 && <p className="pyre-warning">설정 확인·저장 필요 {edited.length}명{legacyCount ? ` (이전 급여 설정 ${legacyCount}명)` : ''}. 모두 저장한 뒤 확정할 수 있습니다.</p>}
-      {!policySupported && <p className="pyre-warning">선택 기간은 현재 세액·보험 기준으로 확정할 수 없습니다. 이미 승인된 문서는 다운로드할 수 있습니다.</p>}</div><div className="pyre-action-buttons"><Button className="wf-btn-primary" disabled={busy || !!approved || edited.length > 0 || !policySupported || taxLoading || listLoading || !activeEmployees.length} onClick={() => void approvePayroll()}>{approving ? <Loader2 size={17} className="animate-spin" /> : <Banknote size={17} />}{approved ? '확정 완료' : '회사 전체 급여 확정'}</Button><Button disabled={!approved || !!downloading || listLoading} onClick={() => approved && void download('monthly', approved.id)}><Download size={17} />월별 급여대장 PDF</Button><Button disabled={!!downloading || listLoading || (!approved && !activeEmployees.length)} onClick={() => approved ? void download('monthlyExcel', approved.id) : void downloadEstimatedExcel()}><FileSpreadsheet size={17} />{approved ? '월별 급여대장 Excel' : '예상 급여대장 Excel'}</Button></div></Panel>
+      {!policySupported && <p className="pyre-warning">{policy?.policyPeriodReason === 'PENSION_LIMITS_PENDING' ? '2027년 7월부터 적용할 국민연금 기준소득월액 상·하한을 반영할 때까지 직전 상·하한으로 예상액을 표시합니다. 월 급여 확정은 새 상·하한 반영 후 가능합니다.' : policy?.policyPeriodReason === 'TAX_TABLE_EFFECTIVE_DATE' ? '등록 세액표의 적용일을 확인해 주세요. 급여 귀속월에 유효한 세액표가 필요합니다.' : '선택 기간은 현재 세액·보험 기준으로 확정할 수 없습니다. 이미 승인된 문서는 다운로드할 수 있습니다.'}</p>}</div><div className="pyre-action-buttons"><Button className="wf-btn-primary" disabled={busy || !!approved || edited.length > 0 || !policySupported || taxLoading || listLoading || !activeEmployees.length} onClick={() => void approvePayroll()}>{approving ? <Loader2 size={17} className="animate-spin" /> : <Banknote size={17} />}{approved ? '확정 완료' : '회사 전체 급여 확정'}</Button><Button disabled={!approved || !!downloading || listLoading} onClick={() => approved && void download('monthly', approved.id)}><Download size={17} />월별 급여대장 PDF</Button><Button disabled={!!downloading || listLoading || (!approved && !activeEmployees.length)} onClick={() => approved ? void download('monthlyExcel', approved.id) : void downloadEstimatedExcel()}><FileSpreadsheet size={17} />{approved ? '월별 급여대장 Excel' : '예상 급여대장 Excel'}</Button></div></Panel>
     <Panel className="pyre-annual"><div><h2>직원별 {selectedYear}년 급여명세서</h2><p>월별 확정 이력을 모아 생성합니다. 이력이 없는 월은 미확정으로 표시하며 퇴사자도 선택할 수 있습니다.</p></div><label>직원 선택<Select aria-label="연간 급여명세서 직원 선택" value={annualEmployeeId} disabled={listLoading || !!downloading} onChange={event => setAnnualEmployeeId(event.target.value)}><option value="">직원을 선택하세요</option>{annualEmployees.map(employee => <option key={employee.userId} value={employee.userId}>{employee.name}{employee.resignDate ? ` · 퇴사 ${employee.resignDate}` : ''}{employee.teamName ? ` · ${employee.teamName}` : ''}</option>)}</Select></label><Button disabled={!annualEmployeeId || !!downloading || listLoading} onClick={() => void download('annual', annualEmployeeId)}><Download size={17} />연간 급여명세서 PDF</Button></Panel>
     {downloading && <p className="pyre-inline-status" role="status"><Loader2 size={17} className="animate-spin" />{downloading.includes('Excel') ? '급여대장 Excel 파일을 생성하고 있습니다.' : '승인 자료로 PDF를 생성하고 있습니다.'}</p>}
     <Panel className="pyre-filters"><label>본부<Select aria-label="급여 조회 본부" value={selectedDivision} onChange={event => { setSelectedDivision(event.target.value); setSelectedTeam('ALL'); }}><option value="ALL">전체 본부</option>{divisions.map(division => <option key={division.id} value={division.id}>{division.name}</option>)}</Select></label><label>팀<Select aria-label="급여 조회 팀" value={selectedTeam} onChange={event => setSelectedTeam(event.target.value)}><option value="ALL">전체 팀</option>{teams.filter(team => selectedDivision === 'ALL' || team.divisionId === selectedDivision).map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</Select></label><label className="pyre-search">직원 이름<div><Search size={17} aria-hidden="true" /><Input type="search" aria-label="급여 대상 직원 검색" placeholder="직원 이름 검색" value={searchTerm} onChange={event => setSearchTerm(event.target.value)} /></div></label></Panel>
     <div className="pyre-list-heading"><h2>급여 설정 <span>{filteredEmployees.length}명</span></h2><p>저장된 연봉을 12개월로 나누어 계산합니다. 설정 변경은 확정된 문서에 영향을 주지 않습니다.</p></div>
     <div className="pyre-employees">{filteredEmployees.map(employeeEditor)}</div>{!filteredEmployees.length && <Panel className="pyre-empty">선택한 조건의 직원이 없습니다. 검색어와 본부·팀 필터를 확인하세요.</Panel>}
-    {detailsEmployee && details && <PayrollDialog title={`${detailsEmployee.name}님 예상 급여 산출 내역`} error={error} onClose={() => setDetailsId(null)}><p className="pyre-dialog-note">{selectedYear}년 {selectedMonth}월 현재 입력한 설정의 예상 계산입니다. 확정 급여명세서는 승인 이력으로 생성한 PDF를 사용하세요.</p><div className="pyre-detail-summary"><div><span>월 지급액</span><strong>{won(details.monthlyGross)}</strong></div><div><span>예상 실수령액</span><strong>{won(details.netPay)}</strong></div></div><dl className="pyre-detail-rows">{detailItems(details).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{won(value)}</dd></div>)}</dl><p className="pyre-dialog-note">{details.isIrregular ? `비정규직 (${details.withholdingTaxRate ?? '3.3'}% 원천징수) · 4대보험 미신고 · 비과세 식대 미적용. 실제 지급액은 회사의 원천징수 조건에 따라 달라질 수 있습니다.` : `공제대상 가족 ${details.dependents}명 · 8~20세 자녀 ${details.children}명 · ${details.metadata.tableSource === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표'}\n${pensionAgeNote(details)} · 건강보험 3.595% · 장기요양 건강보험료의 13.14% · ${details.metadata.employmentRate === 0 ? '고용보험 제외 (0원)' : '고용보험 0.9%'}. 실제 지급액은 회사의 수당·보험 가입 조건에 따라 달라질 수 있습니다.`}</p><Button disabled={!!downloading} onClick={() => void download('annual', detailsEmployee.uid)}><Download size={17} />{selectedYear}년 확정 급여명세서 PDF</Button></PayrollDialog>}
+    {detailsEmployee && details && <PayrollDialog title={`${detailsEmployee.name}님 예상 급여 산출 내역`} error={error} onClose={() => setDetailsId(null)}>
+      <p className="pyre-dialog-note">{selectedYear}년 {selectedMonth}월 귀속 예상 급여입니다. 확정 금액은 승인 이력의 명세서에서 확인하세요.</p>
+      <div className="pyre-detail-summary"><div><span>월 지급액</span><strong>{won(details.monthlyGross)}</strong></div><div><span>예상 실수령액</span><strong>{won(details.netPay)}</strong></div></div>
+      <dl className="pyre-detail-rows">{detailItems(details).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{won(value)}</dd></div>)}</dl>
+      <p className="pyre-dialog-note">{details.isIrregular
+        ? `비정규직 (${details.withholdingTaxRate ?? '3.3'}% 원천징수) · 4대보험 미신고 · 비과세 식대 미적용. 실제 지급액은 회사의 원천징수 조건에 따라 달라질 수 있습니다.`
+        : `공제대상 가족 ${details.dependents}명 · 8~20세 자녀 ${details.children}명 · ${details.metadata.tableSource === 'uploaded' ? '관리자 등록 세액표' : '2026.03 공식 기본 세액표'}\n${insuranceDetailNote(details)}`}</p>
+      <Button disabled={!!downloading} onClick={() => void download('annual', detailsEmployee.uid)}><Download size={17} />{selectedYear}년 확정 급여명세서 PDF</Button>
+    </PayrollDialog>}
     {showHistory && <PayrollDialog title="급여 지출 승인 이력" error={error} onClose={() => { historyRequest.current += 1; setShowHistory(false); setHistoryLoading(false); }}><div className="pyre-history-filters"><label>시작월<Input type="month" aria-label="급여 이력 시작월" value={historyStart} onChange={event => setHistoryStart(event.target.value)} /></label><label>종료월<Input type="month" aria-label="급여 이력 종료월" value={historyEnd} onChange={event => setHistoryEnd(event.target.value)} /></label><Button disabled={historyLoading} onClick={() => void fetchHistory()}>조회</Button></div><p className="pyre-dialog-note">발행된 승인본과 수정 이력은 보관됩니다. 금액 변경은 과거 급여 등록·정정 메뉴에서 정정·재승인 절차로 진행하세요. 이전 집계 기록은 직원별 상세자료가 없어 PDF/Excel을 생성할 수 없습니다.</p>{historyLoading ? <p role="status">승인 이력을 불러오는 중입니다.</p> : <div className="pyre-history-scroll"><table><thead><tr><th>승인 기간</th><th>인원</th><th>총 지급액</th><th>실지급액</th><th>승인 정보</th><th>문서·관리</th></tr></thead><tbody>{historyRecords.map(record => <tr key={record.id}><td>{record.year}년 {record.month}월<br /><small>{record.legacy ? '이전 집계' : '회사 전체 확정'}</small></td><td>{record.employeeCount}명</td><td>{won(record.totalGross)}</td><td>{won(record.totalNet)}</td><td>{record.approvedAtIso.slice(0, 10)}<br /><small>{record.approvedByName}</small></td><td>{record.legacy ? <div className="pyre-history-actions"><span>상세내역 없음</span><Button aria-label={`${record.year}년 ${record.month}월 이전 집계 삭제`} onClick={() => void deleteLegacy(record)}><Trash2 size={16} /></Button></div> : <div className="pyre-history-actions"><Button disabled={!!downloading} onClick={() => void download('monthly', record.id)}><Download size={16} />PDF</Button><Button disabled={!!downloading} onClick={() => void download('monthlyExcel', record.id)}><FileSpreadsheet size={16} />Excel</Button></div>}</td></tr>)}</tbody></table>{!historyRecords.length && <p className="pyre-empty">조회 기간의 승인 내역이 없습니다.</p>}</div>}</PayrollDialog>}
   </div></div>;
-}
-
-function pensionAgeNote(result: PayrollResult): string {
-  if (result.isIrregular) return `비정규직: 4대보험 미신고 (${result.withholdingTaxRate ?? '3.3'}% 원천징수)`;
-  if (result.metadata.pensionAgeStatus === 'AGE_EXEMPT') return '국민연금 0원 (급여월 기준 만 60세 의무가입 제외)';
-  if (result.metadata.pensionAgeStatus === 'BIRTH_DATE_UNAVAILABLE') return '국민연금 4.75% (생년월일 확인 불가: 만 60세 미만으로 계산)';
-  return '국민연금 4.75% (해당 급여월 납부 대상)';
 }
 
 function detailItems(result: PayrollResult): Array<[string, number]> {

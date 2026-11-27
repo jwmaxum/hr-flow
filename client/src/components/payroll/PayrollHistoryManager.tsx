@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FileSpreadsheet, FileUp, Loader2, RefreshCw, Save, X } from 'lucide-react';
 import { Button, Input, Select, Textarea } from '../ui';
 import { assertPayrollSession, downloadPayrollExcel, downloadPayrollPdf, downloadPayrollSourceFile, payrollService, payrollSessionKey, readPayrollSourceFile } from '../../services/payrollService';
+import { getPayrollPeriod } from '../../utils/payroll';
 import type { PayrollAmounts, PayrollDraft, PayrollDraftSummary, PayrollDraftVersion, PayrollRecordSummary, PayrollRevision, PayrollSnapshotRow, PayrollSourceSelector } from '../../utils/payrollStatements';
 import { CSV_TEMPLATE, EDITABLE_AMOUNT_KEYS, completePayrollAmounts, parsePayrollMoney } from '../../../../functions/payroll-import-schema.mjs';
 import './PayrollHistoryManager.css';
@@ -16,9 +17,6 @@ const stamp = (value: string) => {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? `${new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date)} (한국시간)` : '-';
 };
-const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
-const currentYear = kst.getUTCFullYear();
-const currentMonth = `${currentYear}-${String(kst.getUTCMonth() + 1).padStart(2, '0')}`;
 const toInputs = (row: PayrollSnapshotRow) => Object.fromEntries(EDITABLE_AMOUNT_KEYS.map(key => [key, String(row.amounts[key] ?? 0)])) as AmountInputs;
 function toAmounts(inputs: AmountInputs): PayrollAmounts {
   return completePayrollAmounts(Object.fromEntries(EDITABLE_AMOUNT_KEYS.map(key => [key, parsePayrollMoney(inputs[key], labels[key], { signed: key !== 'monthlyGross' && key !== 'nonTaxable', optional: key === 'otherDeductions' })])));
@@ -37,6 +35,9 @@ function DiffView({ draft }: { draft: PayrollDraft }) {
 
 export function PayrollHistoryManager({ scope, onClose, onApproved }: { scope: string; onClose: () => void; onApproved: (year: number, month: number) => void }) {
   const dialog = useRef<HTMLDialogElement>(null), mounted = useRef(true), running = useRef(false), listSequence = useRef(0);
+  const [initialPeriod] = useState(() => getPayrollPeriod());
+  const currentYear = initialPeriod.year;
+  const currentMonth = `${currentYear}-${String(initialPeriod.month).padStart(2, '0')}`;
   const [tab, setTab] = useState<Tab>('IMPORT');
   const [year, setYear] = useState(String(currentYear)), [loadedYear, setLoadedYear] = useState(currentYear);
   const [drafts, setDrafts] = useState<PayrollDraftSummary[]>([]), [records, setRecords] = useState<PayrollRecordSummary[]>([]);
@@ -73,7 +74,7 @@ export function PayrollHistoryManager({ scope, onClose, onApproved }: { scope: s
     setDrafts(pending.drafts); setRecords(approved.records); setLoadedYear(selectedYear);
     return approved.records;
   }, [isCurrent]);
-  useEffect(() => { void refresh(currentYear).catch(failure => { if (isCurrent()) setError(errorText(failure)); }); }, [refresh, isCurrent]);
+  useEffect(() => { void refresh(currentYear).catch(failure => { if (isCurrent()) setError(errorText(failure)); }); }, [currentYear, refresh, isCurrent]);
   function displayDraft(value: PayrollDraft, version: number | null = null) {
     setDraft(value); setReason(value.reason); setInputs(Object.fromEntries(value.rows.map(row => [row.userId, toInputs(row)]))); setViewedVersion(version); setDirty(false); setSearch(''); setPage(0); setExpanded(''); setTab('PENDING');
   }
@@ -118,7 +119,7 @@ export function PayrollHistoryManager({ scope, onClose, onApproved }: { scope: s
   }
   function recalculateDraft() {
     if (!draft || !editable || draft.kind !== 'CORRECTION' || !reasonValid) return;
-    if (!window.confirm(`현재 저장된 회사 전체 직원 급여 설정(비정규직 3.3%·8.8%, 상여금, 고용보험 적용 여부, 만 60세 국민연금 제외, 최신 세액표)으로 ${draft.year}년 ${draft.month}월 초안을 전체 재계산합니까?\n\n수동 입력 중인 내용은 최신 설정 기준 계산값으로 대체되며, 아래 비교 내역을 확인한 뒤 승인 발행할 수 있습니다.`)) return;
+    if (!window.confirm(`${draft.year}년 ${draft.month}월 귀속 보험료율과 현재 저장된 직원 급여 설정으로 초안을 전체 재계산합니까?\n\n수동 입력 중인 내용은 최신 설정 기준 계산값으로 대체되며, 아래 비교 내역을 확인한 뒤 승인 발행할 수 있습니다.`)) return;
     void perform('현재 저장된 직원 설정으로 전체 급여를 재계산하고 있습니다.', () => payrollService.recalculateDraft(draft.id, draft.draftVersion, reason.trim()), async result => {
       displayDraft(result.draft); const history = await payrollService.listDraftVersions(result.draft.id); if (!isCurrent()) return; setVersions(history.versions); setMessage('최신 직원 설정으로 전체 재계산을 완료했습니다. 아래 승인본과 변경 비교를 확인한 뒤 [검토 완료·승인 발행]을 눌러 확정해 주세요.'); await refresh(result.draft.year);
     });

@@ -362,7 +362,8 @@ function createPayrollWorkflow({ db, bucket, now = () => new Date(), parseSource
       const caller = await guard(request, user, tx), { reference, draft: existing } = await loadDraft(tx, caller, input.id);
       if (existing.status !== 'PENDING' || existing.draftVersion !== expected) fail('aborted', '초안이 변경되었거나 검토가 종료되었습니다.');
       if (existing.kind !== 'CORRECTION') fail('failed-precondition', '승인본 정정 초안에서만 현재 설정으로 전체 재계산할 수 있습니다.');
-      const calculated = await calculateRows(tx, caller.companyId, { year: existing.year, month: existing.month });
+      const previousRows = rowsChecked(existing.rows, caller.companyId);
+      const calculated = await calculateRows(tx, caller.companyId, { year: existing.year, month: existing.month }, previousRows);
       const rows = rowsChecked(calculated.rows, caller.companyId);
       const data = { ...existing, rows, sums: sumPayrollRows(rows), reason, status: 'PENDING',
         taxTable: calculated.taxTable,

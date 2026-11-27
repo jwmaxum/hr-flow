@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateIncomeTax, calculateNetPay, getDeductionCounts } from '../src/utils/payroll.ts';
+import { getPayrollPeriod } from '../../functions/payroll-calculation.mjs';
 import official from '../src/data/withholdingTaxTable2026.json' with { type: 'json' };
 
 test('official 2026 table distinguishes dependents in the reported 2.3 million won bracket', () => {
@@ -59,6 +60,60 @@ test('2026 employee pension limits change in July and the standard base drops su
   assert.equal(result.metadata.pensionBase, 2_300_000);
 });
 
+test('insurance month switches the long-term care ratio in November and employee pension in January', () => {
+  const employee = { annualSalary: 1_700_000 * 12, nonTaxable: 0 };
+  const calculate = (year, month) => calculateNetPay(employee, null, { year, month });
+  for (const [year, month, care, pension, multiplier] of [
+    [2026, 10, 8_030, 80_750, 9448 / 71900],
+    [2026, 11, 8_020, 80_750, .1314],
+    [2026, 12, 8_020, 80_750, .1314],
+    [2027, 1, 8_490, 85_000, .139],
+    [2027, 12, 8_490, 85_000, .139]
+  ]) {
+    const result = calculate(year, month);
+    assert.equal(result.health, 61_110);
+    assert.equal(result.longTerm, care);
+    assert.equal(result.pension, pension);
+    assert.equal(result.metadata.longTermRate, multiplier);
+    assert.equal(result.metadata.roundsLongTermRatio, !(year === 2026 && month === 10));
+    assert.equal(result.metadata.longTermIncomeRate, year === 2026 ? .009448 : .009994);
+    assert.equal(result.metadata.pensionRate, year === 2026 ? .0475 : .05);
+  }
+  const october = calculate(2026, 10), november = calculate(2026, 11);
+  assert.equal(november.netPay - october.netPay, 10);
+  assert.notEqual(october.metadata.calculationVersion, november.metadata.calculationVersion);
+  assert.notEqual(november.metadata.calculationVersion, calculate(2027, 1).metadata.calculationVersion);
+});
+
+test('the default payroll period switches at midnight in Korea and explicit settlement months stay fixed', t => {
+  let instant = Date.UTC(2026, 11, 31, 14, 59, 59);
+  t.mock.method(Date, 'now', () => instant);
+  const employee = { annualSalary: 1_700_000 * 12, nonTaxable: 0 };
+  assert.deepEqual(getPayrollPeriod(), { year: 2026, month: 12 });
+  assert.equal(calculateNetPay(employee).pension, 80_750);
+  instant += 1000;
+  assert.deepEqual(getPayrollPeriod(), { year: 2027, month: 1 });
+  assert.equal(calculateNetPay(employee).pension, 85_000);
+  assert.equal(calculateNetPay(employee, null, { year: 2026, month: 10 }).longTerm, 8_030);
+});
+
+test('ten-won truncation preserves exact ratio boundaries; published pension limits and exemptions survive the 2027 change', () => {
+  const employee = { annualSalary: 2_781_642 * 12, nonTaxable: 0 };
+  const november = calculateNetPay(employee, null, { year: 2026, month: 11 });
+  const january = { year: 2027, month: 1 };
+  const nextYear = calculateNetPay(employee, null, january);
+  assert.equal(november.health, 100_000);
+  assert.equal(november.longTerm, 13_140);
+  assert.equal(nextYear.health, 100_000);
+  assert.equal(nextYear.longTerm, 13_900);
+  assert.equal(calculateNetPay({ ...employee, annualSalary: 1_200_000 }, null, january).pension, 20_500);
+  assert.equal(calculateNetPay({ ...employee, annualSalary: 120_000_000 }, null, january).pension, 329_500);
+  const exempt = calculateNetPay({ ...employee, rrn: '670101-1******' }, null, january);
+  assert.equal(exempt.pension, 0);
+  assert.equal(exempt.longTerm, 13_900);
+  assert.equal(calculateNetPay({ ...employee, salaryType: 'IRREGULAR' }, null, january).totalInsurance, 0);
+});
+
 test('income and local withholding drop amounts below ten won and reproduce the reference general-worker total', () => {
   const result = calculateNetPay({ annualSalary: 30_000_000, nonTaxable: 200_000 }, null, { year: 2026, month: 10 });
   assert.equal(result.incomeTax, 29_160);
@@ -80,17 +135,25 @@ test('uploaded high-income base is honored instead of silently taking the bundle
 
 test('unsupported historical/future periods are flagged and invalid dates are rejected', () => {
   const person = { annualSalary: 30_000_000 };
-  for (const period of [{ year: 2025, month: 10 }, { year: 2027, month: 1 }, { year: 2026, month: 2 }]) assert.equal(calculateNetPay(person, null, period).metadata.policyPeriodSupported, false);
+  for (const period of [{ year: 2025, month: 10 }, { year: 2028, month: 1 }, { year: 2026, month: 2 }]) assert.equal(calculateNetPay(person, null, period).metadata.policyPeriodSupported, false);
   assert.equal(calculateNetPay(person, null, { year: 2026, month: 3 }).metadata.policyPeriodSupported, true);
+  assert.equal(calculateNetPay(person, null, { year: 2027, month: 6 }).metadata.policyPeriodSupported, true);
+  const july = calculateNetPay(person, null, { year: 2027, month: 7 });
+  assert.equal(july.metadata.policyPeriodSupported, false);
+  assert.equal(july.metadata.policyPeriodReason, 'PENSION_LIMITS_PENDING');
   for (const period of [{ year: 2026, month: 0 }, { year: NaN, month: 1 }, { year: 2026, month: 13 }]) assert.throws(() => calculateNetPay(person, null, period), /연도와 월/);
   const future = { ...structuredClone(official), effectiveFrom: '2026-11-01' };
   assert.equal(calculateNetPay(person, future, { year: 2026, month: 10 }).metadata.policyPeriodSupported, false);
   assert.equal(calculateNetPay(person, future, { year: 2026, month: 11 }).metadata.policyPeriodSupported, true);
   assert.equal(calculateNetPay(person, { ...future, effectiveFrom: '2026-00-00' }, { year: 2026, month: 11 }).metadata.policyPeriodSupported, false);
+  const nextYear = { ...future, effectiveFrom: '2027-02-01' };
+  assert.equal(calculateNetPay(person, nextYear, { year: 2027, month: 1 }).metadata.policyPeriodReason, 'TAX_TABLE_EFFECTIVE_DATE');
+  assert.equal(calculateNetPay(person, nextYear, { year: 2027, month: 2 }).metadata.policyPeriodSupported, true);
 });
 
 test('invalid salary inputs cannot produce NaN totals and non-taxable pay cannot exceed gross', () => {
   for (const salary of [0, -1, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) assert.equal(calculateNetPay({ annualSalary: salary }), null);
+  assert.throws(() => calculateNetPay({ annualSalary: 12, bonus: Number.MAX_SAFE_INTEGER }), /합계 범위/);
   const result = calculateNetPay({ annualSalary: 1_200_000, nonTaxable: 200_000 }, null, { year: 2026, month: 10 });
   assert.equal(result.nonTaxable, 100_000);
   assert.equal(result.monthlyGross - result.nonTaxable, 0);

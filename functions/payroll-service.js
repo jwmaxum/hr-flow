@@ -127,16 +127,23 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
     }, companyId);
   }
   function limited(snapshot, maximum, message) { if (snapshot.size > maximum) fail('resource-exhausted', message); }
-  function validatedRows(profiles, divisions, teams, companyId, period, table) {
+  function validatedRows(profiles, divisions, teams, companyId, period, table, previousRows) {
     const monthEnd = new Date(Date.UTC(period.year, period.month, 0)).toISOString().slice(0, 10);
     const rows = [];
+    const previous = new Map(previousRows.map(row => [row.userId, row]));
     for (const doc of profiles.docs) {
       const profile = doc.data();
-      if (profile.companyId !== companyId || !['ADMIN', 'SUB_ADMIN', 'MEMBER'].includes(profile.role) || profile.status === 'RESIGNED') continue;
+      if (profile.companyId !== companyId || !['ADMIN', 'SUB_ADMIN', 'MEMBER'].includes(profile.role)) continue;
+      // An approved month's roster is evidence of participation even after retirement.
+      const prior = previous.get(doc.id);
+      if (profile.status === 'RESIGNED' && !prior) continue;
       if (dateOnly(profile.joinDate) > monthEnd) continue;
       if (profile.isSeveranceIncluded === true) fail('failed-precondition', '기존 퇴직급여 포함 설정의 급여 금액을 확인하고 설정을 저장해 주세요.');
       const salary = profile.annualSalary ?? 0;
       const bonus = profile.bonus ?? 0;
+      if (prior?.amounts.monthlyGross > 0 && (profile.annualSalary == null || (profile.status === 'RESIGNED' && salary === 0 && bonus === 0))) {
+        fail('failed-precondition', '기존 대상자의 급여 설정을 확인할 수 없습니다. 정정 초안에서 해당 직원의 금액을 직접 수정해 주세요.');
+      }
       if (!Number.isSafeInteger(salary) || salary < 0) fail('failed-precondition', '직원의 저장된 급여 금액을 확인해 주세요.');
       if (!Number.isSafeInteger(bonus) || bonus < 0) fail('failed-precondition', '직원의 저장된 상여금 금액을 확인해 주세요.');
       if (profile.salaryType !== undefined && !['ANNUAL', 'MONTHLY', 'IRREGULAR'].includes(profile.salaryType)) {
@@ -152,7 +159,12 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
       try { result = calculator.calculateNetPay({ ...profile, annualSalary: salary, currentVal: salary, bonus, isSeveranceIncluded: false }, table, period); }
       catch { fail('failed-precondition', '직원의 급여와 공제 설정을 확인해 주세요.'); }
       const policy = result || calculator.calculateNetPay({ annualSalary: 12, nonTaxable: 0 }, table, period);
-      if (policy?.metadata?.policyPeriodSupported !== true) fail('failed-precondition', '선택한 기간은 현재 세액·보험 기준으로 확정할 수 없습니다. 지원하는 급여 기준을 확인해 주세요.');
+      if (policy?.metadata?.policyPeriodSupported !== true) {
+        if (policy?.metadata?.policyPeriodReason === 'PENSION_LIMITS_PENDING') {
+          fail('failed-precondition', '2027년 7월 이후 귀속 급여는 국민연금 기준소득월액 상·하한 반영 후 확정할 수 있습니다.');
+        }
+        fail('failed-precondition', '선택한 기간은 현재 세액·보험 기준으로 확정할 수 없습니다. 지원하는 급여 기준을 확인해 주세요.');
+      }
       const nonTaxable = result ? Math.min(result.monthlyGross, result.nonTaxable) : 0;
       const amounts = result ? {
         monthlyGross: result.monthlyGross, basePay: result.monthlyGross - nonTaxable, nonTaxable,
@@ -168,12 +180,14 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
           ...identity(profile, doc.id, companyId, divisions, teams), amounts,
           calculation: {
             dependents: counts.dependents, children: counts.children,
-            tableSource: result?.metadata.tableSource || policy.metadata.tableSource
+            tableSource: policy.metadata.tableSource, calculationVersion: policy.metadata.calculationVersion
           }
         }, companyId));
       }
       catch { fail('failed-precondition', '직원의 급여 상세 설정을 확인해 주세요.'); }
+      previous.delete(doc.id);
     }
+    if (previous.size) fail('failed-precondition', '기존 급여 대상자 전원을 해당 귀속월의 회사 인사정보에서 확인할 수 없습니다. 정정 초안에서 금액을 직접 수정해 주세요.');
     if (!rows.length) fail('failed-precondition', '승인할 재직 직원이 없습니다.');
     return rows.sort((a, b) => a.name.localeCompare(b.name, 'ko') || a.userId.localeCompare(b.userId));
   }
@@ -197,7 +211,7 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
     address: safeText(user.company.address, 300), representative: safeText(user.company.representative, 100)
   });
 
-  async function calculateRows(transaction, companyId, period) {
+  async function calculateRows(transaction, companyId, period, previousRows = []) {
     const [profiles, divisionDocs, teamDocs, taxDoc] = await Promise.all([
       transaction.get(profilesQuery(companyId)),
       transaction.get(db.collection('divisions').where('companyId', '==', companyId)),
@@ -207,7 +221,7 @@ function createPayrollService({ db, auth, bucket, now = () => new Date(), parseS
     limited(profiles, MAX_EMPLOYEES, '승인 대상 직원이 너무 많아 한 문서에 저장할 수 없습니다. 관리자에게 문의해 주세요.');
     const table = taxDoc.exists ? taxDoc.data() : null;
     const tableStatus = calculator.getTaxTableStatus(table);
-    const rows = validatedRows(profiles, scopedMap(divisionDocs, companyId), scopedMap(teamDocs, companyId), companyId, period, table);
+    const rows = validatedRows(profiles, scopedMap(divisionDocs, companyId), scopedMap(teamDocs, companyId), companyId, period, table, previousRows);
     const taxTable = {
       source: tableStatus.source, version: safeText(tableStatus.updateDate || tableStatus.effectiveFrom, 100),
       fileName: safeText(tableStatus.fileName, 240), highIncomeSource: safeText(tableStatus.highIncomeSource, 80),

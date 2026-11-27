@@ -79,10 +79,12 @@ function normalizePayrollRow(value, companyId) {
       !Number.isSafeInteger(calculation.children) || calculation.children < 0 || calculation.children >= calculation.dependents) fail('Invalid payroll deduction counts.');
   const tableSource = text(calculation.tableSource, 80);
   if (!tableSource) fail('Payroll tax source is required.');
+  const calculationVersion = text(calculation.calculationVersion, 80);
   return {
     ...identity,
     amounts: normalizeAmounts(value.amounts),
-    calculation: { dependents: calculation.dependents, children: calculation.children, tableSource, ...(calculation.mode ? { mode: calculation.mode } : {}) },
+    calculation: { dependents: calculation.dependents, children: calculation.children, tableSource,
+      ...(calculationVersion ? { calculationVersion } : {}), ...(calculation.mode ? { mode: calculation.mode } : {}) },
   };
 }
 

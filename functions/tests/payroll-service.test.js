@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { initializeApp, deleteApp } = require('firebase-admin/app');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 const { createPayrollService, payrollRecordId, MAX_PDF_BYTES } = require('../payroll-service');
+const { sumPayrollRows } = require('../payroll-report-model');
 const officialTable = require('../data/withholdingTaxTable2026.json');
 
 // Fixed, local demo project: this suite never uses production credentials or data.
@@ -15,7 +16,6 @@ const db = getFirestore(app, '(default)');
 const instant = new Date('2026-10-29T03:00:00.000Z');
 const seconds = Math.floor(instant.getTime() / 1000);
 const now = () => new Date(instant);
-const future = Timestamp.fromMillis(instant.getTime() + 86400000);
 const request = (uid, action, data = {}) => ({ ...(uid ? { auth: { uid, token: { auth_time: seconds - 30 } } } : {}),
   rawRequest: { headers: { authorization: `Bearer test-${uid}` } }, data: { action, ...data } });
 const denied = (promise, code) => assert.rejects(promise, error => error.code === code);
@@ -49,8 +49,9 @@ function privateBucket(faults) {
   }; }, async deleteFiles({ prefix }) { for (const path of objects.keys()) if (path.startsWith(prefix)) objects.delete(path); } };
 }
 
-async function fixture() {
+async function fixture(clock = now) {
   for (const collection of await db.listCollections()) await db.recursiveDelete(collection);
+  const future = Timestamp.fromMillis(clock().getTime() + 86400000);
   const profile = (name, role = 'MEMBER', companyId = 'a', extra = {}) => ({ name, role, companyId, status: 'ACTIVE',
     annualSalary: 30000000, isSeveranceIncluded: false, nonTaxable: 200000, dependents: 1, children: 0,
     joinDate: '2020-01-02', divisionId: companyId === 'a' ? 'da' : 'db', teamId: companyId === 'a' ? 'ta' : 'tb', ...extra });
@@ -84,7 +85,7 @@ async function fixture() {
     return { uid: token.slice(5) };
   } };
   const bucket = privateBucket(faults);
-  const manage = createPayrollService({ db, auth, now, bucket,
+  const manage = createPayrollService({ db, auth, now: clock, bucket,
     renderMonthlyPdf: async (record, branding) => { monthly.push({ record, branding }); if (faults.onMonthly) await faults.onMonthly(); return faults.pdf; },
     renderAnnualPdf: async (report, branding) => { annual.push({ report, branding }); if (faults.onAnnual) await faults.onAnnual(); return faults.pdf; },
   });
@@ -165,6 +166,74 @@ test('server-approved payroll, PDF privacy, tenant separation and immutable fina
       assert.equal(row.personalInfo, undefined); assert.equal(row.email, undefined); assert.equal(row.uid, undefined);
       assert(Object.values(stored.rows.find(value => value.userId === 'zero').amounts).every(value => value === 0));
       assert.equal(result.record.rows, undefined); assert.equal(result.record.legacy, false);
+    });
+    await t.test('earning month selects insurance for approvals and a later October settlement; approved reports keep the original amounts', async () => {
+      const f = await fixture(() => new Date('2027-01-29T03:00:00Z'));
+      await db.doc('UserProfile/member').update({ annualSalary: 20400000, nonTaxable: 0 });
+      const employee = rows => rows.find(row => row.userId === 'member');
+      const periods = [
+        { year: 2026, month: 10, longTerm: 8030, pension: 80750 },
+        { year: 2026, month: 11, longTerm: 8020, pension: 80750 },
+        { year: 2026, month: 12, longTerm: 8020, pension: 80750 },
+        { year: 2027, month: 1, longTerm: 8490, pension: 85000 },
+      ];
+      const versions = [];
+      for (const { year, month, longTerm, pension } of periods) {
+        const preview = await f.call('admin', 'preview', { year, month });
+        const { record } = await f.call('admin', 'approve', { year, month, expectedFingerprint: preview.fingerprint });
+        assert.equal(record.id, payrollRecordId('a', year, month));
+        assert.equal(record.totalDeductions, preview.totalDeductions);
+        const stored = (await db.doc(`payroll_records/${record.id}`).get()).data();
+        const { amounts, calculation } = employee(stored.rows);
+        assert.equal(amounts.health, 61110);
+        assert.equal(amounts.longTerm, longTerm);
+        assert.equal(amounts.pension, pension);
+        assert.ok(calculation.calculationVersion);
+        versions.push(calculation.calculationVersion);
+      }
+      assert.notEqual(versions[0], versions[1]);
+      assert.equal(versions[1], versions[2]);
+      assert.notEqual(versions[2], versions[3]);
+
+      const id = payrollRecordId('a', 2026, 10);
+      // Represent an October snapshot written by the previous release, which used
+      // 13.14% and did not store a calculation version. Settlement runs in January.
+      const oldRecord = db.doc(`payroll_records/${id}`);
+      const oldRows = (await oldRecord.get()).data().rows;
+      for (const row of oldRows) delete row.calculation.calculationVersion;
+      const priorAmounts = employee(oldRows).amounts;
+      priorAmounts.longTerm = 8020;
+      priorAmounts.totalInsurance -= 10;
+      priorAmounts.totalDeductions -= 10;
+      priorAmounts.netPay += 10;
+      const oldSums = sumPayrollRows(oldRows);
+      await oldRecord.update({ rows: oldRows, sums: oldSums, totalInsurance: oldSums.totalInsurance,
+        totalDeductions: oldSums.totalDeductions, totalNet: oldSums.netPay,
+        approvedAt: Timestamp.fromDate(instant), approvedAtIso: instant.toISOString() });
+      const memberProfile = db.doc('UserProfile/member');
+      await memberProfile.update({ status: 'RESIGNED', resignDate: '2026-12-31' });
+      const { draft } = await f.call('admin', 'startCorrection', { recordId: id, reason: '10월 귀속 정산' });
+      assert.equal(employee(draft.rows).amounts.longTerm, 8020);
+      assert.equal(employee(draft.rows).calculation.calculationVersion, undefined);
+      const recalculate = () => f.call('admin', 'recalculateDraft', {
+        id: draft.id, expectedDraftVersion: draft.draftVersion, reason: '10월 귀속 장기요양보험료 재계산',
+      });
+      await memberProfile.update({ companyId: 'b' });
+      await assert.rejects(recalculate(), error => error.code === 'failed-precondition' && error.message.includes('직접 수정'));
+      for (const annualSalary of [null, 0]) {
+        await memberProfile.update({ companyId: 'a', annualSalary });
+        await assert.rejects(recalculate(), error => error.code === 'failed-precondition' && error.message.includes('급여 설정'));
+      }
+      await memberProfile.update({ annualSalary: 20400000 });
+      const { draft: revised } = await recalculate();
+      assert.equal(employee(revised.rows).amounts.longTerm, 8030);
+      assert.equal(employee(revised.rows).calculation.calculationVersion, versions[0]);
+      assert.equal(employee((await oldRecord.get()).data().rows).amounts.longTerm, 8020);
+      await f.call('admin', 'approveDraft', { id: draft.id, expectedDraftVersion: revised.draftVersion });
+      await f.call('admin', 'monthlyPdf', { id, revision: 1 });
+      assert.equal(employee(f.monthly[0].record.rows).amounts.longTerm, 8020);
+      await f.call('admin', 'annualPdf', { year: 2026, employeeId: 'member' });
+      assert.deepEqual(f.annual[0].report.months.slice(9).map(item => item.row.amounts.longTerm), [8030, 8020, 8020]);
     });
     await t.test('only valid saved HR rrn birth information changes pension while missing or ambiguous detail keeps the existing default', async () => {
       for (const [rrn, expectedPension] of [
@@ -297,6 +366,8 @@ test('server-approved payroll, PDF privacy, tenant separation and immutable fina
       for (const period of [{ year: 2025, month: 10 }, { year: 2026, month: 2 }, { year: 2027, month: 10 }]) {
         await denied(f.call('admin', 'preview', period), 'failed-precondition');
       }
+      await assert.rejects(f.call('admin', 'preview', { year: 2027, month: 7 }), error =>
+        error.code === 'failed-precondition' && error.message.includes('국민연금 기준소득월액 상·하한'));
       assert.equal((await db.collection('payroll_records').get()).size, 0);
     });
     await t.test('concurrent and repeated approval cannot overwrite the canonical monthly snapshot', async () => {
