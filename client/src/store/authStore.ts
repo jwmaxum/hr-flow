@@ -130,12 +130,17 @@ export const useAuthStore = create<AuthState>((set, get) => {
           set({ userData: next });
         }, recheck);
         if (profile.companyId !== 'PLATFORM') {
-          let first = true;
+          let previousCompany: string | undefined;
           unsubscribeCompany = onSnapshot(doc(db, 'companies', profile.companyId), snapshot => {
             if (!current(epoch, user.uid)) return;
-            if (!snapshot.exists() || snapshot.data().status !== 'ACTIVE') { recheck(); return; }
-            if (first) { first = false; return; }
-            recheck();
+            const data = snapshot.data();
+            if (data?.status !== 'ACTIVE') { recheck(); return; }
+            // Posting changes the write counter on every transaction. All other
+            // changes, including an active ledger switch, still invalidate the session.
+            const company = JSON.stringify(Object.keys(data)
+              .filter(key => key !== 'erpLedgerWriteRevision').sort().map(key => [key, data[key]]));
+            if (previousCompany !== undefined && previousCompany !== company) { recheck(); return; }
+            previousCompany = company;
           }, recheck);
         }
         const expiresAt = company?.accessUntil ? new Date(company.accessUntil).getTime() : NaN;

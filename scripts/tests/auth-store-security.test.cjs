@@ -46,6 +46,34 @@ test('client account authorization state transitions', async t => {
     const f=fixture();await f.login('a',{profile:profile(),company,businessAllowed:false});
     assert.equal(f.store.getState().sessionReady,false);assert.equal(f.store.getState().companyData.subscriptionStatus,'EXPIRED');assert.equal(f.subscriptions.length,0);
   });
+  await t.test('normal ERP writes keep the mounted workspace and company listener intact',async()=>{
+    const f=fixture(), path='companies/tenant-a';
+    await f.login('a',ready());
+    f.snapshot(path,company);
+    const mounted=f.store.getState();
+    f.snapshot(path,{...company,erpLedgerWriteRevision:1});
+    f.snapshot(path,{...company,erpLedgerWriteRevision:2});
+    f.snapshot(path,{...company,erpLedgerWriteRevision:2});
+    assert.strictEqual(f.store.getState(),mounted);
+    assert.ok(f.subscriptions.every(s=>s.active));
+  });
+  await t.test('ledger cutover and company setting updates invalidate the mounted workspace even with a revision bump',async()=>{
+    for(const change of [{erpActiveLedgerVersion:'v2'},{nameKo:'Changed company'},{accessUntil:'2020-01-01T00:00:00.000Z'}]){
+      const f=fixture(), path='companies/tenant-a';
+      await f.login('a',ready());
+      f.snapshot(path,{...company,erpActiveLedgerVersion:'v1',erpLedgerWriteRevision:10});
+      let finish;
+      f.responses.push(()=>new Promise(resolve=>{finish=resolve;}));
+      f.snapshot(path,{...company,erpActiveLedgerVersion:'v1',...change,erpLedgerWriteRevision:11});
+      assert.equal(f.store.getState().loading,true);
+      assert.equal(f.store.getState().sessionReady,false);
+      assert.equal(f.store.getState().userData,null);
+      assert.ok(f.subscriptions.every(s=>!s.active));
+      finish({...ready(),company:{...company,...change},businessAllowed:!change.accessUntil});
+      await tick();
+      assert.equal(f.store.getState().sessionReady,!change.accessUntil);
+    }
+  });
   await t.test('state refusal signs out and clears profile and company caches',async()=>{
     const f=fixture();await f.login('a',Object.assign(new Error('inactive account'),{code:'functions/permission-denied'}));
     assert.equal(f.signouts,1);assert.equal(f.store.getState().user,null);assert.equal(f.store.getState().userData,null);assert.equal(f.store.getState().companyData,null);assert.equal(f.store.getState().sessionReady,false);
