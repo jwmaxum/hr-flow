@@ -661,7 +661,8 @@ export function ErpImportPanel({ companyId, onInventory }: { companyId: string; 
                   setNotice(result.bootstrap.stageConflict ? '새 장부 재작성에 대한 ADMIN 확인이 필요합니다.' : '새 장부를 준비 중입니다. 현재 상태를 확인해 주세요.');
                   return;
                 }
-                rememberBootstrap(null);
+                // A version switch rechecks the session and can remount this panel after the response.
+                // Keep its receipt available until the next mount successfully reads it.
                 if (result.idempotent) setNotice('이미 확정된 이관입니다. 기존 확정 결과를 표시합니다.');
                 else setNotice(result.bootstrap.backup ? '기존 장부 백업 후 재이관을 확정했습니다.' : '최초 기초자료 이관을 확정했습니다.');
                 const [masters, imports] = await Promise.all([erpService.list(companyId, 'warehouses', '', 'name'), erpImportService.list(companyId)]);
