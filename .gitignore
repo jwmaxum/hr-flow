@@ -64,6 +64,9 @@ scratch/
 tmp/
 temp/
 
+# Company-specific ERP inventory and migration exports
+/outputs/sgnplanet-20261112/*.xlsx
+
 # Local browser test reports (synthetic accounts only; never source files)
 test-results/
 playwright-report/
